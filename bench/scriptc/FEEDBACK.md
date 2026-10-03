@@ -73,7 +73,9 @@ The 2D layer's `vertices` buffer is a captured `let` because it is reassigned wh
 6. **Spread of an annotated `.map()` callback parameter** (SC1090): `specs.map((spec: Spec): Out => ({ ...spec, extra: 0 }))` is rejected because the parameter is treated as possibly `undefined`. Building the object field by field in a `for...of` works.
 7. **A callback with fewer parameters than an optional callback field** (SC2003, "union conversion has no unambiguous layout mapping"): with `update?: (p: P, g: G) => void`, passing `update: (p: P): void => ...` is valid TypeScript but rejected. Declaring the unused parameter (`_g: G`) compiles.
 8. **Typed `.catch` parameters** (SC1090): `.catch((e: Error) => ...)` is rejected; `(e: unknown)` with `instanceof` works, as the diagnostic suggests.
-9. **Promise callbacks in synchronous loops**: a game loop written as `while (poll()) frame()` never runs `.then` callbacks, so an async image load never completes. Correct per the event loop, but surprising for anyone porting a browser game, where `requestAnimationFrame` yields every frame. dotframe awaits `Promise.resolve()` once per frame. A short note in the docs for loop-style programs would help.
+9. **Library profiles cap callbacks at 32 channels** (SC4001). A native engine bridged through callbacks (library mode has no FFI) exceeds that quickly; dotframe merged related getters (`dfTouch(i, field)`, `dfMouse(field)`) to fit. Raising the cap, or allowing FFI in library builds, would remove the workaround.
+10. **Library mode has no FFI and no promises** (documented). Together they mean a native app has to route every native call through profile callbacks and load synchronously; dotframe splits its API into a synchronous core plus async loaders for that reason.
+11. **Promise callbacks in synchronous loops**: a game loop written as `while (poll()) frame()` never runs `.then` callbacks, so an async image load never completes. Correct per the event loop, but surprising for anyone porting a browser game, where `requestAnimationFrame` yields every frame. dotframe awaits `Promise.resolve()` once per frame. A short note in the docs for loop-style programs would help.
 
 ## FFI
 
@@ -97,3 +99,7 @@ node --experimental-strip-types patterns.ts
 bun patterns.ts
 # Profiles: build a profile-*.ts file, run it, then `sample <pid> 2` while it loops for 5 s.
 ```
+
+### iOS library link: `scr_bytes_io.o` needs the promise runtime
+
+With `SCRIPTC_TARGET=aarch64-apple-ios scriptc build --lib --profile`, the archive's `scr_bytes_io.o` has undefined `_scr_promise_settled_ref` and `_scr_promise_settled_void`, and library mode ships no promise runtime. The app links only after the host defines stubs for both. Library mode should either drop the async half of bytes IO or ship those two symbols.
