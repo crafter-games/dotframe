@@ -1,0 +1,17 @@
+{
+  "ffi_format": 7,
+  "functions": [
+    { "name": "dfOpen", "symbol": "df_open", "params": ["i32", "i32", "string"], "returns": "i32" },
+    { "name": "dfPipeline", "symbol": "df_pipeline", "params": ["string"], "returns": "i32" },
+    { "name": "dfPoll", "symbol": "df_poll", "params": [], "returns": "bool" },
+    { "name": "dfFrame", "symbol": "df_frame", "params": ["f64", "f64", "f64", "i32", "u32"], "returns": "i32" },
+    { "name": "dfClose", "symbol": "df_close", "params": [], "returns": "void" }
+  ],
+  "libraries": [
+    "../../build/macos/libdf_native.a",
+    "../../vendor/build/sdl-macos/libSDL3.a",
+    "../../vendor/wgpu/macos/lib/libwgpu_native.a"
+  ],
+  "system_libraries": ["c++", "iconv"],
+  "frameworks": ["Metal", "QuartzCore", "Cocoa", "IOKit", "CoreVideo", "CoreAudio", "AudioToolbox", "CoreHaptics", "GameController", "ForceFeedback", "Carbon", "UniformTypeIdentifiers", "AVFoundation", "CoreMedia", "Foundation"]
+}

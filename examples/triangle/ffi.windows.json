@@ -1,0 +1,19 @@
+{
+  "ffi_format": 7,
+  "functions": [
+    { "name": "dfOpen", "symbol": "df_open", "params": ["i32", "i32", "string"], "returns": "i32" },
+    { "name": "dfPipeline", "symbol": "df_pipeline", "params": ["string"], "returns": "i32" },
+    { "name": "dfPoll", "symbol": "df_poll", "params": [], "returns": "bool" },
+    { "name": "dfFrame", "symbol": "df_frame", "params": ["f64", "f64", "f64", "i32", "u32"], "returns": "i32" },
+    { "name": "dfClose", "symbol": "df_close", "params": [], "returns": "void" }
+  ],
+  "libraries": [
+    "../../build/windows/libdf_native.a",
+    "../../vendor/build/sdl-windows/libSDL3.a",
+    "../../vendor/wgpu/windows/lib/libwgpu_native.a"
+  ],
+  "system_libraries": [
+    "kernel32", "user32", "gdi32", "winmm", "imm32", "ole32", "oleaut32", "version", "uuid", "advapi32", "setupapi", "shell32", "dinput8",
+    "ws2_32", "userenv", "bcrypt", "ntdll", "opengl32", "d3d12", "dxgi", "d3dcompiler_47", "propsys", "unwind"
+  ]
+}
