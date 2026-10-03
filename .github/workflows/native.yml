@@ -30,6 +30,12 @@ jobs:
       - run: scripts/vendor.sh macos && scripts/vendor.sh windows
       - run: scripts/build-native.sh macos triangle
       - run: scripts/build-native.sh windows triangle
+      - run: bunx tsc -p tsconfig.json
+      - run: scripts/build-web.sh triangle
+      - uses: actions/upload-artifact@v4
+        with:
+          name: triangle-web
+          path: build/web/triangle
       - uses: actions/upload-artifact@v4
         with:
           name: triangle-binaries
