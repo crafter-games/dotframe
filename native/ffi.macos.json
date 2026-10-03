@@ -24,6 +24,30 @@
       "returns": "i32"
     },
     {
+      "name": "dfKeyDown",
+      "symbol": "df_key_down",
+      "params": [
+        "i32"
+      ],
+      "returns": "bool"
+    },
+    {
+      "name": "dfGamepadAxis",
+      "symbol": "df_gamepad_axis",
+      "params": [
+        "i32"
+      ],
+      "returns": "f64"
+    },
+    {
+      "name": "dfGamepadButton",
+      "symbol": "df_gamepad_button",
+      "params": [
+        "i32"
+      ],
+      "returns": "bool"
+    },
+    {
       "name": "dfBuffer",
       "symbol": "df_buffer",
       "params": [

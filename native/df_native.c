@@ -32,6 +32,7 @@ static int32_t g_bind_group_count;
 static WGPUTexture g_depth_texture;
 static WGPUTextureView g_depth_view;
 static int g_width, g_height;
+static SDL_Gamepad *g_gamepad;
 
 // In-flight frame state between df_begin and df_end.
 static WGPUSurfaceTexture g_frame_texture;
@@ -99,7 +100,7 @@ int32_t df_open(int32_t width, int32_t height, const uint8_t *title, size_t titl
   memcpy(title_buf, title, n);
   title_buf[n] = 0;
 
-  if (!SDL_Init(SDL_INIT_VIDEO)) return -1;
+  if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) return -1;
   SDL_WindowFlags flags = SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_RESIZABLE;
 #if defined(__APPLE__)
   flags |= SDL_WINDOW_METAL;
@@ -151,6 +152,24 @@ int32_t df_open(int32_t width, int32_t height, const uint8_t *title, size_t titl
   wgpuSurfaceCapabilitiesFreeMembers(caps);
   configure_surface();
   return 0;
+}
+
+// SDL scancode, as listed in SDL_scancode.h.
+uint8_t df_key_down(int32_t scancode) {
+  int count = 0;
+  const bool *state = SDL_GetKeyboardState(&count);
+  return scancode >= 0 && scancode < count && state[scancode];
+}
+
+// SDL_GamepadAxis; returns [-1, 1], or 0 without a gamepad.
+double df_gamepad_axis(int32_t axis) {
+  if (!g_gamepad) return 0.0;
+  return SDL_GetGamepadAxis(g_gamepad, (SDL_GamepadAxis)axis) / 32767.0;
+}
+
+// SDL_GamepadButton.
+uint8_t df_gamepad_button(int32_t button) {
+  return g_gamepad && SDL_GetGamepadButton(g_gamepad, (SDL_GamepadButton)button);
 }
 
 int32_t df_width(void) { return g_width; }
@@ -259,6 +278,12 @@ uint8_t df_poll(void) {
   while (SDL_PollEvent(&event)) {
     if (event.type == SDL_EVENT_QUIT || event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) return 0;
     if (event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED) configure_surface();
+    if (event.type == SDL_EVENT_GAMEPAD_ADDED && !g_gamepad) g_gamepad = SDL_OpenGamepad(event.gdevice.which);
+    if (event.type == SDL_EVENT_GAMEPAD_REMOVED && g_gamepad &&
+        SDL_GetGamepadID(g_gamepad) == event.gdevice.which) {
+      SDL_CloseGamepad(g_gamepad);
+      g_gamepad = NULL;
+    }
   }
   return 1;
 }
@@ -336,6 +361,7 @@ void df_close(void) {
   if (g_adapter) wgpuAdapterRelease(g_adapter);
   if (g_surface) wgpuSurfaceRelease(g_surface);
   if (g_instance) wgpuInstanceRelease(g_instance);
+  if (g_gamepad) SDL_CloseGamepad(g_gamepad);
   if (g_window) SDL_DestroyWindow(g_window);
   SDL_Quit();
 }
