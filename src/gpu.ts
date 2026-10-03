@@ -16,7 +16,8 @@ export interface Color {
 }
 
 export const BufferUsage = { Vertex: 1, Index: 2, Uniform: 4 };
-export const VertexFormat = { Float32x2: 0, Float32x3: 1, Float32x4: 2, Float32: 3 };
+// Unorm8x4: four bytes read as a vec4f in [0, 1], for packed colors.
+export const VertexFormat = { Float32x2: 0, Float32x3: 1, Float32x4: 2, Float32: 3, Unorm8x4: 4 };
 
 export interface VertexAttribute {
   format: number;

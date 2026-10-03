@@ -21,7 +21,7 @@
 
 enum { DF_USAGE_VERTEX = 1, DF_USAGE_INDEX = 2, DF_USAGE_UNIFORM = 4 };
 enum { DF_PIPELINE_DEPTH = 1, DF_PIPELINE_BLEND = 4 };
-enum { DF_FORMAT_FLOAT32X2 = 0, DF_FORMAT_FLOAT32X3 = 1, DF_FORMAT_FLOAT32X4 = 2, DF_FORMAT_FLOAT32 = 3 };
+enum { DF_FORMAT_FLOAT32X2 = 0, DF_FORMAT_FLOAT32X3 = 1, DF_FORMAT_FLOAT32X4 = 2, DF_FORMAT_FLOAT32 = 3, DF_FORMAT_UNORM8X4 = 4 };
 
 static SDL_Window *g_window;
 static WGPUInstance g_instance;
@@ -339,9 +339,10 @@ int32_t df_pipeline(const uint8_t *wgsl, size_t wgsl_len, uint32_t stride, const
   for (size_t i = 0; i < attribute_count; i++) {
     const uint32_t *t = (const uint32_t *)(attrs + i * 12);
     static const WGPUVertexFormat formats[] = {WGPUVertexFormat_Float32x2, WGPUVertexFormat_Float32x3,
-                                               WGPUVertexFormat_Float32x4, WGPUVertexFormat_Float32};
+                                               WGPUVertexFormat_Float32x4, WGPUVertexFormat_Float32,
+                                               WGPUVertexFormat_Unorm8x4};
     attributes[i] = (WGPUVertexAttribute)WGPU_VERTEX_ATTRIBUTE_INIT;
-    attributes[i].format = t[0] <= DF_FORMAT_FLOAT32 ? formats[t[0]] : WGPUVertexFormat_Float32x3;
+    attributes[i].format = t[0] <= DF_FORMAT_UNORM8X4 ? formats[t[0]] : WGPUVertexFormat_Float32x3;
     attributes[i].offset = t[1];
     attributes[i].shaderLocation = t[2];
   }

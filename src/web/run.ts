@@ -12,7 +12,7 @@ import type { Audio } from "../audio";
 import { type Input, keyCodes, type Pointer, type Touch } from "../input";
 import type { Storage } from "../storage";
 
-const vertexFormats: GPUVertexFormat[] = ["float32x2", "float32x3", "float32x4", "float32"];
+const vertexFormats: GPUVertexFormat[] = ["float32x2", "float32x3", "float32x4", "float32", "unorm8x4"];
 
 export async function loadBytes(path: string): Promise<Uint8Array> {
   const response = await fetch(path);
