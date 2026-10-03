@@ -1,4 +1,4 @@
-import { BufferUsage, type Color, type Draw, type Gpu, type Texture, VertexFormat } from "./gpu";
+import { BufferUsage, type Color, type Draw, type RenderGpu, type Texture, VertexFormat } from "./gpu";
 
 // Immediate-mode 2D drawing modeled on the Canvas2D API, so Canvas2D games port mechanically.
 // Coordinates are logical pixels (top-left origin) mapped onto the whole surface.
@@ -315,7 +315,7 @@ export function parseFont(font: string): FontSpec {
   return { size, italic: font.slice(0, Math.max(start, 0)).includes("italic"), families };
 }
 
-export function createDraw2D(gpu: Gpu, width: number, height: number): Draw2D {
+export function createDraw2D(gpu: RenderGpu, width: number, height: number): Draw2D {
   const pipeline = gpu.createPipeline({
     wgsl: shader,
     stride: FLOATS_PER_VERTEX * 4,

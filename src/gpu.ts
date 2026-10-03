@@ -50,7 +50,9 @@ export interface Draw {
   count: number;
 }
 
-export interface Gpu {
+// Synchronous rendering surface. Code that must also run in scriptc library mode (iOS), where promises are
+// unavailable, depends on this instead of Gpu.
+export interface RenderGpu {
   createBuffer: (usage: number, data: Uint8Array) => number;
   writeBuffer: (buffer: number, data: Uint8Array) => void;
   destroyBuffer: (buffer: number) => void;
@@ -59,10 +61,13 @@ export interface Gpu {
   bind: (pipeline: number, buffer: number, texture: number) => number;
   // smooth: linear filtering (fonts, photos); otherwise nearest (pixel art).
   createTexture: (width: number, height: number, rgba: Uint8Array, smooth: boolean) => Texture;
-  // Decodes PNG bytes.
-  createImage: (png: Uint8Array, smooth: boolean) => Promise<Texture>;
   frame: (clear: Color, draws: Draw[]) => void;
   aspect: () => number;
+}
+
+export interface Gpu extends RenderGpu {
+  // Decodes PNG bytes.
+  createImage: (png: Uint8Array, smooth: boolean) => Promise<Texture>;
 }
 
 // Called every frame with elapsed seconds; return false to stop.

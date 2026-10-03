@@ -1,6 +1,6 @@
 import type { World } from "./ecs";
 import type { MeshData } from "./gltf";
-import { BufferUsage, type Color, type Draw, f32Bytes, type Gpu, u32Bytes, VertexFormat } from "./gpu";
+import { BufferUsage, type Color, type Draw, f32Bytes, type RenderGpu, u32Bytes, VertexFormat } from "./gpu";
 import { compose, lookAt, multiply, perspective, type Vec3, vec3 } from "./math";
 
 export interface Camera {
@@ -57,7 +57,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
 // mvp (16) + model (16) + color (4) floats.
 const UNIFORM_FLOATS = 36;
 
-export function createRenderer(gpu: Gpu): Renderer {
+export function createRenderer(gpu: RenderGpu): Renderer {
   const pipeline = gpu.createPipeline({
     wgsl: shader,
     stride: 24,
