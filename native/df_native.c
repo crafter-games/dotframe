@@ -8,12 +8,18 @@
 #include <SDL3/SDL_metal.h>
 #endif
 
+#define STB_IMAGE_IMPLEMENTATION
+#define STBI_ONLY_PNG
+#define STBI_NO_STDIO
+#include "third_party/stb_image.h"
+
 #define DF_MAX_PIPELINES 64
 #define DF_MAX_BUFFERS 1024
 #define DF_MAX_BIND_GROUPS 1024
+#define DF_MAX_TEXTURES 256
 
 enum { DF_USAGE_VERTEX = 1, DF_USAGE_INDEX = 2, DF_USAGE_UNIFORM = 4 };
-enum { DF_PIPELINE_DEPTH = 1, DF_PIPELINE_UNIFORM = 2 };
+enum { DF_PIPELINE_DEPTH = 1, DF_PIPELINE_BLEND = 4 };
 enum { DF_FORMAT_FLOAT32X2 = 0, DF_FORMAT_FLOAT32X3 = 1, DF_FORMAT_FLOAT32X4 = 2 };
 
 static SDL_Window *g_window;
@@ -29,6 +35,11 @@ static WGPUBuffer g_buffers[DF_MAX_BUFFERS];
 static int32_t g_buffer_count;
 static WGPUBindGroup g_bind_groups[DF_MAX_BIND_GROUPS];
 static int32_t g_bind_group_count;
+static WGPUTexture g_textures[DF_MAX_TEXTURES];
+static WGPUTextureView g_texture_views[DF_MAX_TEXTURES];
+static int32_t g_texture_sizes[DF_MAX_TEXTURES][2];
+static int32_t g_texture_count;
+static WGPUSampler g_sampler;
 static WGPUTexture g_depth_texture;
 static WGPUTextureView g_depth_view;
 static int g_width, g_height;
@@ -138,6 +149,9 @@ int32_t df_open(int32_t width, int32_t height, const uint8_t *title, size_t titl
   wgpuAdapterRequestDevice(g_adapter, NULL, device_cb);
   if (!g_device) return -5;
   g_queue = wgpuDeviceGetQueue(g_device);
+  // Nearest filtering keeps pixel art crisp.
+  WGPUSamplerDescriptor sampler = WGPU_SAMPLER_DESCRIPTOR_INIT;
+  g_sampler = wgpuDeviceCreateSampler(g_device, &sampler);
 
   WGPUSurfaceCapabilities caps = WGPU_SURFACE_CAPABILITIES_INIT;
   wgpuSurfaceGetCapabilities(g_surface, g_adapter, &caps);
@@ -195,6 +209,46 @@ void df_buffer_write(int32_t buffer, const uint8_t *data, size_t len) {
   wgpuQueueWriteBuffer(g_queue, g_buffers[buffer], 0, data, len);
 }
 
+int32_t df_texture(int32_t width, int32_t height, const uint8_t *rgba, size_t len) {
+  if (g_texture_count >= DF_MAX_TEXTURES || width <= 0 || height <= 0) return -1;
+  if (len < (size_t)width * (size_t)height * 4) return -2;
+  WGPUTextureDescriptor desc = WGPU_TEXTURE_DESCRIPTOR_INIT;
+  desc.usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst;
+  desc.size = (WGPUExtent3D){(uint32_t)width, (uint32_t)height, 1};
+  desc.format = WGPUTextureFormat_RGBA8Unorm;
+  WGPUTexture texture = wgpuDeviceCreateTexture(g_device, &desc);
+  WGPUTexelCopyTextureInfo dst = WGPU_TEXEL_COPY_TEXTURE_INFO_INIT;
+  dst.texture = texture;
+  WGPUTexelCopyBufferLayout layout = WGPU_TEXEL_COPY_BUFFER_LAYOUT_INIT;
+  layout.bytesPerRow = (uint32_t)width * 4;
+  layout.rowsPerImage = (uint32_t)height;
+  wgpuQueueWriteTexture(g_queue, &dst, rgba, (size_t)width * (size_t)height * 4, &layout, &desc.size);
+  int32_t id = g_texture_count++;
+  g_textures[id] = texture;
+  g_texture_views[id] = wgpuTextureCreateView(texture, NULL);
+  g_texture_sizes[id][0] = width;
+  g_texture_sizes[id][1] = height;
+  return id;
+}
+
+// Decodes PNG bytes into a texture.
+int32_t df_image(const uint8_t *png, size_t len) {
+  int width, height, channels;
+  stbi_uc *pixels = stbi_load_from_memory(png, (int)len, &width, &height, &channels, 4);
+  if (!pixels) return -3;
+  int32_t id = df_texture(width, height, pixels, (size_t)width * (size_t)height * 4);
+  stbi_image_free(pixels);
+  return id;
+}
+
+int32_t df_texture_width(int32_t texture) {
+  return texture >= 0 && texture < g_texture_count ? g_texture_sizes[texture][0] : 0;
+}
+
+int32_t df_texture_height(int32_t texture) {
+  return texture >= 0 && texture < g_texture_count ? g_texture_sizes[texture][1] : 0;
+}
+
 // attrs: little-endian u32 triples (format, offset, shaderLocation).
 int32_t df_pipeline(const uint8_t *wgsl, size_t wgsl_len, uint32_t stride, const uint8_t *attrs, size_t attrs_len,
                     uint32_t flags) {
@@ -222,8 +276,12 @@ int32_t df_pipeline(const uint8_t *wgsl, size_t wgsl_len, uint32_t stride, const
   layout.attributeCount = attribute_count;
   layout.attributes = attributes;
 
+  WGPUBlendState blend = WGPU_BLEND_STATE_INIT;
+  blend.color = (WGPUBlendComponent){WGPUBlendOperation_Add, WGPUBlendFactor_SrcAlpha, WGPUBlendFactor_OneMinusSrcAlpha};
+  blend.alpha = (WGPUBlendComponent){WGPUBlendOperation_Add, WGPUBlendFactor_One, WGPUBlendFactor_OneMinusSrcAlpha};
   WGPUColorTargetState target = WGPU_COLOR_TARGET_STATE_INIT;
   target.format = g_format;
+  if (flags & DF_PIPELINE_BLEND) target.blend = &blend;
   WGPUFragmentState fragment = WGPU_FRAGMENT_STATE_INIT;
   fragment.module = module;
   fragment.entryPoint = (WGPUStringView){"fs_main", WGPU_STRLEN};
@@ -254,18 +312,34 @@ int32_t df_pipeline(const uint8_t *wgsl, size_t wgsl_len, uint32_t stride, const
   return g_pipeline_count++;
 }
 
-// Binds one uniform buffer at group 0, binding 0 of the pipeline's auto layout.
-int32_t df_bind_uniform(int32_t pipeline, int32_t buffer) {
-  if (pipeline < 0 || pipeline >= g_pipeline_count || buffer < 0 || buffer >= g_buffer_count) return -1;
+// Group 0 of the pipeline's auto layout: binding 0 uniform buffer, binding 1 texture, binding 2 sampler.
+// Pass -1 for a resource the shader does not declare.
+int32_t df_bind(int32_t pipeline, int32_t buffer, int32_t texture) {
+  if (pipeline < 0 || pipeline >= g_pipeline_count) return -1;
   if (g_bind_group_count >= DF_MAX_BIND_GROUPS) return -2;
-  WGPUBindGroupEntry entry = WGPU_BIND_GROUP_ENTRY_INIT;
-  entry.binding = 0;
-  entry.buffer = g_buffers[buffer];
-  entry.size = wgpuBufferGetSize(g_buffers[buffer]);
+  WGPUBindGroupEntry entries[3];
+  size_t count = 0;
+  if (buffer >= 0 && buffer < g_buffer_count) {
+    entries[count] = (WGPUBindGroupEntry)WGPU_BIND_GROUP_ENTRY_INIT;
+    entries[count].binding = 0;
+    entries[count].buffer = g_buffers[buffer];
+    entries[count].size = wgpuBufferGetSize(g_buffers[buffer]);
+    count++;
+  }
+  if (texture >= 0 && texture < g_texture_count) {
+    entries[count] = (WGPUBindGroupEntry)WGPU_BIND_GROUP_ENTRY_INIT;
+    entries[count].binding = 1;
+    entries[count].textureView = g_texture_views[texture];
+    count++;
+    entries[count] = (WGPUBindGroupEntry)WGPU_BIND_GROUP_ENTRY_INIT;
+    entries[count].binding = 2;
+    entries[count].sampler = g_sampler;
+    count++;
+  }
   WGPUBindGroupDescriptor desc = WGPU_BIND_GROUP_DESCRIPTOR_INIT;
   desc.layout = wgpuRenderPipelineGetBindGroupLayout(g_pipelines[pipeline], 0);
-  desc.entryCount = 1;
-  desc.entries = &entry;
+  desc.entryCount = count;
+  desc.entries = entries;
   WGPUBindGroup group = wgpuDeviceCreateBindGroup(g_device, &desc);
   wgpuBindGroupLayoutRelease(desc.layout);
   g_bind_groups[g_bind_group_count] = group;
@@ -319,8 +393,9 @@ int32_t df_begin(double r, double g, double b, uint8_t use_depth) {
   return 0;
 }
 
-// Negative handles mean "none". With an index buffer, count is the index count (uint32 indices).
-void df_draw(int32_t pipeline, int32_t bind_group, int32_t vertex_buffer, int32_t index_buffer, uint32_t count) {
+// Negative handles mean "none". first/count are indices with an index buffer (uint32), vertices otherwise.
+void df_draw(int32_t pipeline, int32_t bind_group, int32_t vertex_buffer, int32_t index_buffer, uint32_t first,
+             uint32_t count) {
   if (!g_frame_pass || pipeline < 0 || pipeline >= g_pipeline_count) return;
   wgpuRenderPassEncoderSetPipeline(g_frame_pass, g_pipelines[pipeline]);
   if (bind_group >= 0 && bind_group < g_bind_group_count)
@@ -330,9 +405,9 @@ void df_draw(int32_t pipeline, int32_t bind_group, int32_t vertex_buffer, int32_
   if (index_buffer >= 0 && index_buffer < g_buffer_count) {
     wgpuRenderPassEncoderSetIndexBuffer(g_frame_pass, g_buffers[index_buffer], WGPUIndexFormat_Uint32, 0,
                                         WGPU_WHOLE_SIZE);
-    wgpuRenderPassEncoderDrawIndexed(g_frame_pass, count, 1, 0, 0, 0);
+    wgpuRenderPassEncoderDrawIndexed(g_frame_pass, count, 1, first, 0, 0);
   } else {
-    wgpuRenderPassEncoderDraw(g_frame_pass, count, 1, 0, 0);
+    wgpuRenderPassEncoderDraw(g_frame_pass, count, 1, first, 0);
   }
 }
 
@@ -353,6 +428,11 @@ void df_end(void) {
 void df_close(void) {
   for (int32_t i = 0; i < g_bind_group_count; i++) wgpuBindGroupRelease(g_bind_groups[i]);
   for (int32_t i = 0; i < g_buffer_count; i++) wgpuBufferRelease(g_buffers[i]);
+  for (int32_t i = 0; i < g_texture_count; i++) {
+    wgpuTextureViewRelease(g_texture_views[i]);
+    wgpuTextureRelease(g_textures[i]);
+  }
+  if (g_sampler) wgpuSamplerRelease(g_sampler);
   for (int32_t i = 0; i < g_pipeline_count; i++) wgpuRenderPipelineRelease(g_pipelines[i]);
   if (g_depth_view) wgpuTextureViewRelease(g_depth_view);
   if (g_depth_texture) wgpuTextureRelease(g_depth_texture);

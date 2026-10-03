@@ -77,10 +77,45 @@
       "returns": "i32"
     },
     {
-      "name": "dfBindUniform",
-      "symbol": "df_bind_uniform",
+      "name": "dfBind",
+      "symbol": "df_bind",
       "params": [
         "i32",
+        "i32",
+        "i32"
+      ],
+      "returns": "i32"
+    },
+    {
+      "name": "dfTexture",
+      "symbol": "df_texture",
+      "params": [
+        "i32",
+        "i32",
+        "bytes"
+      ],
+      "returns": "i32"
+    },
+    {
+      "name": "dfImage",
+      "symbol": "df_image",
+      "params": [
+        "bytes"
+      ],
+      "returns": "i32"
+    },
+    {
+      "name": "dfTextureWidth",
+      "symbol": "df_texture_width",
+      "params": [
+        "i32"
+      ],
+      "returns": "i32"
+    },
+    {
+      "name": "dfTextureHeight",
+      "symbol": "df_texture_height",
+      "params": [
         "i32"
       ],
       "returns": "i32"
@@ -110,6 +145,7 @@
         "i32",
         "i32",
         "i32",
+        "u32",
         "u32"
       ],
       "returns": "void"
