@@ -10,6 +10,6 @@
     },
   },
   "packages": {
-    "@scriptc/runtime-win32-x64-msvc": ["@scriptc/runtime-win32-x64-msvc@0.2.0", "https://registry.k8s.vercel.security/npm/@scriptc/runtime-win32-x64-msvc/-/runtime-win32-x64-msvc-0.2.0.tgz", {}, "sha512-PHKoSqvBxywE61Z7Ifv1u7bck8ebesLkqgZwj86wBTHlNguCvhbeUwHaw+S3XQaps83eeCMFRTKpPLz2pfE4oA=="],
+    "@scriptc/runtime-win32-x64-msvc": ["@scriptc/runtime-win32-x64-msvc@0.2.0", "https://registry.npmjs.org/@scriptc/runtime-win32-x64-msvc/-/runtime-win32-x64-msvc-0.2.0.tgz", {}, "sha512-PHKoSqvBxywE61Z7Ifv1u7bck8ebesLkqgZwj86wBTHlNguCvhbeUwHaw+S3XQaps83eeCMFRTKpPLz2pfE4oA=="],
   }
 }
