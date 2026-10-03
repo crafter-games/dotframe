@@ -5,7 +5,7 @@ Same scene on both engines: N moving animated sprites (32×32 from a 16×16 shee
 Machine: MacBook Pro, Apple M5 Pro, macOS 26.7, 120 Hz display. Date: 2026-10-03. Both runs back to back.
 
 - dotframe: main at the time of the run, scriptc 0.2.0, wgpu-native v29.
-- Bloom: `Bloom-Engine/engine` main at 23dadd0 (JoltPhysics submodule), compiled with Perry 0.5.1520 (`perry compile main.ts -o build/bench`), `setDirect2DMode(true)`.
+- Bloom: `Bloom-Engine/engine` main at 82fd842 (2026-07-27), compiled with Perry 0.5.1520 (`perry compile main.ts -o build/bench`), `setDirect2DMode(true)`.
 
 ## Time to build one frame (ms)
 
