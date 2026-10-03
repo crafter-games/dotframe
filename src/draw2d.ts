@@ -229,8 +229,24 @@ export function parseColor(input: string): Rgba {
   const close = text.lastIndexOf(")");
   if (open > 0 && close > open) {
     const parts = text.slice(open + 1, close).split(",");
-    const channel = (index: number): number => Number(parts[index]?.trim() ?? "0");
+    const channel = (index: number): number => Number((parts[index] ?? "0").trim().split("%").join(""));
     const alpha = parts.length > 3 ? channel(3) : 1;
+    if (text.startsWith("hsl")) {
+      // hsl(h, s%, l%) per CSS Color 4.
+      const h = (((channel(0) % 360) + 360) % 360) / 360;
+      const sat = channel(1) / 100;
+      const light = channel(2) / 100;
+      const q = light < 0.5 ? light * (1 + sat) : light + sat - light * sat;
+      const p = 2 * light - q;
+      const hue = (t: number): number => {
+        const u = t < 0 ? t + 1 : t > 1 ? t - 1 : t;
+        if (u < 1 / 6) return p + (q - p) * 6 * u;
+        if (u < 1 / 2) return q;
+        if (u < 2 / 3) return p + (q - p) * (2 / 3 - u) * 6;
+        return p;
+      };
+      return { r: hue(h + 1 / 3), g: hue(h), b: hue(h - 1 / 3), a: alpha };
+    }
     return { r: channel(0) / 255, g: channel(1) / 255, b: channel(2) / 255, a: alpha };
   }
   return { r: 0, g: 0, b: 0, a: 1 };

@@ -7,6 +7,12 @@ test("parses hex, rgb, rgba and named colors", () => {
   expect(parseColor("rgba(255, 0, 0, 0.5)")).toEqual({ r: 1, g: 0, b: 0, a: 0.5 });
   expect(parseColor("rgb(0, 255, 0)")).toEqual({ r: 0, g: 1, b: 0, a: 1 });
   expect(parseColor("White")).toEqual({ r: 1, g: 1, b: 1, a: 1 });
+  const red = parseColor("hsl(0,100%,50%)");
+  expect([red.r, red.g, red.b]).toEqual([1, 0, 0]);
+  const yellow = parseColor("hsl(55,100%,92%)");
+  expect(yellow.r).toBeCloseTo(1, 2);
+  expect(yellow.g).toBeCloseTo(0.9933, 2);
+  expect(yellow.b).toBeCloseTo(0.84, 2);
 });
 
 function area(points: number[], indices: number[]): number {
