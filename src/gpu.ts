@@ -30,14 +30,23 @@ export interface PipelineOptions {
   stride: number;
   attributes: VertexAttribute[];
   depth: boolean;
+  // Standard alpha blending, for 2D and transparent sprites.
+  blend: boolean;
 }
 
-// Negative handles mean "none". With an index buffer, count is the number of uint32 indices.
+export interface Texture {
+  id: number;
+  width: number;
+  height: number;
+}
+
+// Negative handles mean "none". first/count are uint32 indices with an index buffer, vertices otherwise.
 export interface Draw {
   pipeline: number;
   bindGroup: number;
   vertexBuffer: number;
   indexBuffer: number;
+  first: number;
   count: number;
 }
 
@@ -45,7 +54,11 @@ export interface Gpu {
   createBuffer: (usage: number, data: Uint8Array) => number;
   writeBuffer: (buffer: number, data: Uint8Array) => void;
   createPipeline: (options: PipelineOptions) => number;
-  bindUniform: (pipeline: number, buffer: number) => number;
+  // Group 0: binding 0 uniform buffer, binding 1 texture, binding 2 nearest sampler; -1 skips one.
+  bind: (pipeline: number, buffer: number, texture: number) => number;
+  createTexture: (width: number, height: number, rgba: Uint8Array) => Texture;
+  // Decodes PNG bytes.
+  createImage: (png: Uint8Array) => Promise<Texture>;
   frame: (clear: Color, draws: Draw[]) => void;
   aspect: () => number;
 }

@@ -66,6 +66,7 @@ export function createRenderer(gpu: Gpu): Renderer {
       { format: VertexFormat.Float32x3, offset: 12, location: 1 },
     ],
     depth: true,
+    blend: false,
   });
   const meshes: GpuMesh[] = [];
   const bindings = new Map<number, EntityBinding>();
@@ -102,7 +103,7 @@ export function createRenderer(gpu: Gpu): Renderer {
       let binding = bindings.get(entity);
       if (!binding) {
         const uniformBuffer = gpu.createBuffer(BufferUsage.Uniform, f32Bytes(uniforms));
-        binding = { uniformBuffer, bindGroup: gpu.bindUniform(pipeline, uniformBuffer) };
+        binding = { uniformBuffer, bindGroup: gpu.bind(pipeline, uniformBuffer, -1) };
         bindings.set(entity, binding);
       }
 
@@ -120,6 +121,7 @@ export function createRenderer(gpu: Gpu): Renderer {
         bindGroup: binding.bindGroup,
         vertexBuffer: mesh.vertexBuffer,
         indexBuffer: mesh.indexBuffer,
+        first: 0,
         count: mesh.count,
       });
     }

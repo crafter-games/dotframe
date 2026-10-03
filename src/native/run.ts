@@ -1,9 +1,9 @@
 import { readFileSync } from "node:fs";
-import type { Color, Draw, Gpu, PipelineOptions, Setup, WindowOptions } from "../gpu";
+import type { Color, Draw, Gpu, PipelineOptions, Setup, Texture, WindowOptions } from "../gpu";
 import type { Input } from "../input";
 import {
   dfBegin,
-  dfBindUniform,
+  dfBind,
   dfBuffer,
   dfBufferWrite,
   dfClose,
@@ -12,14 +12,19 @@ import {
   dfGamepadAxis,
   dfGamepadButton,
   dfHeight,
+  dfImage,
   dfKeyDown,
   dfOpen,
   dfPipeline,
   dfPoll,
+  dfTexture,
+  dfTextureHeight,
+  dfTextureWidth,
   dfWidth,
 } from "./ffi";
 
 const PIPELINE_DEPTH = 1;
+const PIPELINE_BLEND = 4;
 
 // SDL scancodes indexed by the engine Key ids in src/input.ts.
 const scancodes = [80, 79, 82, 81, 44, 26, 4, 22, 7, 13, 14, 15, 41, 40];
@@ -49,24 +54,36 @@ export async function run(options: WindowOptions, setup: Setup): Promise<void> {
         attributes[i * 3 + 1] = attribute.offset;
         attributes[i * 3 + 2] = attribute.location;
       }
-      const flags = pipelineOptions.depth ? PIPELINE_DEPTH : 0;
+      const flags = (pipelineOptions.depth ? PIPELINE_DEPTH : 0) | (pipelineOptions.blend ? PIPELINE_BLEND : 0);
       const attributeBytes = new Uint8Array(attributes.buffer, attributes.byteOffset, attributes.byteLength);
       const pipeline = dfPipeline(pipelineOptions.wgsl, pipelineOptions.stride, attributeBytes, flags);
       if (pipeline < 0) throw new Error(`dfPipeline failed: ${pipeline}`);
       if (pipelineOptions.depth) depthPipelines.add(pipeline);
       return pipeline;
     },
-    bindUniform: (pipeline: number, buffer: number): number => {
-      const group = dfBindUniform(pipeline, buffer);
-      if (group < 0) throw new Error(`dfBindUniform failed: ${group}`);
+    bind: (pipeline: number, buffer: number, texture: number): number => {
+      const group = dfBind(pipeline, buffer, texture);
+      if (group < 0) throw new Error(`dfBind failed: ${group}`);
       return group;
+    },
+    createTexture: (width: number, height: number, rgba: Uint8Array): Texture => {
+      const id = dfTexture(width, height, rgba);
+      if (id < 0) throw new Error(`dfTexture failed: ${id}`);
+      return { id, width, height };
+    },
+    createImage: async (png: Uint8Array): Promise<Texture> => {
+      const id = dfImage(png);
+      if (id < 0) throw new Error(`dfImage failed: ${id}`);
+      return { id, width: dfTextureWidth(id), height: dfTextureHeight(id) };
     },
     frame: (clear: Color, draws: Draw[]): void => {
       // Pipelines without depth cannot run in a pass with a depth attachment.
       let usesDepth = false;
       for (const draw of draws) if (depthPipelines.has(draw.pipeline)) usesDepth = true;
       if (dfBegin(clear.r, clear.g, clear.b, usesDepth) !== 0) return;
-      for (const draw of draws) dfDraw(draw.pipeline, draw.bindGroup, draw.vertexBuffer, draw.indexBuffer, draw.count);
+      for (const draw of draws) {
+        dfDraw(draw.pipeline, draw.bindGroup, draw.vertexBuffer, draw.indexBuffer, draw.first, draw.count);
+      }
       dfEnd();
     },
     aspect: (): number => dfWidth() / Math.max(dfHeight(), 1),

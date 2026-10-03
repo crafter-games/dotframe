@@ -1,4 +1,13 @@
-import { BufferUsage, type Color, type Draw, type Gpu, type PipelineOptions, type Setup, type WindowOptions } from "../gpu";
+import {
+  BufferUsage,
+  type Color,
+  type Draw,
+  type Gpu,
+  type PipelineOptions,
+  type Setup,
+  type Texture,
+  type WindowOptions,
+} from "../gpu";
 import type { Input } from "../input";
 
 // KeyboardEvent.code values indexed by the engine Key ids in src/input.ts.
@@ -55,6 +64,19 @@ export async function run(options: WindowOptions, setup: Setup): Promise<void> {
   const pipelines: GPURenderPipeline[] = [];
   const buffers: GPUBuffer[] = [];
   const bindGroups: GPUBindGroup[] = [];
+  const textureViews: GPUTextureView[] = [];
+  // Nearest filtering keeps pixel art crisp.
+  const sampler = device.createSampler({ magFilter: "nearest", minFilter: "nearest" });
+  const uploadTexture = (width: number, height: number, write: (texture: GPUTexture) => void): Texture => {
+    const texture = device.createTexture({
+      size: [width, height],
+      format: "rgba8unorm",
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+    });
+    write(texture);
+    textureViews.push(texture.createView());
+    return { id: textureViews.length - 1, width, height };
+  };
   const depthPipelines = new Set<number>();
 
   const gpu: Gpu = {
@@ -91,7 +113,21 @@ export async function run(options: WindowOptions, setup: Setup): Promise<void> {
         device.createRenderPipeline({
           layout: "auto",
           vertex: { module, entryPoint: "vs_main", buffers: buffersLayout },
-          fragment: { module, entryPoint: "fs_main", targets: [{ format }] },
+          fragment: {
+            module,
+            entryPoint: "fs_main",
+            targets: [
+              {
+                format,
+                blend: pipelineOptions.blend
+                  ? {
+                      color: { srcFactor: "src-alpha", dstFactor: "one-minus-src-alpha", operation: "add" },
+                      alpha: { srcFactor: "one", dstFactor: "one-minus-src-alpha", operation: "add" },
+                    }
+                  : undefined,
+              },
+            ],
+          },
           primitive: pipelineOptions.depth ? { cullMode: "back" } : {},
           depthStencil: pipelineOptions.depth
             ? { format: "depth24plus", depthWriteEnabled: true, depthCompare: "less" }
@@ -101,14 +137,25 @@ export async function run(options: WindowOptions, setup: Setup): Promise<void> {
       if (pipelineOptions.depth) depthPipelines.add(pipelines.length - 1);
       return pipelines.length - 1;
     },
-    bindUniform: (pipeline: number, buffer: number): number => {
-      bindGroups.push(
-        device.createBindGroup({
-          layout: pipelines[pipeline].getBindGroupLayout(0),
-          entries: [{ binding: 0, resource: { buffer: buffers[buffer] } }],
-        }),
-      );
+    bind: (pipeline: number, buffer: number, texture: number): number => {
+      const entries: GPUBindGroupEntry[] = [];
+      if (buffer >= 0) entries.push({ binding: 0, resource: { buffer: buffers[buffer] } });
+      if (texture >= 0) {
+        entries.push({ binding: 1, resource: textureViews[texture] });
+        entries.push({ binding: 2, resource: sampler });
+      }
+      bindGroups.push(device.createBindGroup({ layout: pipelines[pipeline].getBindGroupLayout(0), entries }));
       return bindGroups.length - 1;
+    },
+    createTexture: (width: number, height: number, rgba: Uint8Array): Texture =>
+      uploadTexture(width, height, (texture) =>
+        device.queue.writeTexture({ texture }, rgba, { bytesPerRow: width * 4, rowsPerImage: height }, [width, height]),
+      ),
+    createImage: async (png: Uint8Array): Promise<Texture> => {
+      const bitmap = await createImageBitmap(new Blob([new Uint8Array(png)], { type: "image/png" }), { premultiplyAlpha: "none" });
+      return uploadTexture(bitmap.width, bitmap.height, (texture) =>
+        device.queue.copyExternalImageToTexture({ source: bitmap }, { texture }, [bitmap.width, bitmap.height]),
+      );
     },
     frame: (clear: Color, draws: Draw[]): void => {
       const encoder = device.createCommandEncoder();
@@ -135,9 +182,9 @@ export async function run(options: WindowOptions, setup: Setup): Promise<void> {
         if (draw.vertexBuffer >= 0) pass.setVertexBuffer(0, buffers[draw.vertexBuffer]);
         if (draw.indexBuffer >= 0) {
           pass.setIndexBuffer(buffers[draw.indexBuffer], "uint32");
-          pass.drawIndexed(draw.count);
+          pass.drawIndexed(draw.count, 1, draw.first);
         } else {
-          pass.draw(draw.count);
+          pass.draw(draw.count, 1, draw.first);
         }
       }
       pass.end();
