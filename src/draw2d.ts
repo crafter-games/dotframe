@@ -18,6 +18,7 @@ export interface Draw2D {
   setStrokeStyle: (color: string) => void;
   setLineWidth: (width: number) => void;
   setGlobalAlpha: (alpha: number) => void;
+  getGlobalAlpha: () => number;
   fillRect: (x: number, y: number, width: number, height: number) => void;
   strokeRect: (x: number, y: number, width: number, height: number) => void;
   beginPath: () => void;
@@ -657,6 +658,7 @@ export function createDraw2D(gpu: Gpu, width: number, height: number): Draw2D {
     setGlobalAlpha: (alpha: number): void => {
       state.alpha = alpha;
     },
+    getGlobalAlpha: (): number => state.alpha,
     fillRect: (x: number, y: number, w: number, h: number): void => {
       quad(x, y, x + w, y, x + w, y + h, x, y + h, state.fill);
     },
