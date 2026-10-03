@@ -1,0 +1,7 @@
+node_modules/
+build/
+vendor/build/
+vendor/SDL3-*/
+vendor/wgpu/
+.scriptc/
+*.png

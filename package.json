@@ -1,0 +1,11 @@
+{
+  "name": "dotframe",
+  "version": "0.0.0",
+  "private": true,
+  "description": "TS-first game engine: one codebase for web and native macOS/Windows binaries via scriptc",
+  "license": "MIT",
+  "type": "module",
+  "devDependencies": {
+    "@scriptc/runtime-win32-x64-msvc": "0.2.0"
+  }
+}
