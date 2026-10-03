@@ -38,6 +38,15 @@ export interface Draw2D {
   closePath: () => void;
   fill: () => void;
   stroke: () => void;
+  // Registers an SDF font baked by tools/bake-font.c under one or more CSS family names.
+  addFont: (families: string[], atlas: Texture, metricsJson: string) => void;
+  // CSS font shorthand, e.g. 'italic 900 24px "Arial Black", Impact, sans-serif'.
+  setFont: (font: string) => void;
+  setTextAlign: (align: string) => void;
+  setTextBaseline: (baseline: string) => void;
+  fillText: (text: string, x: number, y: number) => void;
+  strokeText: (text: string, x: number, y: number) => void;
+  measureText: (text: string) => TextMetrics2D;
   drawImage: (
     image: Texture,
     sx: number,
@@ -49,6 +58,41 @@ export interface Draw2D {
     dw: number,
     dh: number,
   ) => void;
+}
+
+export interface TextMetrics2D {
+  width: number;
+}
+
+interface Glyph {
+  code: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  offsetX: number;
+  offsetY: number;
+  advance: number;
+}
+
+interface FontMetrics {
+  size: number;
+  ascent: number;
+  descent: number;
+  distanceRange: number;
+  glyphs: Glyph[];
+}
+
+interface Font {
+  atlas: Texture;
+  metrics: FontMetrics;
+  glyphs: Map<number, Glyph>;
+}
+
+export interface FontSpec {
+  size: number;
+  italic: boolean;
+  families: string[];
 }
 
 interface Rgba {
@@ -69,6 +113,9 @@ interface State {
   stroke: Rgba;
   lineWidth: number;
   alpha: number;
+  font: FontSpec;
+  textAlign: string;
+  textBaseline: string;
 }
 
 interface Batch {
@@ -87,24 +134,41 @@ struct VertexOut {
   @builtin(position) position: vec4f,
   @location(0) uv: vec2f,
   @location(1) color: vec4f,
+  @location(2) edge: f32,
 }
 
 @vertex
-fn vs_main(@location(0) position: vec2f, @location(1) uv: vec2f, @location(2) color: vec4f) -> VertexOut {
+fn vs_main(
+  @location(0) position: vec2f,
+  @location(1) uv: vec2f,
+  @location(2) color: vec4f,
+  @location(3) edge: f32,
+) -> VertexOut {
   var out: VertexOut;
   out.position = vec4f(position.x / u.size.x * 2.0 - 1.0, 1.0 - position.y / u.size.y * 2.0, 0.0, 1.0);
   out.uv = uv;
   out.color = color;
+  out.edge = edge;
   return out;
 }
 
+// edge < 0: plain texture sample. edge >= 0: signed distance field cut at that alpha.
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4f {
-  return textureSample(tex, samp, in.uv) * in.color;
+  let sample = textureSample(tex, samp, in.uv);
+  let distance = sample.a;
+  let smoothing = max(fwidth(distance) * 0.75, 0.001);
+  let coverage = smoothstep(in.edge - smoothing, in.edge + smoothing, distance);
+  if (in.edge < 0.0) {
+    return sample * in.color;
+  }
+  return vec4f(in.color.rgb, in.color.a * coverage);
 }
 `;
 
-const FLOATS_PER_VERTEX = 8;
+const FLOATS_PER_VERTEX = 9;
+// stb_truetype SDF: 0.5 alpha on the outline, 128/distanceRange alpha steps per atlas pixel.
+const SDF_ON_EDGE = 128 / 255;
 const MAX_VERTICES = 196608;
 const CURVE_SEGMENTS = 32;
 
@@ -201,6 +265,20 @@ export function triangulate(points: number[]): number[] {
   return result;
 }
 
+// Parses the size, italic flag and family list out of a CSS font shorthand.
+export function parseFont(font: string): FontSpec {
+  const pxIndex = font.indexOf("px");
+  let start = pxIndex;
+  while (start > 0 && "0123456789.".includes(font[start - 1])) start--;
+  const size = pxIndex > 0 ? Number(font.slice(start, pxIndex)) : 10;
+  const families: string[] = [];
+  for (const part of font.slice(pxIndex > 0 ? pxIndex + 2 : 0).split(",")) {
+    const name = part.trim().split('"').join("").split("'").join("");
+    if (name.length > 0) families.push(name.toLowerCase());
+  }
+  return { size, italic: font.slice(0, Math.max(start, 0)).includes("italic"), families };
+}
+
 export function createDraw2D(gpu: Gpu, width: number, height: number): Draw2D {
   const pipeline = gpu.createPipeline({
     wgsl: shader,
@@ -209,6 +287,7 @@ export function createDraw2D(gpu: Gpu, width: number, height: number): Draw2D {
       { format: VertexFormat.Float32x2, offset: 0, location: 0 },
       { format: VertexFormat.Float32x2, offset: 8, location: 1 },
       { format: VertexFormat.Float32x4, offset: 16, location: 2 },
+      { format: VertexFormat.Float32, offset: 32, location: 3 },
     ],
     depth: false,
     blend: true,
@@ -220,7 +299,7 @@ export function createDraw2D(gpu: Gpu, width: number, height: number): Draw2D {
     BufferUsage.Uniform,
     new Uint8Array(uniforms.buffer, uniforms.byteOffset, uniforms.byteLength),
   );
-  const white = gpu.createTexture(1, 1, new Uint8Array([255, 255, 255, 255]));
+  const white = gpu.createTexture(1, 1, new Uint8Array([255, 255, 255, 255]), false);
   const bindGroups = new Map<number, number>();
   const bindGroupFor = (texture: number): number => {
     let group = bindGroups.get(texture);
@@ -242,7 +321,12 @@ export function createDraw2D(gpu: Gpu, width: number, height: number): Draw2D {
     stroke: { r: 0, g: 0, b: 0, a: 1 },
     lineWidth: 1,
     alpha: 1,
+    font: { size: 10, italic: false, families: ["sans-serif"] },
+    textAlign: "start",
+    textBaseline: "alphabetic",
   });
+  const fonts = new Map<string, Font>();
+  let defaultFont: Font | null = null;
   let state = initialState();
   const stack: State[] = [];
   let vertexCount = 0;
@@ -251,7 +335,7 @@ export function createDraw2D(gpu: Gpu, width: number, height: number): Draw2D {
   let subpaths: number[][] = [];
   let closed: boolean[] = [];
 
-  const vertex = (x: number, y: number, u: number, v: number, color: Rgba): void => {
+  const vertex = (x: number, y: number, u: number, v: number, color: Rgba, edge: number): void => {
     if (vertexCount >= MAX_VERTICES) return;
     const o = vertexCount * FLOATS_PER_VERTEX;
     vertices[o] = state.a * x + state.c * y + state.e;
@@ -262,6 +346,7 @@ export function createDraw2D(gpu: Gpu, width: number, height: number): Draw2D {
     vertices[o + 5] = color.g;
     vertices[o + 6] = color.b;
     vertices[o + 7] = color.a * state.alpha;
+    vertices[o + 8] = edge;
     vertexCount++;
   };
 
@@ -286,12 +371,12 @@ export function createDraw2D(gpu: Gpu, width: number, height: number): Draw2D {
     color: Rgba,
   ): void => {
     if (!useTexture(white.id, 6)) return;
-    vertex(x0, y0, 0, 0, color);
-    vertex(x1, y1, 0, 0, color);
-    vertex(x2, y2, 0, 0, color);
-    vertex(x0, y0, 0, 0, color);
-    vertex(x2, y2, 0, 0, color);
-    vertex(x3, y3, 0, 0, color);
+    vertex(x0, y0, 0, 0, color, -1);
+    vertex(x1, y1, 0, 0, color, -1);
+    vertex(x2, y2, 0, 0, color, -1);
+    vertex(x0, y0, 0, 0, color, -1);
+    vertex(x2, y2, 0, 0, color, -1);
+    vertex(x3, y3, 0, 0, color, -1);
   };
 
   const strokeSegment = (ax: number, ay: number, bx: number, by: number): void => {
@@ -337,6 +422,62 @@ export function createDraw2D(gpu: Gpu, width: number, height: number): Draw2D {
       const px = Math.cos(angle) * radiusX;
       const py = Math.sin(angle) * radiusY;
       points.push(x + px * cos - py * sin, y + px * sin + py * cos);
+    }
+  };
+
+  const resolveFont = (): Font | null => {
+    for (const family of state.font.families) {
+      const font = fonts.get(family);
+      if (font) return font;
+    }
+    return defaultFont;
+  };
+
+  const textWidth = (font: Font, text: string, scale: number): number => {
+    let width = 0;
+    for (let i = 0; i < text.length; i++) width += (font.glyphs.get(text.charCodeAt(i))?.advance ?? 0) * scale;
+    return width;
+  };
+
+  const drawText = (text: string, x: number, y: number, color: Rgba, outline: number): void => {
+    const font = resolveFont();
+    if (!font) return;
+    const scale = state.font.size / font.metrics.size;
+    const width = textWidth(font, text, scale);
+    let penX = x;
+    if (state.textAlign === "center") penX -= width / 2;
+    else if (state.textAlign === "right" || state.textAlign === "end") penX -= width;
+    let baseline = y;
+    if (state.textBaseline === "middle") baseline += ((font.metrics.ascent + font.metrics.descent) / 2) * scale;
+    else if (state.textBaseline === "top" || state.textBaseline === "hanging") baseline += font.metrics.ascent * scale;
+    else if (state.textBaseline === "bottom" || state.textBaseline === "ideographic") baseline += font.metrics.descent * scale;
+    const stepsPerPixel = 128 / font.metrics.distanceRange / 255;
+    const edge = Math.max(0.02, SDF_ON_EDGE - (outline / scale) * stepsPerPixel);
+    const skew = state.font.italic ? 0.2 : 0;
+    const atlasWidth = font.atlas.width;
+    const atlasHeight = font.atlas.height;
+    for (let i = 0; i < text.length; i++) {
+      const glyph = font.glyphs.get(text.charCodeAt(i));
+      if (!glyph) continue;
+      if (glyph.width > 0 && useTexture(font.atlas.id, 6)) {
+        const x0 = penX + glyph.offsetX * scale;
+        const y0 = baseline + glyph.offsetY * scale;
+        const x1 = x0 + glyph.width * scale;
+        const y1 = y0 + glyph.height * scale;
+        const u0 = glyph.x / atlasWidth;
+        const v0 = glyph.y / atlasHeight;
+        const u1 = (glyph.x + glyph.width) / atlasWidth;
+        const v1 = (glyph.y + glyph.height) / atlasHeight;
+        const top = (baseline - y0) * skew;
+        const bottom = (baseline - y1) * skew;
+        vertex(x0 + top, y0, u0, v0, color, edge);
+        vertex(x1 + top, y0, u1, v0, color, edge);
+        vertex(x1 + bottom, y1, u1, v1, color, edge);
+        vertex(x0 + top, y0, u0, v0, color, edge);
+        vertex(x1 + bottom, y1, u1, v1, color, edge);
+        vertex(x0 + bottom, y1, u0, v1, color, edge);
+      }
+      penX += glyph.advance * scale;
     }
   };
 
@@ -465,7 +606,7 @@ export function createDraw2D(gpu: Gpu, width: number, height: number): Draw2D {
       for (const points of subpaths) {
         const indices = triangulate(points);
         if (!useTexture(white.id, indices.length)) return;
-        for (const index of indices) vertex(points[index * 2], points[index * 2 + 1], 0, 0, state.fill);
+        for (const index of indices) vertex(points[index * 2], points[index * 2 + 1], 0, 0, state.fill, -1);
       }
     },
     stroke: (): void => {
@@ -477,6 +618,29 @@ export function createDraw2D(gpu: Gpu, width: number, height: number): Draw2D {
         }
         if (closed[s] && count > 2) strokeSegment(points[count * 2 - 2], points[count * 2 - 1], points[0], points[1]);
       }
+    },
+    addFont: (families: string[], atlas: Texture, metricsJson: string): void => {
+      const metrics = JSON.parse(metricsJson) as FontMetrics;
+      const glyphs = new Map<number, Glyph>();
+      for (const glyph of metrics.glyphs) glyphs.set(glyph.code, glyph);
+      const font: Font = { atlas, metrics, glyphs };
+      for (const family of families) fonts.set(family.toLowerCase(), font);
+      if (!defaultFont) defaultFont = font;
+    },
+    setFont: (font: string): void => {
+      state.font = parseFont(font);
+    },
+    setTextAlign: (align: string): void => {
+      state.textAlign = align;
+    },
+    setTextBaseline: (baseline: string): void => {
+      state.textBaseline = baseline;
+    },
+    fillText: (text: string, x: number, y: number): void => drawText(text, x, y, state.fill, 0),
+    strokeText: (text: string, x: number, y: number): void => drawText(text, x, y, state.stroke, state.lineWidth / 2),
+    measureText: (text: string): TextMetrics2D => {
+      const font = resolveFont();
+      return { width: font ? textWidth(font, text, state.font.size / font.metrics.size) : 0 };
     },
     drawImage: (
       image: Texture,
@@ -495,12 +659,12 @@ export function createDraw2D(gpu: Gpu, width: number, height: number): Draw2D {
       const u1 = (sx + sw) / image.width;
       const v1 = (sy + sh) / image.height;
       const tint: Rgba = { r: 1, g: 1, b: 1, a: 1 };
-      vertex(dx, dy, u0, v0, tint);
-      vertex(dx + dw, dy, u1, v0, tint);
-      vertex(dx + dw, dy + dh, u1, v1, tint);
-      vertex(dx, dy, u0, v0, tint);
-      vertex(dx + dw, dy + dh, u1, v1, tint);
-      vertex(dx, dy + dh, u0, v1, tint);
+      vertex(dx, dy, u0, v0, tint, -1);
+      vertex(dx + dw, dy, u1, v0, tint, -1);
+      vertex(dx + dw, dy + dh, u1, v1, tint, -1);
+      vertex(dx, dy, u0, v0, tint, -1);
+      vertex(dx + dw, dy + dh, u1, v1, tint, -1);
+      vertex(dx, dy + dh, u0, v1, tint, -1);
     },
   };
 }

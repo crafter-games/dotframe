@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { parseColor, triangulate } from "../src/draw2d";
+import { parseColor, parseFont, triangulate } from "../src/draw2d";
 
 test("parses hex, rgb, rgba and named colors", () => {
   expect(parseColor("#fff")).toEqual({ r: 1, g: 1, b: 1, a: 1 });
@@ -39,4 +39,14 @@ test("triangulates a concave L shape without covering the notch", () => {
 test("handles clockwise winding the same as counterclockwise", () => {
   const clockwise = [0, 10, 10, 10, 10, 0, 0, 0];
   expect(area(clockwise, triangulate(clockwise))).toBeCloseTo(100, 6);
+});
+
+test("parses CSS font shorthands used by Canvas2D games", () => {
+  expect(parseFont('italic 900 24px "Arial Black", Impact, sans-serif')).toEqual({
+    size: 24,
+    italic: true,
+    families: ["arial black", "impact", "sans-serif"],
+  });
+  expect(parseFont("72px Bangers, Impact")).toEqual({ size: 72, italic: false, families: ["bangers", "impact"] });
+  expect(parseFont("bold 9.5px Menlo, monospace").size).toBe(9.5);
 });
