@@ -71,7 +71,9 @@ The 2D layer's `vertices` buffer is a captured `let` because it is reassigned wh
 4. **`TypedArray.prototype.fill`** has no lowering yet (SC2020); dotframe clears pixels in a loop.
 5. **Elements of nested array literals are not numbers** (SC1043): `for (const rail of [[a, b], [c, d]]) for (let x = rail[0]; x < rail[1]; x++)` fails with "comparing non-number, non-string values". A flat `const values = [x1, x1 + 26]` read as `values[k]` fails the same way when `x1` comes from a function destructured out of an object (`const { X } = layer; const x1 = X(10)`); passing the values as typed parameters to a helper works.
 6. **Spread of an annotated `.map()` callback parameter** (SC1090): `specs.map((spec: Spec): Out => ({ ...spec, extra: 0 }))` is rejected because the parameter is treated as possibly `undefined`. Building the object field by field in a `for...of` works.
-7. **Promise callbacks in synchronous loops**: a game loop written as `while (poll()) frame()` never runs `.then` callbacks, so an async image load never completes. Correct per the event loop, but surprising for anyone porting a browser game, where `requestAnimationFrame` yields every frame. dotframe awaits `Promise.resolve()` once per frame. A short note in the docs for loop-style programs would help.
+7. **A callback with fewer parameters than an optional callback field** (SC2003, "union conversion has no unambiguous layout mapping"): with `update?: (p: P, g: G) => void`, passing `update: (p: P): void => ...` is valid TypeScript but rejected. Declaring the unused parameter (`_g: G`) compiles.
+8. **Typed `.catch` parameters** (SC1090): `.catch((e: Error) => ...)` is rejected; `(e: unknown)` with `instanceof` works, as the diagnostic suggests.
+9. **Promise callbacks in synchronous loops**: a game loop written as `while (poll()) frame()` never runs `.then` callbacks, so an async image load never completes. Correct per the event loop, but surprising for anyone porting a browser game, where `requestAnimationFrame` yields every frame. dotframe awaits `Promise.resolve()` once per frame. A short note in the docs for loop-style programs would help.
 
 ## FFI
 
