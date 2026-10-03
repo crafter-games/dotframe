@@ -38,3 +38,21 @@ Bloom builds the frame about 30% faster. The work splits differently: each Bloom
 - The `@bloomengine/engine` npm package (0.4.16, 2026-06-09) does not work with Perry 0.5.1520: the full scene fails with `TypeError: Expected number for native f64 parameter`. Each draw section alone runs; sprites and text together fail. Bloom from the repository's main branch works.
 - Calling `getTime()` before `initWindow()` panics with `Engine not initialized`.
 - A fresh clone needs `git submodule update --init` for JoltPhysics, or the native build fails in CMake.
+
+## After dotframe's own fixes
+
+Three changes on dotframe's side, guided by the profile in `bench/scriptc/FEEDBACK.md` (second round):
+
+1. 24-byte vertices instead of 36: color packed as `unorm8x4`, which cut the vertex upload (`memmove`) by a third.
+2. The batch being filled lives in plain numbers, so `useTexture` no longer reads `batches[batches.length - 1]` on every draw call (pattern I, an allocation per read in scriptc builds).
+3. The packed color is memoized, since consecutive draw calls almost always share a color.
+
+Rerun back to back on the same machine:
+
+| 50,000 sprites | dotframe before | dotframe after | Bloom |
+|---|---:|---:|---:|
+| Build the frame | 13.76 ms | 10.95 ms | 9.31 ms |
+| Frame time | 17.1 ms | 12.9 ms | 12.7 ms |
+| Peak resident memory | 266 MB | 242 MB | 243 MB |
+
+Frame time and memory are now level with Bloom; frame building is 18% behind, down from 42%. The remaining gap is mostly path points kept in `number[]` (`fill` and `arc`, scriptc pattern H) and the refcounting on captured typed arrays in the benchmark's own update loop (pattern G).
