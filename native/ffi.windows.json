@@ -50,22 +50,12 @@
       "returns": "bool"
     },
     {
-      "name": "dfMouseX",
-      "symbol": "df_mouse_x",
-      "params": [],
+      "name": "dfMouse",
+      "symbol": "df_mouse",
+      "params": [
+        "i32"
+      ],
       "returns": "f64"
-    },
-    {
-      "name": "dfMouseY",
-      "symbol": "df_mouse_y",
-      "params": [],
-      "returns": "f64"
-    },
-    {
-      "name": "dfMouseButtons",
-      "symbol": "df_mouse_buttons",
-      "params": [],
-      "returns": "u32"
     },
     {
       "name": "dfPrefPath",
@@ -145,17 +135,10 @@
       "returns": "i32"
     },
     {
-      "name": "dfTextureWidth",
-      "symbol": "df_texture_width",
+      "name": "dfTextureSize",
+      "symbol": "df_texture_size",
       "params": [
-        "i32"
-      ],
-      "returns": "i32"
-    },
-    {
-      "name": "dfTextureHeight",
-      "symbol": "df_texture_height",
-      "params": [
+        "i32",
         "i32"
       ],
       "returns": "i32"
@@ -165,6 +148,21 @@
       "symbol": "df_poll",
       "params": [],
       "returns": "bool"
+    },
+    {
+      "name": "dfTouchCount",
+      "symbol": "df_touch_count",
+      "params": [],
+      "returns": "i32"
+    },
+    {
+      "name": "dfTouch",
+      "symbol": "df_touch",
+      "params": [
+        "i32",
+        "i32"
+      ],
+      "returns": "f64"
     },
     {
       "name": "dfBegin",

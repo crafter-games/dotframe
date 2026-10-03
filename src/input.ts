@@ -194,6 +194,14 @@ export interface Pointer {
   buttons: number;
 }
 
+export interface Touch {
+  // Stable while the finger stays down.
+  id: number;
+  // Normalized to the window content, [0, 1] on each axis.
+  x: number;
+  y: number;
+}
+
 export interface Input {
   down: (key: number) => boolean;
   // First held key, or -1; used to rebind controls.
@@ -202,4 +210,6 @@ export interface Input {
   axis: (pad: number, axis: number) => number;
   button: (pad: number, button: number) => boolean;
   pointer: () => Pointer;
+  // Fingers currently down, in no particular order.
+  touches: () => Touch[];
 }

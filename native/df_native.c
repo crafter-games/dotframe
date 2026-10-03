@@ -6,6 +6,7 @@
 #include <webgpu/webgpu.h>
 #if defined(__APPLE__)
 #include <SDL3/SDL_metal.h>
+#include <TargetConditionals.h>
 #endif
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -120,6 +121,9 @@ int32_t df_open(int32_t width, int32_t height, const uint8_t *title, size_t titl
 #if defined(__APPLE__)
   flags |= SDL_WINDOW_METAL;
 #endif
+#if defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
+  flags |= SDL_WINDOW_FULLSCREEN | SDL_WINDOW_BORDERLESS;
+#endif
   g_window = SDL_CreateWindow(title_buf, width, height, flags);
   if (!g_window) return -2;
   // A freshly launched game should take focus, so keyboard and mouse reach it.
@@ -219,22 +223,15 @@ static void mouse_relative(double *nx, double *ny) {
   *ny = h > 0 ? (gy - wy) / h : 0.0;
 }
 
-double df_mouse_x(void) {
+// Field 0 x, 1 y (normalized), 2 buttons (bit 0 left, bit 1 middle, bit 2 right).
+double df_mouse(int32_t field) {
+  if (field == 2) {
+    SDL_MouseButtonFlags flags = SDL_GetGlobalMouseState(NULL, NULL);
+    return (flags & SDL_BUTTON_LMASK ? 1 : 0) | (flags & SDL_BUTTON_MMASK ? 2 : 0) | (flags & SDL_BUTTON_RMASK ? 4 : 0);
+  }
   double x, y;
   mouse_relative(&x, &y);
-  return x;
-}
-
-double df_mouse_y(void) {
-  double x, y;
-  mouse_relative(&x, &y);
-  return y;
-}
-
-// Bit 0 left, bit 1 middle, bit 2 right.
-uint32_t df_mouse_buttons(void) {
-  SDL_MouseButtonFlags flags = SDL_GetGlobalMouseState(NULL, NULL);
-  return (flags & SDL_BUTTON_LMASK ? 1u : 0u) | (flags & SDL_BUTTON_MMASK ? 2u : 0u) | (flags & SDL_BUTTON_RMASK ? 4u : 0u);
+  return field == 0 ? x : y;
 }
 
 // Writes the per-user writable directory for org/app (UTF-8, trailing separator) into out; returns its length or -1.
@@ -321,12 +318,9 @@ int32_t df_image(const uint8_t *png, size_t len, uint8_t smooth) {
   return id;
 }
 
-int32_t df_texture_width(int32_t texture) {
-  return texture >= 0 && texture < g_texture_count ? g_texture_sizes[texture][0] : 0;
-}
-
-int32_t df_texture_height(int32_t texture) {
-  return texture >= 0 && texture < g_texture_count ? g_texture_sizes[texture][1] : 0;
+// axis 0 width, 1 height.
+int32_t df_texture_size(int32_t texture, int32_t axis) {
+  return texture >= 0 && texture < g_texture_count ? g_texture_sizes[texture][axis ? 1 : 0] : 0;
 }
 
 // attrs: little-endian u32 triples (format, offset, shaderLocation).
@@ -426,34 +420,94 @@ int32_t df_bind(int32_t pipeline, int32_t buffer, int32_t texture) {
   return g_bind_group_count++;
 }
 
-// Returns false once the window is asked to close.
-uint8_t df_poll(void) {
-  SDL_Event event;
-  while (SDL_PollEvent(&event)) {
-    if (event.type == SDL_EVENT_QUIT || event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) return 0;
-    if (event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED) configure_surface();
-    // Gamepads keep the first free slot they get, so player 1 stays player 1 across reconnects of others.
-    if (event.type == SDL_EVENT_GAMEPAD_ADDED) {
+#define DF_MAX_TOUCHES 10
+
+typedef struct {
+  SDL_FingerID id;
+  float x;
+  float y;
+} Touch;
+
+static Touch g_touches[DF_MAX_TOUCHES];
+static int32_t g_touch_count;
+static uint8_t g_quit;
+
+static void touch_set(SDL_FingerID id, float x, float y) {
+  for (int32_t i = 0; i < g_touch_count; i++) {
+    if (g_touches[i].id == id) {
+      g_touches[i].x = x;
+      g_touches[i].y = y;
+      return;
+    }
+  }
+  if (g_touch_count < DF_MAX_TOUCHES) g_touches[g_touch_count++] = (Touch){id, x, y};
+}
+
+static void touch_remove(SDL_FingerID id) {
+  for (int32_t i = 0; i < g_touch_count; i++) {
+    if (g_touches[i].id == id) {
+      g_touches[i] = g_touches[--g_touch_count];
+      return;
+    }
+  }
+}
+
+// Applies one SDL event. Desktop builds call it from df_poll; hosts using SDL main callbacks (iOS) call it from
+// SDL_AppEvent.
+void df_handle_event(const SDL_Event *event) {
+  switch (event->type) {
+    case SDL_EVENT_QUIT:
+    case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
+      g_quit = 1;
+      break;
+    case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+      configure_surface();
+      break;
+    case SDL_EVENT_FINGER_DOWN:
+    case SDL_EVENT_FINGER_MOTION:
+      touch_set(event->tfinger.fingerID, event->tfinger.x, event->tfinger.y);
+      break;
+    case SDL_EVENT_FINGER_UP:
+    case SDL_EVENT_FINGER_CANCELED:
+      touch_remove(event->tfinger.fingerID);
+      break;
+    case SDL_EVENT_GAMEPAD_ADDED:
+      // Gamepads keep the first free slot they get, so player 1 stays player 1 across reconnects of others.
       for (int i = 0; i < DF_MAX_GAMEPADS; i++) {
         if (!g_gamepads[i]) {
-          g_gamepads[i] = SDL_OpenGamepad(event.gdevice.which);
+          g_gamepads[i] = SDL_OpenGamepad(event->gdevice.which);
           break;
         }
       }
-    }
-    if (event.type == SDL_EVENT_GAMEPAD_REMOVED) {
+      break;
+    case SDL_EVENT_GAMEPAD_REMOVED:
       for (int i = 0; i < DF_MAX_GAMEPADS; i++) {
-        if (g_gamepads[i] && SDL_GetGamepadID(g_gamepads[i]) == event.gdevice.which) {
+        if (g_gamepads[i] && SDL_GetGamepadID(g_gamepads[i]) == event->gdevice.which) {
           SDL_CloseGamepad(g_gamepads[i]);
           g_gamepads[i] = NULL;
         }
       }
-    }
+      break;
+    default:
+      break;
   }
-  return 1;
 }
 
-// Returns 0 when a frame is open, 1 when the surface was not ready and the frame should be skipped.
+// Drains pending events; returns false once the window is asked to close.
+uint8_t df_poll(void) {
+  SDL_Event event;
+  while (SDL_PollEvent(&event)) df_handle_event(&event);
+  return !g_quit;
+}
+
+int32_t df_touch_count(void) { return g_touch_count; }
+
+// Field of touch i: 0 stable id while the finger stays down, 1 x and 2 y normalized to the window.
+double df_touch(int32_t i, int32_t field) {
+  if (i < 0 || i >= g_touch_count) return field == 0 ? -1.0 : 0.0;
+  return field == 0 ? (double)g_touches[i].id : field == 1 ? g_touches[i].x : g_touches[i].y;
+}
+
 int32_t df_begin(double r, double g, double b, uint8_t use_depth) {
   g_frame_texture = (WGPUSurfaceTexture)WGPU_SURFACE_TEXTURE_INIT;
   wgpuSurfaceGetCurrentTexture(g_surface, &g_frame_texture);

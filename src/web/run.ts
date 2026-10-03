@@ -9,7 +9,7 @@ import {
   type WindowOptions,
 } from "../gpu";
 import type { Audio } from "../audio";
-import { type Input, keyCodes, type Pointer } from "../input";
+import { type Input, keyCodes, type Pointer, type Touch } from "../input";
 import type { Storage } from "../storage";
 
 const vertexFormats: GPUVertexFormat[] = ["float32x2", "float32x3", "float32x4", "float32"];
@@ -206,6 +206,16 @@ export async function run(options: WindowOptions, setup: Setup): Promise<void> {
   canvas.addEventListener("pointerdown", trackPointer);
   globalThis.addEventListener("pointerup", trackPointer);
   canvas.addEventListener("contextmenu", (event) => event.preventDefault());
+  const fingers = new Map<number, Touch>();
+  const trackFinger = (event: PointerEvent): void => {
+    if (event.pointerType === "mouse") return;
+    const rect = canvas.getBoundingClientRect();
+    const touch = { id: event.pointerId, x: (event.clientX - rect.left) / rect.width, y: (event.clientY - rect.top) / rect.height };
+    if (event.type === "pointerup" || event.type === "pointercancel") fingers.delete(event.pointerId);
+    else fingers.set(event.pointerId, touch);
+  };
+  for (const type of ["pointerdown", "pointermove", "pointerup", "pointercancel"]) canvas.addEventListener(type, trackFinger as EventListener);
+  canvas.style.touchAction = "none";
   // Gamepad slots in connection order, matching the native backend.
   const gamepad = (pad: number): Gamepad | null => navigator.getGamepads?.().filter((g) => g !== null)[pad] ?? null;
   const input: Input = {
@@ -217,6 +227,7 @@ export async function run(options: WindowOptions, setup: Setup): Promise<void> {
     axis: (pad: number, axis: number): number => gamepad(pad)?.axes[axis] ?? 0,
     button: (pad: number, button: number): boolean => gamepad(pad)?.buttons[button]?.pressed ?? false,
     pointer: (): Pointer => ({ x: pointer.x, y: pointer.y, buttons: pointer.buttons }),
+    touches: (): Touch[] => [...fingers.values()],
   };
   const storagePrefix = `dotframe:${options.title}:`;
   const storage: Storage = {
