@@ -9,25 +9,8 @@ import {
   type WindowOptions,
 } from "../gpu";
 import type { Audio } from "../audio";
-import type { Input } from "../input";
-
-// KeyboardEvent.code values indexed by the engine Key ids in src/input.ts.
-const keyCodes = [
-  "ArrowLeft",
-  "ArrowRight",
-  "ArrowUp",
-  "ArrowDown",
-  "Space",
-  "KeyW",
-  "KeyA",
-  "KeyS",
-  "KeyD",
-  "KeyJ",
-  "KeyK",
-  "KeyL",
-  "Escape",
-  "Enter",
-];
+import { type Input, keyCodes, type Pointer } from "../input";
+import type { Storage } from "../storage";
 
 const vertexFormats: GPUVertexFormat[] = ["float32x2", "float32x3", "float32x4", "float32"];
 
@@ -209,11 +192,45 @@ export async function run(options: WindowOptions, setup: Setup): Promise<void> {
   });
   globalThis.addEventListener("keyup", (event) => pressed.delete(event.code));
   globalThis.addEventListener("blur", () => pressed.clear());
-  const gamepad = (): Gamepad | null => navigator.getGamepads?.().find((pad) => pad !== null) ?? null;
+  const pointer: Pointer = { x: 0, y: 0, buttons: 0 };
+  const trackPointer = (event: PointerEvent): void => {
+    const rect = canvas.getBoundingClientRect();
+    pointer.x = (event.clientX - rect.left) / rect.width;
+    pointer.y = (event.clientY - rect.top) / rect.height;
+    pointer.buttons = event.buttons & 7;
+  };
+  canvas.addEventListener("pointermove", trackPointer);
+  canvas.addEventListener("pointerdown", trackPointer);
+  globalThis.addEventListener("pointerup", trackPointer);
+  canvas.addEventListener("contextmenu", (event) => event.preventDefault());
+  // Gamepad slots in connection order, matching the native backend.
+  const gamepad = (pad: number): Gamepad | null => navigator.getGamepads?.().filter((g) => g !== null)[pad] ?? null;
   const input: Input = {
     down: (key: number): boolean => pressed.has(keyCodes[key] ?? ""),
-    axis: (axis: number): number => gamepad()?.axes[axis] ?? 0,
-    button: (button: number): boolean => gamepad()?.buttons[button]?.pressed ?? false,
+    firstDown: (): number => {
+      for (let key = 0; key < keyCodes.length; key++) if (pressed.has(keyCodes[key])) return key;
+      return -1;
+    },
+    axis: (pad: number, axis: number): number => gamepad(pad)?.axes[axis] ?? 0,
+    button: (pad: number, button: number): boolean => gamepad(pad)?.buttons[button]?.pressed ?? false,
+    pointer: (): Pointer => ({ x: pointer.x, y: pointer.y, buttons: pointer.buttons }),
+  };
+  const storagePrefix = `dotframe:${options.title}:`;
+  const storage: Storage = {
+    get: (key: string): string | null => {
+      try {
+        return localStorage.getItem(storagePrefix + key);
+      } catch {
+        return null;
+      }
+    },
+    set: (key: string, value: string): void => {
+      try {
+        localStorage.setItem(storagePrefix + key, value);
+      } catch {
+        // Storage can be unavailable (private mode, blocked site data); the game keeps running.
+      }
+    },
   };
 
   // Browsers start audio suspended until a user gesture.
@@ -297,10 +314,10 @@ export async function run(options: WindowOptions, setup: Setup): Promise<void> {
     },
   };
 
-  const frame = setup(gpu, input, audio);
+  const frame = setup({ gpu, input, audio, storage });
   const start = performance.now();
   const tick = (): void => {
-    if (!frame(gpu, (performance.now() - start) / 1000)) return;
+    if (!frame((performance.now() - start) / 1000)) return;
     requestAnimationFrame(tick);
   };
   requestAnimationFrame(tick);

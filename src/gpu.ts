@@ -1,5 +1,4 @@
-import type { Audio } from "./audio";
-import type { Input } from "./input";
+import type { Platform } from "./platform";
 
 // Backend-agnostic surface shared by game code. Backends return plain objects of functions:
 // scriptc compiles structural types as record copies, so classes cannot stand in for interfaces.
@@ -66,10 +65,10 @@ export interface Gpu {
 }
 
 // Called every frame with elapsed seconds; return false to stop.
-export type Frame = (gpu: Gpu, time: number) => boolean;
+export type Frame = (time: number) => boolean;
 
-// Called once after the GPU is ready.
-export type Setup = (gpu: Gpu, input: Input, audio: Audio) => Frame;
+// Called once after the backend is ready.
+export type Setup = (platform: Platform) => Frame;
 
 export function f32Bytes(data: Float32Array): Uint8Array {
   return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);

@@ -1,8 +1,12 @@
 // Signature-only declarations bound to native/df_native.c through native/ffi.*.json.
 export declare function dfOpen(width: number, height: number, title: string): number;
 export declare function dfKeyDown(scancode: number): boolean;
-export declare function dfGamepadAxis(axis: number): number;
-export declare function dfGamepadButton(button: number): boolean;
+export declare function dfGamepadAxis(pad: number, axis: number): number;
+export declare function dfGamepadButton(pad: number, button: number): boolean;
+export declare function dfMouseX(): number;
+export declare function dfMouseY(): number;
+export declare function dfMouseButtons(): number;
+export declare function dfPrefPath(org: string, app: string, out: Uint8Array): number;
 export declare function dfWidth(): number;
 export declare function dfHeight(): number;
 export declare function dfBuffer(usage: number, data: Uint8Array): number;

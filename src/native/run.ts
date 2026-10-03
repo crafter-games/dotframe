@@ -1,7 +1,8 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import type { Audio } from "../audio";
 import type { Color, Draw, Gpu, PipelineOptions, Setup, Texture, WindowOptions } from "../gpu";
-import type { Input } from "../input";
+import { type Input, keyScancodes, type Pointer } from "../input";
+import type { Storage } from "../storage";
 import {
   dfAudioOpen,
   dfBegin,
@@ -21,10 +22,14 @@ import {
   dfMusicStop,
   dfMusicVolume,
   dfKeyDown,
+  dfMouseButtons,
+  dfMouseX,
+  dfMouseY,
   dfOpen,
   dfPipeline,
   dfPlay,
   dfPoll,
+  dfPrefPath,
   dfSound,
   dfTexture,
   dfTextureHeight,
@@ -37,12 +42,32 @@ import {
 const PIPELINE_DEPTH = 1;
 const PIPELINE_BLEND = 4;
 
-// SDL scancodes indexed by the engine Key ids in src/input.ts.
-const scancodes = [80, 79, 82, 81, 44, 26, 4, 22, 7, 13, 14, 15, 41, 40];
 
 export async function loadBytes(path: string): Promise<Uint8Array> {
   const data = readFileSync(path);
   return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+}
+
+// Stores values as one JSON object in <prefs>/dotframe/<app>/storage.json, rewritten on every set.
+function openStorage(app: string): Storage {
+  const pathBytes = new Uint8Array(1024);
+  const length = dfPrefPath("dotframe", app.split(":").join("").split("/").join("-"), pathBytes);
+  const file = length > 0 ? `${new TextDecoder().decode(pathBytes.subarray(0, length))}storage.json` : "";
+  const values = new Map<string, string>();
+  if (file !== "" && existsSync(file)) {
+    const saved = JSON.parse(readFileSync(file, "utf8")) as Record<string, string>;
+    for (const key of Object.keys(saved)) values.set(key, saved[key]);
+  }
+  return {
+    get: (key: string): string | null => values.get(key) ?? null,
+    set: (key: string, value: string): void => {
+      values.set(key, value);
+      if (file === "") return;
+      const out: Record<string, string> = {};
+      for (const [k, v] of values) out[k] = v;
+      writeFileSync(file, JSON.stringify(out));
+    },
+  };
 }
 
 export async function run(options: WindowOptions, setup: Setup): Promise<void> {
@@ -101,10 +126,17 @@ export async function run(options: WindowOptions, setup: Setup): Promise<void> {
   };
 
   const input: Input = {
-    down: (key: number): boolean => key >= 0 && key < scancodes.length && dfKeyDown(scancodes[key]),
-    axis: (axis: number): number => dfGamepadAxis(axis),
-    button: (button: number): boolean => dfGamepadButton(button),
+    down: (key: number): boolean => key >= 0 && key < keyScancodes.length && dfKeyDown(keyScancodes[key]),
+    firstDown: (): number => {
+      for (let key = 0; key < keyScancodes.length; key++) if (dfKeyDown(keyScancodes[key])) return key;
+      return -1;
+    },
+    axis: (pad: number, axis: number): number => dfGamepadAxis(pad, axis),
+    button: (pad: number, button: number): boolean => dfGamepadButton(pad, button),
+    pointer: (): Pointer => ({ x: dfMouseX(), y: dfMouseY(), buttons: dfMouseButtons() }),
   };
+
+  const storage = openStorage(options.title);
 
   // A missing audio device leaves sounds silent instead of failing the game.
   const audioReady = dfAudioOpen() === 0;
@@ -123,13 +155,13 @@ export async function run(options: WindowOptions, setup: Setup): Promise<void> {
     setMasterVolume: (volume: number): void => dfMasterVolume(volume),
   };
 
-  const frame = setup(gpu, input, audio);
+  const frame = setup({ gpu, input, audio, storage });
   // DF_FRAMES bounds the run for headless checks.
   const maxFrames = Number(process.env.DF_FRAMES ?? "0");
   const start = performance.now();
   let index = 0;
   while (dfPoll()) {
-    if (!frame(gpu, (performance.now() - start) / 1000)) break;
+    if (!frame((performance.now() - start) / 1000)) break;
     // Let promise callbacks queued by game code (asset loads, timers) run, as the browser does between frames.
     await Promise.resolve();
     index++;
