@@ -48,8 +48,6 @@ static WGPUTexture g_depth_texture;
 static WGPUTextureView g_depth_view;
 static int g_width, g_height;
 static WGPUPresentMode g_present_mode = WGPUPresentMode_Fifo;
-static WGPUSubmissionIndex g_last_submit;
-static int g_has_last_submit;
 #define DF_MAX_GAMEPADS 4
 static SDL_Gamepad *g_gamepads[DF_MAX_GAMEPADS];
 
@@ -519,6 +517,11 @@ int32_t df_begin(double r, double g, double b, uint8_t use_depth) {
       g_frame_texture.status != WGPUSurfaceGetCurrentTextureStatus_SuccessSuboptimal) {
     if (g_frame_texture.texture) wgpuTextureRelease(g_frame_texture.texture);
     configure_surface();
+    // No drawable (window hidden or occluded): the frame is skipped, but buffer writes made for it are already
+    // queued and their staging is only reclaimed after a submit. Submit nothing so they apply and recycle;
+    // otherwise a hidden window grows by one frame's uploads per frame (gigabytes per second at 50k sprites).
+    WGPUSubmissionIndex submitted = wgpuQueueSubmitForIndex(g_queue, 0, NULL);
+    wgpuDevicePoll(g_device, 1, &submitted);
     return 1;
   }
   g_frame_view = wgpuTextureCreateView(g_frame_texture.texture, NULL);
@@ -566,13 +569,8 @@ void df_end(void) {
   wgpuRenderPassEncoderRelease(g_frame_pass);
   g_frame_pass = NULL;
   WGPUCommandBuffer commands = wgpuCommandEncoderFinish(g_frame_encoder, NULL);
-  WGPUSubmissionIndex submitted = wgpuQueueSubmitForIndex(g_queue, 1, &commands);
+  wgpuQueueSubmit(g_queue, 1, &commands);
   wgpuSurfacePresent(g_surface);
-  // At most two frames in flight: wait for the previous one. Without a bound, a CPU faster than the GPU (vsync
-  // off) queues frames and their upload staging without limit, and memory grows by gigabytes.
-  if (g_has_last_submit) wgpuDevicePoll(g_device, 1, &g_last_submit);
-  g_last_submit = submitted;
-  g_has_last_submit = 1;
   wgpuCommandBufferRelease(commands);
   wgpuCommandEncoderRelease(g_frame_encoder);
   wgpuTextureViewRelease(g_frame_view);

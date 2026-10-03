@@ -71,6 +71,8 @@ dotframe now builds the frame about 10% faster than Bloom and finishes it about 
 
 The change since the previous section: path points (arcs, fills, strokes) live in one flat `Float64Array` instead of pooled `number[]`s, which avoids scriptc pattern H.
 
-## Known issue: occasional memory blowup with vsync off
+## Fixed: memory blowup while the window is hidden
 
-With `DF_VSYNC=0`, some runs grew by about 1.5 GB per second during the 50,000 stage (peaks of 3.7 to 7.4 GB), in roughly one run out of three after the 24-byte vertex change. The shim now waits for the previous frame's submission before continuing (`wgpuQueueSubmitForIndex` plus `wgpuDevicePoll`), which bounds frames in flight; that cut it to one run in 27, and the frame time cost is about 0.3 ms. The remaining case is not explained yet. No run with vsync on has shown it.
+Some runs grew by about 1.5 GB per second during the 50,000 stage (peaks of 3.7 to 7.4 GB). Cause: when the window is hidden or occluded, `wgpuSurfaceGetCurrentTexture` returns no drawable and the shim skips the frame, but `draw2d.end()` has already queued the frame's vertex upload with `writeBuffer`. wgpu reclaims upload staging only after a submit, so every skipped frame kept about 7.2 MB, at a couple of hundred skipped frames per second with vsync off. It looked random because it depended on other windows covering the benchmark's.
+
+Reproduction: run bench2d with `DF_VSYNC=0` and hide its window (`osascript -e 'tell application "System Events" to set visible of (first process whose unix id is <pid>) to false'`) during the 50,000 stage. Before the fix memory grew from 185 MB to 4.8 GB in 3 seconds; after it, it stays at 184 MB. Fix: the skip path submits an empty command list and waits for it, so pending writes apply and their staging recycles. An earlier attempt that bounded frames in flight did not address the cause and was removed.
