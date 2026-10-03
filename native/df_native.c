@@ -91,7 +91,17 @@ int32_t df_open(int32_t width, int32_t height, const uint8_t *title, size_t titl
   adapter_cb.callback = on_adapter;
   adapter_cb.userdata1 = &g_adapter;
   wgpuInstanceRequestAdapter(g_instance, &adapter_opts, adapter_cb);
+  if (!g_adapter) {
+    // GPU-less machines (CI runners, VMs) may still expose a software adapter such as WARP.
+    adapter_opts.forceFallbackAdapter = 1;
+    wgpuInstanceRequestAdapter(g_instance, &adapter_opts, adapter_cb);
+  }
   if (!g_adapter) return -4;
+  WGPUAdapterInfo info = WGPU_ADAPTER_INFO_INIT;
+  wgpuAdapterGetInfo(g_adapter, &info);
+  fprintf(stderr, "dotframe: adapter %.*s (backend %d, type %d)\n", (int)info.device.length, info.device.data,
+          (int)info.backendType, (int)info.adapterType);
+  wgpuAdapterInfoFreeMembers(info);
 
   WGPURequestDeviceCallbackInfo device_cb = WGPU_REQUEST_DEVICE_CALLBACK_INFO_INIT;
   device_cb.mode = WGPUCallbackMode_AllowSpontaneous;
