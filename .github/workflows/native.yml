@@ -1,0 +1,95 @@
+name: native
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: oven-sh/setup-bun@v2
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - run: npm install -g scriptc@0.2.0
+      - run: bun install --frozen-lockfile
+      - uses: actions/cache@v4
+        with:
+          path: |
+            vendor/wgpu
+            vendor/SDL3-*
+            vendor/build
+          key: vendor-${{ hashFiles('scripts/vendor.sh', 'vendor/toolchain/**') }}
+      - run: scripts/vendor.sh macos && scripts/vendor.sh windows
+      - run: scripts/build-native.sh macos triangle
+      - run: scripts/build-native.sh windows triangle
+      - uses: actions/upload-artifact@v4
+        with:
+          name: triangle-binaries
+          path: |
+            build/macos/triangle
+            build/windows/triangle.exe
+
+  run-macos:
+    needs: build
+    runs-on: macos-15
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: triangle-binaries
+      - name: Run and capture
+        run: |
+          chmod +x macos/triangle
+          curl -fsSLo cuse https://github.com/crafter-agents/cuse/releases/latest/download/cuse-macos-arm64
+          chmod +x cuse
+          ./macos/triangle > run.log 2>&1 &
+          sleep 8
+          ./cuse windows --json > windows.json || true
+          ./cuse capture screen.png || screencapture -x screen.png
+          kill %1 || true
+          cat run.log windows.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: capture-macos
+          path: |
+            screen.png
+            run.log
+            windows.json
+
+  run-windows:
+    needs: build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: triangle-binaries
+      - name: Run and capture
+        shell: pwsh
+        run: |
+          Invoke-WebRequest https://github.com/crafter-agents/cuse/releases/latest/download/cuse-windows-x64.exe -OutFile cuse.exe
+          $p = Start-Process windows/triangle.exe -PassThru -RedirectStandardError run.err -RedirectStandardOutput run.out
+          Start-Sleep -Seconds 10
+          $alive = -not $p.HasExited
+          "alive=$alive exit=$($p.ExitCode)" | Tee-Object status.txt
+          ./cuse.exe windows --json | Tee-Object windows.json
+          ./cuse.exe capture screen.png
+          if ($alive) { Stop-Process -Id $p.Id -Force }
+          Get-Content run.err, run.out -ErrorAction SilentlyContinue
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: capture-windows
+          path: |
+            screen.png
+            run.err
+            run.out
+            status.txt
+            windows.json
