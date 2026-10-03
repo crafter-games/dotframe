@@ -167,10 +167,12 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
 `;
 
 const FLOATS_PER_VERTEX = 9;
+const WHITE: Rgba = { r: 1, g: 1, b: 1, a: 1 };
 // stb_truetype SDF: 0.5 alpha on the outline, 128/distanceRange alpha steps per atlas pixel.
 const SDF_ON_EDGE = 128 / 255;
-const MAX_VERTICES = 196608;
-const CURVE_SEGMENTS = 32;
+const INITIAL_VERTICES = 65536;
+const MAX_VERTICES = 4194304;
+const MAX_CURVE_SEGMENTS = 64;
 
 const named: Map<string, string> = new Map([
   ["white", "#ffffff"],
@@ -292,8 +294,20 @@ export function createDraw2D(gpu: Gpu, width: number, height: number): Draw2D {
     depth: false,
     blend: true,
   });
-  const vertices = new Float32Array(MAX_VERTICES * FLOATS_PER_VERTEX);
-  const vertexBuffer = gpu.createBuffer(BufferUsage.Vertex, new Uint8Array(vertices.byteLength));
+  // Grows by doubling when a frame needs more room; the GPU buffer is recreated to match at the end of the frame.
+  let capacity = INITIAL_VERTICES;
+  let vertices = new Float32Array(capacity * FLOATS_PER_VERTEX);
+  let vertexBuffer = gpu.createBuffer(BufferUsage.Vertex, new Uint8Array(vertices.byteLength));
+  let gpuCapacity = capacity;
+  const grow = (needed: number): boolean => {
+    if (needed <= capacity) return true;
+    if (needed > MAX_VERTICES) return false;
+    while (capacity < needed) capacity *= 2;
+    const larger = new Float32Array(capacity * FLOATS_PER_VERTEX);
+    larger.set(vertices.subarray(0, vertexCount * FLOATS_PER_VERTEX));
+    vertices = larger;
+    return true;
+  };
   const uniforms = new Float32Array([width, height, 0, 0]);
   const uniformBuffer = gpu.createBuffer(
     BufferUsage.Uniform,
@@ -331,28 +345,99 @@ export function createDraw2D(gpu: Gpu, width: number, height: number): Draw2D {
   const stack: State[] = [];
   let vertexCount = 0;
   const batches: Batch[] = [];
-  // Current path: subpaths of flat point lists, in path (untransformed) space.
-  let subpaths: number[][] = [];
-  let closed: boolean[] = [];
+  // Current path: subpaths of flat point lists, in path (untransformed) space. Point arrays are pooled across paths:
+  // only the first subpathCount entries are live, so beginPath allocates nothing.
+  const subpaths: number[][] = [];
+  const closed: boolean[] = [];
+  // A subpath built only from one arc, ellipse or rect is convex and fills as a fan, skipping ear clipping.
+  const convex: boolean[] = [];
+  let subpathCount = 0;
+  const startSubpath = (isClosed: boolean, isConvex: boolean): number[] => {
+    if (subpathCount === subpaths.length) {
+      subpaths.push([]);
+      closed.push(false);
+      convex.push(false);
+    }
+    const points = subpaths[subpathCount];
+    points.length = 0;
+    closed[subpathCount] = isClosed;
+    convex[subpathCount] = isConvex;
+    subpathCount++;
+    return points;
+  };
 
   const vertex = (x: number, y: number, u: number, v: number, color: Rgba, edge: number): void => {
-    if (vertexCount >= MAX_VERTICES) return;
+    if (vertexCount >= capacity) return;
+    // Local aliases: each access to a captured binding costs an indirection plus a retain in compiled builds.
+    const out = vertices;
+    const t = state;
     const o = vertexCount * FLOATS_PER_VERTEX;
-    vertices[o] = state.a * x + state.c * y + state.e;
-    vertices[o + 1] = state.b * x + state.d * y + state.f;
-    vertices[o + 2] = u;
-    vertices[o + 3] = v;
-    vertices[o + 4] = color.r;
-    vertices[o + 5] = color.g;
-    vertices[o + 6] = color.b;
-    vertices[o + 7] = color.a * state.alpha;
-    vertices[o + 8] = edge;
-    vertexCount++;
+    out[o] = t.a * x + t.c * y + t.e;
+    out[o + 1] = t.b * x + t.d * y + t.f;
+    out[o + 2] = u;
+    out[o + 3] = v;
+    out[o + 4] = color.r;
+    out[o + 5] = color.g;
+    out[o + 6] = color.b;
+    out[o + 7] = color.a * t.alpha;
+    out[o + 8] = edge;
+    vertexCount = vertexCount + 1;
+  };
+
+  // Writes two triangles for the quad (x0,y0)-(x1,y1)-(x2,y2)-(x3,y3) with texture corners (u0,v0)-(u1,v1),
+  // transforming each corner once. The caller has reserved 6 vertices with useTexture.
+  const emitQuad = (
+    x0: number,
+    y0: number,
+    x1: number,
+    y1: number,
+    x2: number,
+    y2: number,
+    x3: number,
+    y3: number,
+    u0: number,
+    v0: number,
+    u1: number,
+    v1: number,
+    color: Rgba,
+    edge: number,
+  ): void => {
+    if (vertexCount + 6 > capacity) return;
+    const out = vertices;
+    const t = state;
+    const ax = t.a * x0 + t.c * y0 + t.e;
+    const ay = t.b * x0 + t.d * y0 + t.f;
+    const bx = t.a * x1 + t.c * y1 + t.e;
+    const by = t.b * x1 + t.d * y1 + t.f;
+    const cx = t.a * x2 + t.c * y2 + t.e;
+    const cy = t.b * x2 + t.d * y2 + t.f;
+    const dx = t.a * x3 + t.c * y3 + t.e;
+    const dy = t.b * x3 + t.d * y3 + t.f;
+    const r = color.r;
+    const g = color.g;
+    const b = color.b;
+    const a = color.a * t.alpha;
+    let o = vertexCount * FLOATS_PER_VERTEX;
+    // Corner order: a b c, a c d.
+    for (let k = 0; k < 6; k++) {
+      const corner = k === 0 || k === 3 ? 0 : k === 1 ? 1 : k === 2 || k === 4 ? 2 : 3;
+      out[o] = corner === 0 ? ax : corner === 1 ? bx : corner === 2 ? cx : dx;
+      out[o + 1] = corner === 0 ? ay : corner === 1 ? by : corner === 2 ? cy : dy;
+      out[o + 2] = corner === 0 || corner === 3 ? u0 : u1;
+      out[o + 3] = corner === 0 || corner === 1 ? v0 : v1;
+      out[o + 4] = r;
+      out[o + 5] = g;
+      out[o + 6] = b;
+      out[o + 7] = a;
+      out[o + 8] = edge;
+      o += FLOATS_PER_VERTEX;
+    }
+    vertexCount = vertexCount + 6;
   };
 
   // Reserves room for whole triangles on the given texture, starting a new batch when it changes.
   const useTexture = (texture: number, triangleVertices: number): boolean => {
-    if (vertexCount + triangleVertices > MAX_VERTICES) return false;
+    if (!grow(vertexCount + triangleVertices)) return false;
     const last = batches[batches.length - 1];
     if (last && last.texture === texture) last.count += triangleVertices;
     else batches.push({ texture, first: vertexCount, count: triangleVertices });
@@ -371,12 +456,7 @@ export function createDraw2D(gpu: Gpu, width: number, height: number): Draw2D {
     color: Rgba,
   ): void => {
     if (!useTexture(white.id, 6)) return;
-    vertex(x0, y0, 0, 0, color, -1);
-    vertex(x1, y1, 0, 0, color, -1);
-    vertex(x2, y2, 0, 0, color, -1);
-    vertex(x0, y0, 0, 0, color, -1);
-    vertex(x2, y2, 0, 0, color, -1);
-    vertex(x3, y3, 0, 0, color, -1);
+    emitQuad(x0, y0, x1, y1, x2, y2, x3, y3, 0, 0, 0, 0, color, -1);
   };
 
   const strokeSegment = (ax: number, ay: number, bx: number, by: number): void => {
@@ -390,13 +470,8 @@ export function createDraw2D(gpu: Gpu, width: number, height: number): Draw2D {
     quad(ax + nx, ay + ny, bx + nx, by + ny, bx - nx, by - ny, ax - nx, ay - ny, state.stroke);
   };
 
-  const currentSubpath = (): number[] => {
-    if (subpaths.length === 0) {
-      subpaths.push([]);
-      closed.push(false);
-    }
-    return subpaths[subpaths.length - 1];
-  };
+  const currentSubpath = (): number[] =>
+    subpathCount === 0 ? startSubpath(false, true) : subpaths[subpathCount - 1];
 
   const arcPoints = (
     x: number,
@@ -413,10 +488,15 @@ export function createDraw2D(gpu: Gpu, width: number, height: number): Draw2D {
     if (!counterclockwise && sweep < 0) sweep = (sweep % full) + full;
     if (counterclockwise && sweep > 0) sweep = (sweep % full) - full;
     if (Math.abs(end - start) >= full) sweep = counterclockwise ? -full : full;
-    const steps = Math.max(2, Math.ceil((Math.abs(sweep) / full) * CURVE_SEGMENTS));
+    // Segment count follows the on-screen radius, as Canvas2D does: small circles stay cheap, large ones smooth.
+    const screenRadius = Math.max(radiusX, radiusY) * Math.sqrt(Math.abs(state.a * state.d - state.b * state.c));
+    const segments = Math.min(MAX_CURVE_SEGMENTS, Math.max(8, Math.ceil(screenRadius * 1.5)));
+    const steps = Math.max(2, Math.ceil((Math.abs(sweep) / full) * segments));
     const cos = Math.cos(rotation);
     const sin = Math.sin(rotation);
     const points = currentSubpath();
+    // Arcs appended to existing points (rounded shapes, pie slices) may be concave.
+    if (points.length > 0) convex[subpathCount - 1] = false;
     for (let i = 0; i <= steps; i++) {
       const angle = start + (sweep * i) / steps;
       const px = Math.cos(angle) * radiusX;
@@ -470,12 +550,7 @@ export function createDraw2D(gpu: Gpu, width: number, height: number): Draw2D {
         const v1 = (glyph.y + glyph.height) / atlasHeight;
         const top = (baseline - y0) * skew;
         const bottom = (baseline - y1) * skew;
-        vertex(x0 + top, y0, u0, v0, color, edge);
-        vertex(x1 + top, y0, u1, v0, color, edge);
-        vertex(x1 + bottom, y1, u1, v1, color, edge);
-        vertex(x0 + top, y0, u0, v0, color, edge);
-        vertex(x1 + bottom, y1, u1, v1, color, edge);
-        vertex(x0 + bottom, y1, u0, v1, color, edge);
+        emitQuad(x0 + top, y0, x1 + top, y0, x1 + bottom, y1, x0 + bottom, y1, u0, v0, u1, v1, color, edge);
       }
       penX += glyph.advance * scale;
     }
@@ -489,6 +564,11 @@ export function createDraw2D(gpu: Gpu, width: number, height: number): Draw2D {
       stack.length = 0;
     },
     end: (clear: Color): void => {
+      if (gpuCapacity < capacity) {
+        gpu.destroyBuffer(vertexBuffer);
+        vertexBuffer = gpu.createBuffer(BufferUsage.Vertex, new Uint8Array(capacity * FLOATS_PER_VERTEX * 4));
+        gpuCapacity = capacity;
+      }
       gpu.writeBuffer(vertexBuffer, new Uint8Array(vertices.buffer, 0, vertexCount * FLOATS_PER_VERTEX * 4));
       const draws: Draw[] = [];
       for (const batch of batches) {
@@ -570,19 +650,17 @@ export function createDraw2D(gpu: Gpu, width: number, height: number): Draw2D {
       strokeSegment(x, y + h, x, y);
     },
     beginPath: (): void => {
-      subpaths = [];
-      closed = [];
+      subpathCount = 0;
     },
     moveTo: (x: number, y: number): void => {
-      subpaths.push([x, y]);
-      closed.push(false);
+      startSubpath(false, false).push(x, y);
     },
     lineTo: (x: number, y: number): void => {
       currentSubpath().push(x, y);
+      convex[subpathCount - 1] = false;
     },
     rect: (x: number, y: number, w: number, h: number): void => {
-      subpaths.push([x, y, x + w, y, x + w, y + h, x, y + h]);
-      closed.push(true);
+      startSubpath(true, true).push(x, y, x + w, y, x + w, y + h, x, y + h);
     },
     arc: (x: number, y: number, radius: number, start: number, end: number, counterclockwise: boolean): void => {
       arcPoints(x, y, radius, radius, 0, start, end, counterclockwise);
@@ -600,17 +678,52 @@ export function createDraw2D(gpu: Gpu, width: number, height: number): Draw2D {
       arcPoints(x, y, radiusX, radiusY, rotation, start, end, counterclockwise);
     },
     closePath: (): void => {
-      if (closed.length > 0) closed[closed.length - 1] = true;
+      if (subpathCount > 0) closed[subpathCount - 1] = true;
     },
     fill: (): void => {
-      for (const points of subpaths) {
+      for (let s = 0; s < subpathCount; s++) {
+        const points = subpaths[s];
+        const count = points.length / 2;
+        if (convex[s] && count >= 3) {
+          const total = (count - 2) * 3;
+          if (!useTexture(white.id, total) || vertexCount + total > capacity) return;
+          const out = vertices;
+          const t = state;
+          const fill = t.fill;
+          const alpha = fill.a * t.alpha;
+          const fx = t.a * points[0] + t.c * points[1] + t.e;
+          const fy = t.b * points[0] + t.d * points[1] + t.f;
+          let px = t.a * points[2] + t.c * points[3] + t.e;
+          let py = t.b * points[2] + t.d * points[3] + t.f;
+          let o = vertexCount * FLOATS_PER_VERTEX;
+          for (let i = 1; i + 1 < count; i++) {
+            const qx = t.a * points[i * 2 + 2] + t.c * points[i * 2 + 3] + t.e;
+            const qy = t.b * points[i * 2 + 2] + t.d * points[i * 2 + 3] + t.f;
+            for (let k = 0; k < 3; k++) {
+              out[o] = k === 0 ? fx : k === 1 ? px : qx;
+              out[o + 1] = k === 0 ? fy : k === 1 ? py : qy;
+              out[o + 2] = 0;
+              out[o + 3] = 0;
+              out[o + 4] = fill.r;
+              out[o + 5] = fill.g;
+              out[o + 6] = fill.b;
+              out[o + 7] = alpha;
+              out[o + 8] = -1;
+              o += FLOATS_PER_VERTEX;
+            }
+            px = qx;
+            py = qy;
+          }
+          vertexCount = vertexCount + total;
+          continue;
+        }
         const indices = triangulate(points);
         if (!useTexture(white.id, indices.length)) return;
         for (const index of indices) vertex(points[index * 2], points[index * 2 + 1], 0, 0, state.fill, -1);
       }
     },
     stroke: (): void => {
-      for (let s = 0; s < subpaths.length; s++) {
+      for (let s = 0; s < subpathCount; s++) {
         const points = subpaths[s];
         const count = points.length / 2;
         for (let i = 0; i + 1 < count; i++) {
@@ -658,13 +771,7 @@ export function createDraw2D(gpu: Gpu, width: number, height: number): Draw2D {
       const v0 = sy / image.height;
       const u1 = (sx + sw) / image.width;
       const v1 = (sy + sh) / image.height;
-      const tint: Rgba = { r: 1, g: 1, b: 1, a: 1 };
-      vertex(dx, dy, u0, v0, tint, -1);
-      vertex(dx + dw, dy, u1, v0, tint, -1);
-      vertex(dx + dw, dy + dh, u1, v1, tint, -1);
-      vertex(dx, dy, u0, v0, tint, -1);
-      vertex(dx + dw, dy + dh, u1, v1, tint, -1);
-      vertex(dx, dy + dh, u0, v1, tint, -1);
+      emitQuad(dx, dy, dx + dw, dy, dx + dw, dy + dh, dx, dy + dh, u0, v0, u1, v1, WHITE, -1);
     },
   };
 }
