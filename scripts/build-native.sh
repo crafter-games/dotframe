@@ -1,9 +1,13 @@
 #!/bin/sh
-# Builds an example as a native binary. Usage: scripts/build-native.sh <macos|windows> <example>
+# Builds a native binary. Usage: scripts/build-native.sh <macos|windows> <example-name | path/to/main.native.ts> [out-name]
 set -e
 target=$1
-example=${2:-triangle}
+entry=${2:-triangle}
 root=$(cd "$(dirname "$0")/.." && pwd)
+case $entry in
+  *.ts) entry_file=$(cd "$(dirname "$entry")" && pwd)/$(basename "$entry"); name=${3:-$(basename "$(dirname "$entry_file")")} ;;
+  *) entry_file="$root/examples/$entry/main.native.ts"; name=${3:-$entry} ;;
+esac
 mkdir -p "$root/build/$target"
 case $target in
   macos)
@@ -12,7 +16,8 @@ case $target in
         -mmacosx-version-min=14.0 -o "$root/build/macos/$unit.o"
     done
     ar rcs "$root/build/macos/libdf_native.a" "$root/build/macos/df_native.o" "$root/build/macos/df_audio.o"
-    cd "$root/examples/$example" && scriptc build main.native.ts --ffi "$root/native/ffi.macos.json" -o "$root/build/macos/$example"
+    cd "$(dirname "$entry_file")" && scriptc build "$(basename "$entry_file")" --ffi "$root/native/ffi.macos.json" \
+      -o "$root/build/macos/$name"
     ;;
   windows)
     for unit in df_native df_audio; do
@@ -20,8 +25,9 @@ case $target in
         -I"$root/vendor/wgpu/windows/include" -o "$root/build/windows/$unit.o"
     done
     zig ar rcs "$root/build/windows/libdf_native.a" "$root/build/windows/df_native.o" "$root/build/windows/df_audio.o"
-    cd "$root/examples/$example" && SCRIPTC_RUNTIME_PACK="$root/node_modules/@scriptc/runtime-win32-x64-msvc" SCRIPTC_TARGET=x86_64-windows-gnu scriptc build main.native.ts --ffi "$root/native/ffi.windows.json" \
-      --windows-subsystem gui -o "$root/build/windows/$example.exe"
+    cd "$(dirname "$entry_file")" && SCRIPTC_RUNTIME_PACK="$root/node_modules/@scriptc/runtime-win32-x64-msvc" \
+      SCRIPTC_TARGET=x86_64-windows-gnu scriptc build "$(basename "$entry_file")" --ffi "$root/native/ffi.windows.json" \
+      --windows-subsystem gui -o "$root/build/windows/$name.exe"
     ;;
-  *) echo "usage: $0 <macos|windows> [example]" >&2; exit 2 ;;
+  *) echo "usage: $0 <macos|windows> <example | path/to/main.native.ts> [out-name]" >&2; exit 2 ;;
 esac
