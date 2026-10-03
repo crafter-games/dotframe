@@ -163,6 +163,94 @@
       "symbol": "df_close",
       "params": [],
       "returns": "void"
+    },
+    {
+      "name": "dfAudioOpen",
+      "symbol": "df_audio_open",
+      "params": [],
+      "returns": "i32"
+    },
+    {
+      "name": "dfSound",
+      "symbol": "df_sound",
+      "params": [
+        "bytes"
+      ],
+      "returns": "i32"
+    },
+    {
+      "name": "dfPlay",
+      "symbol": "df_play",
+      "params": [
+        "i32",
+        "f64",
+        "f64"
+      ],
+      "returns": "void"
+    },
+    {
+      "name": "dfTone",
+      "symbol": "df_tone",
+      "params": [
+        "f64",
+        "f64",
+        "f64"
+      ],
+      "returns": "void"
+    },
+    {
+      "name": "dfTrack",
+      "symbol": "df_track",
+      "params": [
+        "bytes"
+      ],
+      "returns": "i32"
+    },
+    {
+      "name": "dfMusicPlay",
+      "symbol": "df_music_play",
+      "params": [
+        "i32",
+        "bool",
+        "f64"
+      ],
+      "returns": "i32"
+    },
+    {
+      "name": "dfMusicStop",
+      "symbol": "df_music_stop",
+      "params": [],
+      "returns": "void"
+    },
+    {
+      "name": "dfMusicPause",
+      "symbol": "df_music_pause",
+      "params": [
+        "bool"
+      ],
+      "returns": "void"
+    },
+    {
+      "name": "dfMusicVolume",
+      "symbol": "df_music_volume",
+      "params": [
+        "f64"
+      ],
+      "returns": "void"
+    },
+    {
+      "name": "dfMasterVolume",
+      "symbol": "df_master_volume",
+      "params": [
+        "f64"
+      ],
+      "returns": "void"
+    },
+    {
+      "name": "dfAudioActive",
+      "symbol": "df_audio_active",
+      "params": [],
+      "returns": "i32"
     }
   ],
   "libraries": [

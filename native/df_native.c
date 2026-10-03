@@ -432,7 +432,10 @@ void df_end(void) {
   wgpuTextureRelease(g_frame_texture.texture);
 }
 
+void df_audio_close(void);
+
 void df_close(void) {
+  df_audio_close();
   for (int32_t i = 0; i < g_bind_group_count; i++) wgpuBindGroupRelease(g_bind_groups[i]);
   for (int32_t i = 0; i < g_buffer_count; i++) wgpuBufferRelease(g_buffers[i]);
   for (int32_t i = 0; i < g_texture_count; i++) {
