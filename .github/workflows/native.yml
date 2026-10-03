@@ -37,9 +37,12 @@ jobs:
             scripts/build-native.sh windows $example
             scripts/build-web.sh $example
           done
+          scripts/build-native.sh macos audio-check
+          scripts/build-native.sh windows audio-check
           mkdir -p dist/macos dist/windows
-          cp build/macos/triangle build/macos/suzanne build/macos/smash-lite build/macos/canvas2d dist/macos/
-          cp build/windows/triangle.exe build/windows/suzanne.exe build/windows/smash-lite.exe build/windows/canvas2d.exe dist/windows/
+          cp build/macos/triangle build/macos/suzanne build/macos/smash-lite build/macos/canvas2d build/macos/audio-check dist/macos/
+          cp build/windows/triangle.exe build/windows/suzanne.exe build/windows/smash-lite.exe build/windows/canvas2d.exe build/windows/audio-check.exe dist/windows/
+          cp tools/check-audio.ts dist/
           cp -R assets dist/
       - uses: actions/upload-artifact@v4
         with:
@@ -54,9 +57,15 @@ jobs:
     needs: build
     runs-on: macos-15
     steps:
+      - uses: oven-sh/setup-bun@v2
       - uses: actions/download-artifact@v4
         with:
           name: binaries
+      - name: Check the audio mix
+        run: |
+          chmod +x macos/*
+          SDL_AUDIO_DRIVER=disk SDL_AUDIO_DISK_OUTPUT_FILE=mix.raw ./macos/audio-check
+          bun check-audio.ts mix.raw
       - name: Run and capture
         run: |
           chmod +x macos/*
@@ -84,9 +93,17 @@ jobs:
     needs: build
     runs-on: windows-latest
     steps:
+      - uses: oven-sh/setup-bun@v2
       - uses: actions/download-artifact@v4
         with:
           name: binaries
+      - name: Check the audio mix
+        shell: pwsh
+        run: |
+          $env:SDL_AUDIO_DRIVER = "disk"
+          $env:SDL_AUDIO_DISK_OUTPUT_FILE = "mix.raw"
+          ./windows/audio-check.exe
+          bun check-audio.ts mix.raw
       - name: Run and capture
         shell: pwsh
         run: |
