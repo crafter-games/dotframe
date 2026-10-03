@@ -92,7 +92,8 @@
       "params": [
         "i32",
         "i32",
-        "bytes"
+        "bytes",
+        "bool"
       ],
       "returns": "i32"
     },
@@ -100,7 +101,8 @@
       "name": "dfImage",
       "symbol": "df_image",
       "params": [
-        "bytes"
+        "bytes",
+        "bool"
       ],
       "returns": "i32"
     },

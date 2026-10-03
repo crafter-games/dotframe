@@ -66,13 +66,13 @@ export async function run(options: WindowOptions, setup: Setup): Promise<void> {
       if (group < 0) throw new Error(`dfBind failed: ${group}`);
       return group;
     },
-    createTexture: (width: number, height: number, rgba: Uint8Array): Texture => {
-      const id = dfTexture(width, height, rgba);
+    createTexture: (width: number, height: number, rgba: Uint8Array, smooth: boolean): Texture => {
+      const id = dfTexture(width, height, rgba, smooth);
       if (id < 0) throw new Error(`dfTexture failed: ${id}`);
       return { id, width, height };
     },
-    createImage: async (png: Uint8Array): Promise<Texture> => {
-      const id = dfImage(png);
+    createImage: async (png: Uint8Array, smooth: boolean): Promise<Texture> => {
+      const id = dfImage(png, smooth);
       if (id < 0) throw new Error(`dfImage failed: ${id}`);
       return { id, width: dfTextureWidth(id), height: dfTextureHeight(id) };
     },

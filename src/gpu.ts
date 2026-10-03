@@ -16,7 +16,7 @@ export interface Color {
 }
 
 export const BufferUsage = { Vertex: 1, Index: 2, Uniform: 4 };
-export const VertexFormat = { Float32x2: 0, Float32x3: 1, Float32x4: 2 };
+export const VertexFormat = { Float32x2: 0, Float32x3: 1, Float32x4: 2, Float32: 3 };
 
 export interface VertexAttribute {
   format: number;
@@ -56,9 +56,10 @@ export interface Gpu {
   createPipeline: (options: PipelineOptions) => number;
   // Group 0: binding 0 uniform buffer, binding 1 texture, binding 2 nearest sampler; -1 skips one.
   bind: (pipeline: number, buffer: number, texture: number) => number;
-  createTexture: (width: number, height: number, rgba: Uint8Array) => Texture;
+  // smooth: linear filtering (fonts, photos); otherwise nearest (pixel art).
+  createTexture: (width: number, height: number, rgba: Uint8Array, smooth: boolean) => Texture;
   // Decodes PNG bytes.
-  createImage: (png: Uint8Array) => Promise<Texture>;
+  createImage: (png: Uint8Array, smooth: boolean) => Promise<Texture>;
   frame: (clear: Color, draws: Draw[]) => void;
   aspect: () => number;
 }

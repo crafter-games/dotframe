@@ -20,7 +20,7 @@
 
 enum { DF_USAGE_VERTEX = 1, DF_USAGE_INDEX = 2, DF_USAGE_UNIFORM = 4 };
 enum { DF_PIPELINE_DEPTH = 1, DF_PIPELINE_BLEND = 4 };
-enum { DF_FORMAT_FLOAT32X2 = 0, DF_FORMAT_FLOAT32X3 = 1, DF_FORMAT_FLOAT32X4 = 2 };
+enum { DF_FORMAT_FLOAT32X2 = 0, DF_FORMAT_FLOAT32X3 = 1, DF_FORMAT_FLOAT32X4 = 2, DF_FORMAT_FLOAT32 = 3 };
 
 static SDL_Window *g_window;
 static WGPUInstance g_instance;
@@ -38,8 +38,10 @@ static int32_t g_bind_group_count;
 static WGPUTexture g_textures[DF_MAX_TEXTURES];
 static WGPUTextureView g_texture_views[DF_MAX_TEXTURES];
 static int32_t g_texture_sizes[DF_MAX_TEXTURES][2];
+static uint8_t g_texture_smooth[DF_MAX_TEXTURES];
 static int32_t g_texture_count;
 static WGPUSampler g_sampler;
+static WGPUSampler g_sampler_linear;
 static WGPUTexture g_depth_texture;
 static WGPUTextureView g_depth_view;
 static int g_width, g_height;
@@ -152,6 +154,9 @@ int32_t df_open(int32_t width, int32_t height, const uint8_t *title, size_t titl
   // Nearest filtering keeps pixel art crisp.
   WGPUSamplerDescriptor sampler = WGPU_SAMPLER_DESCRIPTOR_INIT;
   g_sampler = wgpuDeviceCreateSampler(g_device, &sampler);
+  sampler.magFilter = WGPUFilterMode_Linear;
+  sampler.minFilter = WGPUFilterMode_Linear;
+  g_sampler_linear = wgpuDeviceCreateSampler(g_device, &sampler);
 
   WGPUSurfaceCapabilities caps = WGPU_SURFACE_CAPABILITIES_INIT;
   wgpuSurfaceGetCapabilities(g_surface, g_adapter, &caps);
@@ -209,7 +214,8 @@ void df_buffer_write(int32_t buffer, const uint8_t *data, size_t len) {
   wgpuQueueWriteBuffer(g_queue, g_buffers[buffer], 0, data, len);
 }
 
-int32_t df_texture(int32_t width, int32_t height, const uint8_t *rgba, size_t len) {
+// smooth selects linear filtering (fonts, photos) instead of nearest (pixel art).
+int32_t df_texture(int32_t width, int32_t height, const uint8_t *rgba, size_t len, uint8_t smooth) {
   if (g_texture_count >= DF_MAX_TEXTURES || width <= 0 || height <= 0) return -1;
   if (len < (size_t)width * (size_t)height * 4) return -2;
   WGPUTextureDescriptor desc = WGPU_TEXTURE_DESCRIPTOR_INIT;
@@ -228,15 +234,16 @@ int32_t df_texture(int32_t width, int32_t height, const uint8_t *rgba, size_t le
   g_texture_views[id] = wgpuTextureCreateView(texture, NULL);
   g_texture_sizes[id][0] = width;
   g_texture_sizes[id][1] = height;
+  g_texture_smooth[id] = smooth;
   return id;
 }
 
 // Decodes PNG bytes into a texture.
-int32_t df_image(const uint8_t *png, size_t len) {
+int32_t df_image(const uint8_t *png, size_t len, uint8_t smooth) {
   int width, height, channels;
   stbi_uc *pixels = stbi_load_from_memory(png, (int)len, &width, &height, &channels, 4);
   if (!pixels) return -3;
-  int32_t id = df_texture(width, height, pixels, (size_t)width * (size_t)height * 4);
+  int32_t id = df_texture(width, height, pixels, (size_t)width * (size_t)height * 4, smooth);
   stbi_image_free(pixels);
   return id;
 }
@@ -265,9 +272,9 @@ int32_t df_pipeline(const uint8_t *wgsl, size_t wgsl_len, uint32_t stride, const
   for (size_t i = 0; i < attribute_count; i++) {
     const uint32_t *t = (const uint32_t *)(attrs + i * 12);
     static const WGPUVertexFormat formats[] = {WGPUVertexFormat_Float32x2, WGPUVertexFormat_Float32x3,
-                                               WGPUVertexFormat_Float32x4};
+                                               WGPUVertexFormat_Float32x4, WGPUVertexFormat_Float32};
     attributes[i] = (WGPUVertexAttribute)WGPU_VERTEX_ATTRIBUTE_INIT;
-    attributes[i].format = t[0] <= DF_FORMAT_FLOAT32X4 ? formats[t[0]] : WGPUVertexFormat_Float32x3;
+    attributes[i].format = t[0] <= DF_FORMAT_FLOAT32 ? formats[t[0]] : WGPUVertexFormat_Float32x3;
     attributes[i].offset = t[1];
     attributes[i].shaderLocation = t[2];
   }
@@ -333,7 +340,7 @@ int32_t df_bind(int32_t pipeline, int32_t buffer, int32_t texture) {
     count++;
     entries[count] = (WGPUBindGroupEntry)WGPU_BIND_GROUP_ENTRY_INIT;
     entries[count].binding = 2;
-    entries[count].sampler = g_sampler;
+    entries[count].sampler = g_texture_smooth[texture] ? g_sampler_linear : g_sampler;
     count++;
   }
   WGPUBindGroupDescriptor desc = WGPU_BIND_GROUP_DESCRIPTOR_INIT;
@@ -433,6 +440,7 @@ void df_close(void) {
     wgpuTextureRelease(g_textures[i]);
   }
   if (g_sampler) wgpuSamplerRelease(g_sampler);
+  if (g_sampler_linear) wgpuSamplerRelease(g_sampler_linear);
   for (int32_t i = 0; i < g_pipeline_count; i++) wgpuRenderPipelineRelease(g_pipelines[i]);
   if (g_depth_view) wgpuTextureViewRelease(g_depth_view);
   if (g_depth_texture) wgpuTextureRelease(g_depth_texture);

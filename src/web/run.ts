@@ -28,7 +28,7 @@ const keyCodes = [
   "Enter",
 ];
 
-const vertexFormats: GPUVertexFormat[] = ["float32x2", "float32x3", "float32x4"];
+const vertexFormats: GPUVertexFormat[] = ["float32x2", "float32x3", "float32x4", "float32"];
 
 export async function loadBytes(path: string): Promise<Uint8Array> {
   const response = await fetch(path);
@@ -65,9 +65,16 @@ export async function run(options: WindowOptions, setup: Setup): Promise<void> {
   const buffers: GPUBuffer[] = [];
   const bindGroups: GPUBindGroup[] = [];
   const textureViews: GPUTextureView[] = [];
-  // Nearest filtering keeps pixel art crisp.
-  const sampler = device.createSampler({ magFilter: "nearest", minFilter: "nearest" });
-  const uploadTexture = (width: number, height: number, write: (texture: GPUTexture) => void): Texture => {
+  const textureSmooth: boolean[] = [];
+  // Nearest keeps pixel art crisp; linear suits fonts and photos.
+  const nearest = device.createSampler({ magFilter: "nearest", minFilter: "nearest" });
+  const linear = device.createSampler({ magFilter: "linear", minFilter: "linear" });
+  const uploadTexture = (
+    width: number,
+    height: number,
+    smooth: boolean,
+    write: (texture: GPUTexture) => void,
+  ): Texture => {
     const texture = device.createTexture({
       size: [width, height],
       format: "rgba8unorm",
@@ -75,6 +82,7 @@ export async function run(options: WindowOptions, setup: Setup): Promise<void> {
     });
     write(texture);
     textureViews.push(texture.createView());
+    textureSmooth.push(smooth);
     return { id: textureViews.length - 1, width, height };
   };
   const depthPipelines = new Set<number>();
@@ -142,18 +150,18 @@ export async function run(options: WindowOptions, setup: Setup): Promise<void> {
       if (buffer >= 0) entries.push({ binding: 0, resource: { buffer: buffers[buffer] } });
       if (texture >= 0) {
         entries.push({ binding: 1, resource: textureViews[texture] });
-        entries.push({ binding: 2, resource: sampler });
+        entries.push({ binding: 2, resource: textureSmooth[texture] ? linear : nearest });
       }
       bindGroups.push(device.createBindGroup({ layout: pipelines[pipeline].getBindGroupLayout(0), entries }));
       return bindGroups.length - 1;
     },
-    createTexture: (width: number, height: number, rgba: Uint8Array): Texture =>
-      uploadTexture(width, height, (texture) =>
+    createTexture: (width: number, height: number, rgba: Uint8Array, smooth: boolean): Texture =>
+      uploadTexture(width, height, smooth, (texture) =>
         device.queue.writeTexture({ texture }, rgba, { bytesPerRow: width * 4, rowsPerImage: height }, [width, height]),
       ),
-    createImage: async (png: Uint8Array): Promise<Texture> => {
+    createImage: async (png: Uint8Array, smooth: boolean): Promise<Texture> => {
       const bitmap = await createImageBitmap(new Blob([new Uint8Array(png)], { type: "image/png" }), { premultiplyAlpha: "none" });
-      return uploadTexture(bitmap.width, bitmap.height, (texture) =>
+      return uploadTexture(bitmap.width, bitmap.height, smooth, (texture) =>
         device.queue.copyExternalImageToTexture({ source: bitmap }, { texture }, [bitmap.width, bitmap.height]),
       );
     },
