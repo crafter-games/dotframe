@@ -29,16 +29,17 @@ jobs:
           key: vendor-${{ hashFiles('scripts/vendor.sh', 'vendor/toolchain/**') }}
       - run: scripts/vendor.sh macos && scripts/vendor.sh windows
       - run: bunx tsc -p tsconfig.json
+      - run: bun test
       - name: Build examples
         run: |
-          for example in triangle suzanne; do
+          for example in triangle suzanne smash-lite; do
             scripts/build-native.sh macos $example
             scripts/build-native.sh windows $example
             scripts/build-web.sh $example
           done
           mkdir -p dist/macos dist/windows
-          cp build/macos/triangle build/macos/suzanne dist/macos/
-          cp build/windows/triangle.exe build/windows/suzanne.exe dist/windows/
+          cp build/macos/triangle build/macos/suzanne build/macos/smash-lite dist/macos/
+          cp build/windows/triangle.exe build/windows/suzanne.exe build/windows/smash-lite.exe dist/windows/
           cp -R assets dist/
       - uses: actions/upload-artifact@v4
         with:
@@ -61,7 +62,8 @@ jobs:
           chmod +x macos/*
           curl -fsSLo cuse https://github.com/crafter-agents/cuse/releases/latest/download/cuse-macos-arm64
           chmod +x cuse
-          for example in triangle suzanne; do
+          export DF_DEMO=1
+          for example in triangle suzanne smash-lite; do
             ./macos/$example > $example.log 2>&1 &
             pid=$!
             sleep 8
@@ -89,7 +91,8 @@ jobs:
         shell: pwsh
         run: |
           Invoke-WebRequest https://github.com/crafter-agents/cuse/releases/latest/download/cuse-windows-x64.exe -OutFile cuse.exe
-          foreach ($example in "triangle", "suzanne") {
+          $env:DF_DEMO = "1"
+          foreach ($example in "triangle", "suzanne", "smash-lite") {
             $p = Start-Process "windows/$example.exe" -PassThru -RedirectStandardError "$example.err" -RedirectStandardOutput "$example.out"
             Start-Sleep -Seconds 10
             $alive = -not $p.HasExited
