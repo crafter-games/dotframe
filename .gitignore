@@ -5,3 +5,4 @@ vendor/SDL3-*/
 vendor/wgpu/
 .scriptc/
 *.png
+!assets/*.png
