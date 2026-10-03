@@ -1,6 +1,5 @@
-import type { Audio } from "../../src/audio";
-import type { Frame, Gpu, Setup } from "../../src/gpu";
-import type { Input } from "../../src/input";
+import type { Frame, Setup } from "../../src/gpu";
+import type { Platform } from "../../src/platform";
 
 const shader = `
 @vertex
@@ -17,10 +16,10 @@ fn fs_main() -> @location(0) vec4f {
 
 export const windowOptions = { width: 800, height: 600, title: "dotframe: triangle" };
 
-export const setup: Setup = (gpu: Gpu, _input: Input, _audio: Audio): Frame => {
+export const setup: Setup = ({ gpu }: Platform): Frame => {
   const pipeline = gpu.createPipeline({ wgsl: shader, stride: 0, attributes: [], depth: false, blend: false });
-  return (frameGpu: Gpu, _time: number): boolean => {
-    frameGpu.frame({ r: 0.06, g: 0.06, b: 0.1 }, [
+  return (_time: number): boolean => {
+    gpu.frame({ r: 0.06, g: 0.06, b: 0.1 }, [
       { pipeline, bindGroup: -1, vertexBuffer: -1, indexBuffer: -1, first: 0, count: 3 },
     ]);
     return true;

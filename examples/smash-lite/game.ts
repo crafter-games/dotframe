@@ -1,9 +1,9 @@
-import type { Audio } from "../../src/audio";
 import { createWorld, spawn, type World } from "../../src/ecs";
-import type { Frame, Gpu, Setup } from "../../src/gpu";
+import type { Frame, Setup } from "../../src/gpu";
 import { GamepadAxis, GamepadButton, type Input, Key } from "../../src/input";
 import { type Vec3, vec3 } from "../../src/math";
 import { type Body, FIXED_STEP, type Solid, stepBody } from "../../src/physics";
+import type { Platform } from "../../src/platform";
 import { createRenderer } from "../../src/render";
 import { box } from "../../src/shapes";
 
@@ -60,10 +60,10 @@ function readIntent(input: Input, controls: Controls): Intent {
   let jump = input.down(controls.jump);
   let attack = input.down(controls.attack);
   if (controls.gamepad) {
-    const stick = input.axis(GamepadAxis.LeftX);
+    const stick = input.axis(0, GamepadAxis.LeftX);
     if (Math.abs(stick) > 0.25) move = stick;
-    jump = jump || input.button(GamepadButton.South);
-    attack = attack || input.button(GamepadButton.West);
+    jump = jump || input.button(0, GamepadButton.South);
+    attack = attack || input.button(0, GamepadButton.West);
   }
   return { move, jump, attack };
 }
@@ -86,7 +86,7 @@ function respawn(player: Player): void {
 }
 
 export function createSetup(demo: boolean): Setup {
-  return (gpu: Gpu, input: Input, audio: Audio): Frame => {
+  return ({ gpu, input }: Platform): Frame => {
     const renderer = createRenderer(gpu);
     const cube = renderer.addMesh(box());
     const world: World = createWorld();
@@ -173,7 +173,7 @@ export function createSetup(demo: boolean): Setup {
     };
 
     let simulated = 0;
-    return (frameGpu: Gpu, time: number): boolean => {
+    return (time: number): boolean => {
       if (!demo && input.down(Key.Escape)) return false;
       // Fixed-step simulation, capped so a stall does not spiral.
       let steps = 0;

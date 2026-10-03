@@ -1,16 +1,15 @@
-import type { Audio } from "../../src/audio";
 import { createWorld, spawn } from "../../src/ecs";
 import { parseGlb } from "../../src/gltf";
-import type { Frame, Gpu, Setup } from "../../src/gpu";
-import type { Input } from "../../src/input";
+import type { Frame, Setup } from "../../src/gpu";
 import { vec3 } from "../../src/math";
+import type { Platform } from "../../src/platform";
 import { createRenderer } from "../../src/render";
 
 export const windowOptions = { width: 960, height: 540, title: "dotframe: suzanne" };
 export const assetPath = "assets/suzanne.glb";
 
 export function createSetup(glb: Uint8Array): Setup {
-  return (gpu: Gpu, _input: Input, _audio: Audio): Frame => {
+  return ({ gpu }: Platform): Frame => {
     const renderer = createRenderer(gpu);
     const mesh = renderer.addMesh(parseGlb(glb));
     const world = createWorld();
@@ -25,7 +24,7 @@ export function createSetup(glb: Uint8Array): Setup {
       world.meshes.set(entity, { mesh, color: colors[i] });
     }
 
-    return (frameGpu: Gpu, time: number): boolean => {
+    return (time: number): boolean => {
       for (const [entity, transform] of world.transforms) {
         transform.rotation = vec3(0, time * (0.6 + entity * 0.3), 0);
         transform.position = vec3(transform.position.x, Math.sin(time * 2 + entity) * 0.25, 0);

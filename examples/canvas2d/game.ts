@@ -1,7 +1,7 @@
-import type { Audio } from "../../src/audio";
 import { createDraw2D } from "../../src/draw2d";
-import type { Frame, Gpu, Setup, Texture } from "../../src/gpu";
-import type { Input } from "../../src/input";
+import type { Frame, Setup, Texture } from "../../src/gpu";
+import { MouseButton } from "../../src/input";
+import type { Platform } from "../../src/platform";
 
 export const windowOptions = { width: 800, height: 450, title: "dotframe: canvas2d" };
 export const assetPaths = {
@@ -22,7 +22,9 @@ export interface Assets {
 
 // Exercises the Canvas2D-style layer: transforms, alpha, concave paths, arcs, strokes, sprites and text.
 export function createSetup(assets: Assets): Setup {
-  return (gpu: Gpu, _input: Input, _audio: Audio): Frame => {
+  return ({ gpu, input, storage }: Platform): Frame => {
+    const runs = Number(storage.get("runs") ?? "0") + 1;
+    storage.set("runs", `${runs}`);
     const ctx = createDraw2D(gpu, windowOptions.width, windowOptions.height);
     let sprite: Texture | null = null;
     gpu.createImage(assets.sprite, false).then((texture: Texture): void => {
@@ -36,7 +38,7 @@ export function createSetup(assets: Assets): Setup {
       ctx.addFont(["Archivo Black", "Arial Black", "Impact", "sans-serif", "monospace"], atlas, decoder.decode(assets.archivoMetrics));
     });
 
-    return (_gpu: Gpu, time: number): boolean => {
+    return (time: number): boolean => {
       ctx.begin();
 
       ctx.setFillStyle("#1e293b");
@@ -112,6 +114,18 @@ export function createSetup(assets: Assets): Setup {
       ctx.setTextAlign("right");
       ctx.setFillStyle("#94a3b8");
       ctx.fillText("Railly · Anthony · Jibaru · Shiara · Edward — ñandú, acción", 770, 430);
+
+      ctx.setFont("16px Bangers");
+      ctx.setTextAlign("left");
+      ctx.setTextBaseline("top");
+      ctx.setFillStyle("#94a3b8");
+      ctx.fillText(`run #${runs}`, 32, 30);
+
+      const pointer = input.pointer();
+      ctx.setFillStyle(pointer.buttons & MouseButton.Left ? "#ef4444" : "#ffffff");
+      ctx.beginPath();
+      ctx.arc(pointer.x * windowOptions.width, pointer.y * windowOptions.height, 6, 0, Math.PI * 2, false);
+      ctx.fill();
 
       ctx.end({ r: 0.06, g: 0.06, b: 0.1 });
       return true;
