@@ -45,7 +45,8 @@ static WGPUSampler g_sampler_linear;
 static WGPUTexture g_depth_texture;
 static WGPUTextureView g_depth_view;
 static int g_width, g_height;
-static SDL_Gamepad *g_gamepad;
+#define DF_MAX_GAMEPADS 4
+static SDL_Gamepad *g_gamepads[DF_MAX_GAMEPADS];
 
 // In-flight frame state between df_begin and df_end.
 static WGPUSurfaceTexture g_frame_texture;
@@ -120,6 +121,8 @@ int32_t df_open(int32_t width, int32_t height, const uint8_t *title, size_t titl
 #endif
   g_window = SDL_CreateWindow(title_buf, width, height, flags);
   if (!g_window) return -2;
+  // A freshly launched game should take focus, so keyboard and mouse reach it.
+  SDL_RaiseWindow(g_window);
 
   g_instance = wgpuCreateInstance(NULL);
   g_surface = create_surface();
@@ -180,15 +183,62 @@ uint8_t df_key_down(int32_t scancode) {
   return scancode >= 0 && scancode < count && state[scancode];
 }
 
-// SDL_GamepadAxis; returns [-1, 1], or 0 without a gamepad.
-double df_gamepad_axis(int32_t axis) {
-  if (!g_gamepad) return 0.0;
-  return SDL_GetGamepadAxis(g_gamepad, (SDL_GamepadAxis)axis) / 32767.0;
+static SDL_Gamepad *gamepad_at(int32_t pad) { return pad >= 0 && pad < DF_MAX_GAMEPADS ? g_gamepads[pad] : NULL; }
+
+// SDL_GamepadAxis on gamepad slot pad; returns [-1, 1], or 0 when the slot is empty.
+double df_gamepad_axis(int32_t pad, int32_t axis) {
+  SDL_Gamepad *gamepad = gamepad_at(pad);
+  return gamepad ? SDL_GetGamepadAxis(gamepad, (SDL_GamepadAxis)axis) / 32767.0 : 0.0;
 }
 
-// SDL_GamepadButton.
-uint8_t df_gamepad_button(int32_t button) {
-  return g_gamepad && SDL_GetGamepadButton(g_gamepad, (SDL_GamepadButton)button);
+// SDL_GamepadButton on gamepad slot pad.
+uint8_t df_gamepad_button(int32_t pad, int32_t button) {
+  SDL_Gamepad *gamepad = gamepad_at(pad);
+  return gamepad && SDL_GetGamepadButton(gamepad, (SDL_GamepadButton)button);
+}
+
+// Mouse position normalized to the window, [0, 1] on each axis.
+double df_mouse_x(void) {
+  float x = 0, y = 0;
+  int w = 1, h = 1;
+  SDL_GetMouseState(&x, &y);
+  SDL_GetWindowSize(g_window, &w, &h);
+  return w > 0 ? x / w : 0.0;
+}
+
+double df_mouse_y(void) {
+  float x = 0, y = 0;
+  int w = 1, h = 1;
+  SDL_GetMouseState(&x, &y);
+  SDL_GetWindowSize(g_window, &w, &h);
+  return h > 0 ? y / h : 0.0;
+}
+
+// Bit 0 left, bit 1 middle, bit 2 right.
+uint32_t df_mouse_buttons(void) {
+  SDL_MouseButtonFlags flags = SDL_GetMouseState(NULL, NULL);
+  return (flags & SDL_BUTTON_LMASK ? 1u : 0u) | (flags & SDL_BUTTON_MMASK ? 2u : 0u) | (flags & SDL_BUTTON_RMASK ? 4u : 0u);
+}
+
+// Writes the per-user writable directory for org/app (UTF-8, trailing separator) into out; returns its length or -1.
+int32_t df_pref_path(const uint8_t *org, size_t org_len, const uint8_t *app, size_t app_len, uint8_t *out, size_t out_len) {
+  char org_buf[128], app_buf[128];
+  size_t n = org_len < sizeof org_buf - 1 ? org_len : sizeof org_buf - 1;
+  memcpy(org_buf, org, n);
+  org_buf[n] = 0;
+  n = app_len < sizeof app_buf - 1 ? app_len : sizeof app_buf - 1;
+  memcpy(app_buf, app, n);
+  app_buf[n] = 0;
+  char *path = SDL_GetPrefPath(org_buf, app_buf);
+  if (!path) return -1;
+  size_t len = strlen(path);
+  if (len > out_len) {
+    SDL_free(path);
+    return -1;
+  }
+  memcpy(out, path, len);
+  SDL_free(path);
+  return (int32_t)len;
 }
 
 int32_t df_width(void) { return g_width; }
@@ -359,11 +409,22 @@ uint8_t df_poll(void) {
   while (SDL_PollEvent(&event)) {
     if (event.type == SDL_EVENT_QUIT || event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) return 0;
     if (event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED) configure_surface();
-    if (event.type == SDL_EVENT_GAMEPAD_ADDED && !g_gamepad) g_gamepad = SDL_OpenGamepad(event.gdevice.which);
-    if (event.type == SDL_EVENT_GAMEPAD_REMOVED && g_gamepad &&
-        SDL_GetGamepadID(g_gamepad) == event.gdevice.which) {
-      SDL_CloseGamepad(g_gamepad);
-      g_gamepad = NULL;
+    // Gamepads keep the first free slot they get, so player 1 stays player 1 across reconnects of others.
+    if (event.type == SDL_EVENT_GAMEPAD_ADDED) {
+      for (int i = 0; i < DF_MAX_GAMEPADS; i++) {
+        if (!g_gamepads[i]) {
+          g_gamepads[i] = SDL_OpenGamepad(event.gdevice.which);
+          break;
+        }
+      }
+    }
+    if (event.type == SDL_EVENT_GAMEPAD_REMOVED) {
+      for (int i = 0; i < DF_MAX_GAMEPADS; i++) {
+        if (g_gamepads[i] && SDL_GetGamepadID(g_gamepads[i]) == event.gdevice.which) {
+          SDL_CloseGamepad(g_gamepads[i]);
+          g_gamepads[i] = NULL;
+        }
+      }
     }
   }
   return 1;
@@ -452,7 +513,8 @@ void df_close(void) {
   if (g_adapter) wgpuAdapterRelease(g_adapter);
   if (g_surface) wgpuSurfaceRelease(g_surface);
   if (g_instance) wgpuInstanceRelease(g_instance);
-  if (g_gamepad) SDL_CloseGamepad(g_gamepad);
+  for (int i = 0; i < DF_MAX_GAMEPADS; i++)
+    if (g_gamepads[i]) SDL_CloseGamepad(g_gamepads[i]);
   if (g_window) SDL_DestroyWindow(g_window);
   SDL_Quit();
 }

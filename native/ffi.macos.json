@@ -35,6 +35,7 @@
       "name": "dfGamepadAxis",
       "symbol": "df_gamepad_axis",
       "params": [
+        "i32",
         "i32"
       ],
       "returns": "f64"
@@ -43,9 +44,38 @@
       "name": "dfGamepadButton",
       "symbol": "df_gamepad_button",
       "params": [
+        "i32",
         "i32"
       ],
       "returns": "bool"
+    },
+    {
+      "name": "dfMouseX",
+      "symbol": "df_mouse_x",
+      "params": [],
+      "returns": "f64"
+    },
+    {
+      "name": "dfMouseY",
+      "symbol": "df_mouse_y",
+      "params": [],
+      "returns": "f64"
+    },
+    {
+      "name": "dfMouseButtons",
+      "symbol": "df_mouse_buttons",
+      "params": [],
+      "returns": "u32"
+    },
+    {
+      "name": "dfPrefPath",
+      "symbol": "df_pref_path",
+      "params": [
+        "string",
+        "string",
+        "mutable-bytes"
+      ],
+      "returns": "i32"
     },
     {
       "name": "dfBuffer",
