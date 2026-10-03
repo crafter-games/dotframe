@@ -102,6 +102,8 @@ export async function run(options: WindowOptions, setup: Setup): Promise<void> {
   let index = 0;
   while (dfPoll()) {
     if (!frame(gpu, (performance.now() - start) / 1000)) break;
+    // Let promise callbacks queued by game code (asset loads, timers) run, as the browser does between frames.
+    await Promise.resolve();
     index++;
     if (maxFrames > 0 && index >= maxFrames) break;
   }
