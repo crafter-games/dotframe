@@ -1,3 +1,5 @@
+import type { Input } from "./input";
+
 // Backend-agnostic surface shared by game code. Backends return plain objects of functions:
 // scriptc compiles structural types as record copies, so classes cannot stand in for interfaces.
 
@@ -52,7 +54,7 @@ export interface Gpu {
 export type Frame = (gpu: Gpu, time: number) => boolean;
 
 // Called once after the GPU is ready.
-export type Setup = (gpu: Gpu) => Frame;
+export type Setup = (gpu: Gpu, input: Input) => Frame;
 
 export function f32Bytes(data: Float32Array): Uint8Array {
   return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);

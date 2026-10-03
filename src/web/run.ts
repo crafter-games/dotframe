@@ -1,4 +1,23 @@
 import { BufferUsage, type Color, type Draw, type Gpu, type PipelineOptions, type Setup, type WindowOptions } from "../gpu";
+import type { Input } from "../input";
+
+// KeyboardEvent.code values indexed by the engine Key ids in src/input.ts.
+const keyCodes = [
+  "ArrowLeft",
+  "ArrowRight",
+  "ArrowUp",
+  "ArrowDown",
+  "Space",
+  "KeyW",
+  "KeyA",
+  "KeyS",
+  "KeyD",
+  "KeyJ",
+  "KeyK",
+  "KeyL",
+  "Escape",
+  "Enter",
+];
 
 const vertexFormats: GPUVertexFormat[] = ["float32x2", "float32x3", "float32x4"];
 
@@ -127,7 +146,21 @@ export async function run(options: WindowOptions, setup: Setup): Promise<void> {
     aspect: (): number => canvas.width / Math.max(canvas.height, 1),
   };
 
-  const frame = setup(gpu);
+  const pressed = new Set<string>();
+  globalThis.addEventListener("keydown", (event) => {
+    if (keyCodes.includes(event.code)) event.preventDefault();
+    pressed.add(event.code);
+  });
+  globalThis.addEventListener("keyup", (event) => pressed.delete(event.code));
+  globalThis.addEventListener("blur", () => pressed.clear());
+  const gamepad = (): Gamepad | null => navigator.getGamepads?.().find((pad) => pad !== null) ?? null;
+  const input: Input = {
+    down: (key: number): boolean => pressed.has(keyCodes[key] ?? ""),
+    axis: (axis: number): number => gamepad()?.axes[axis] ?? 0,
+    button: (button: number): boolean => gamepad()?.buttons[button]?.pressed ?? false,
+  };
+
+  const frame = setup(gpu, input);
   const start = performance.now();
   const tick = (): void => {
     if (!frame(gpu, (performance.now() - start) / 1000)) return;

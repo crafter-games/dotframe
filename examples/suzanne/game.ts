@@ -1,6 +1,7 @@
 import { createWorld, spawn } from "../../src/ecs";
 import { parseGlb } from "../../src/gltf";
 import type { Frame, Gpu, Setup } from "../../src/gpu";
+import type { Input } from "../../src/input";
 import { vec3 } from "../../src/math";
 import { createRenderer } from "../../src/render";
 
@@ -8,7 +9,7 @@ export const windowOptions = { width: 960, height: 540, title: "dotframe: suzann
 export const assetPath = "assets/suzanne.glb";
 
 export function createSetup(glb: Uint8Array): Setup {
-  return (gpu: Gpu): Frame => {
+  return (gpu: Gpu, _input: Input): Frame => {
     const renderer = createRenderer(gpu);
     const mesh = renderer.addMesh(parseGlb(glb));
     const world = createWorld();

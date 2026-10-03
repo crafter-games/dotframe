@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import type { Color, Draw, Gpu, PipelineOptions, Setup, WindowOptions } from "../gpu";
+import type { Input } from "../input";
 import {
   dfBegin,
   dfBindUniform,
@@ -8,7 +9,10 @@ import {
   dfClose,
   dfDraw,
   dfEnd,
+  dfGamepadAxis,
+  dfGamepadButton,
   dfHeight,
+  dfKeyDown,
   dfOpen,
   dfPipeline,
   dfPoll,
@@ -16,6 +20,9 @@ import {
 } from "./ffi";
 
 const PIPELINE_DEPTH = 1;
+
+// SDL scancodes indexed by the engine Key ids in src/input.ts.
+const scancodes = [80, 79, 82, 81, 44, 26, 4, 22, 7, 13, 14, 15, 41, 40];
 
 export async function loadBytes(path: string): Promise<Uint8Array> {
   const data = readFileSync(path);
@@ -65,7 +72,13 @@ export async function run(options: WindowOptions, setup: Setup): Promise<void> {
     aspect: (): number => dfWidth() / Math.max(dfHeight(), 1),
   };
 
-  const frame = setup(gpu);
+  const input: Input = {
+    down: (key: number): boolean => key >= 0 && key < scancodes.length && dfKeyDown(scancodes[key]),
+    axis: (axis: number): number => dfGamepadAxis(axis),
+    button: (button: number): boolean => dfGamepadButton(button),
+  };
+
+  const frame = setup(gpu, input);
   // DF_FRAMES bounds the run for headless checks.
   const maxFrames = Number(process.env.DF_FRAMES ?? "0");
   const start = performance.now();
