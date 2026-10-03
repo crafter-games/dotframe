@@ -409,26 +409,46 @@ export function createDraw2D(gpu: RenderGpu, width: number, height: number): Dra
   const stack: State[] = [];
   let vertexCount = 0;
   const batches: Batch[] = [];
-  // Current path: subpaths of flat point lists, in path (untransformed) space. Point arrays are pooled across paths:
-  // only the first subpathCount entries are live, so beginPath allocates nothing.
-  const subpaths: number[][] = [];
+  // Current path, in path (untransformed) space: every point of every subpath in one flat x,y buffer. Points
+  // are only ever appended to the last subpath, so subpath s spans [starts[s], starts[s + 1]) and the last one
+  // ends at pathLength. A typed buffer keeps point reads and writes inline in compiled builds.
+  let pathData = new Float64Array(1024);
+  let pathLength = 0;
+  const starts: number[] = [];
   const closed: boolean[] = [];
   // A subpath built only from one arc, ellipse or rect is convex and fills as a fan, skipping ear clipping.
   const convex: boolean[] = [];
   let subpathCount = 0;
-  const startSubpath = (isClosed: boolean, isConvex: boolean): number[] => {
-    if (subpathCount === subpaths.length) {
-      subpaths.push([]);
+  const startSubpath = (isClosed: boolean, isConvex: boolean): void => {
+    if (subpathCount === starts.length) {
+      starts.push(0);
       closed.push(false);
       convex.push(false);
     }
-    const points = subpaths[subpathCount];
-    points.length = 0;
+    starts[subpathCount] = pathLength;
     closed[subpathCount] = isClosed;
     convex[subpathCount] = isConvex;
     subpathCount++;
-    return points;
   };
+  // Room for `floats` more values in the path buffer.
+  const reservePath = (floats: number): Float64Array => {
+    if (pathLength + floats > pathData.length) {
+      let size = pathData.length * 2;
+      while (size < pathLength + floats) size *= 2;
+      const larger = new Float64Array(size);
+      larger.set(pathData.subarray(0, pathLength));
+      pathData = larger;
+    }
+    return pathData;
+  };
+  const pushPoint = (x: number, y: number): void => {
+    const data = reservePath(2);
+    data[pathLength] = x;
+    data[pathLength + 1] = y;
+    pathLength = pathLength + 2;
+  };
+  const subpathStart = (s: number): number => starts[s];
+  const subpathEnd = (s: number): number => (s + 1 < subpathCount ? starts[s + 1] : pathLength);
 
   const vertex = (x: number, y: number, u: number, v: number, color: Rgba, edge: number): void => {
     if (vertexCount >= capacity) return;
@@ -539,8 +559,9 @@ export function createDraw2D(gpu: RenderGpu, width: number, height: number): Dra
     quad(ax + nx, ay + ny, bx + nx, by + ny, bx - nx, by - ny, ax - nx, ay - ny, state.stroke);
   };
 
-  const currentSubpath = (): number[] =>
-    subpathCount === 0 ? startSubpath(false, true) : subpaths[subpathCount - 1];
+  const ensureSubpath = (): void => {
+    if (subpathCount === 0) startSubpath(false, true);
+  };
 
   const arcPoints = (
     x: number,
@@ -563,15 +584,20 @@ export function createDraw2D(gpu: RenderGpu, width: number, height: number): Dra
     const steps = Math.max(2, Math.ceil((Math.abs(sweep) / full) * segments));
     const cos = Math.cos(rotation);
     const sin = Math.sin(rotation);
-    const points = currentSubpath();
+    ensureSubpath();
     // Arcs appended to existing points (rounded shapes, pie slices) may be concave.
-    if (points.length > 0) convex[subpathCount - 1] = false;
+    if (pathLength > starts[subpathCount - 1]) convex[subpathCount - 1] = false;
+    const data = reservePath((steps + 1) * 2);
+    let o = pathLength;
     for (let i = 0; i <= steps; i++) {
       const angle = start + (sweep * i) / steps;
       const px = Math.cos(angle) * radiusX;
       const py = Math.sin(angle) * radiusY;
-      points.push(x + px * cos - py * sin, y + px * sin + py * cos);
+      data[o] = x + px * cos - py * sin;
+      data[o + 1] = y + px * sin + py * cos;
+      o += 2;
     }
+    pathLength = o;
   };
 
   const resolveFont = (): Font | null => {
@@ -723,16 +749,23 @@ export function createDraw2D(gpu: RenderGpu, width: number, height: number): Dra
     },
     beginPath: (): void => {
       subpathCount = 0;
+      pathLength = 0;
     },
     moveTo: (x: number, y: number): void => {
-      startSubpath(false, false).push(x, y);
+      startSubpath(false, false);
+      pushPoint(x, y);
     },
     lineTo: (x: number, y: number): void => {
-      currentSubpath().push(x, y);
+      ensureSubpath();
+      pushPoint(x, y);
       convex[subpathCount - 1] = false;
     },
     rect: (x: number, y: number, w: number, h: number): void => {
-      startSubpath(true, true).push(x, y, x + w, y, x + w, y + h, x, y + h);
+      startSubpath(true, true);
+      pushPoint(x, y);
+      pushPoint(x + w, y);
+      pushPoint(x + w, y + h);
+      pushPoint(x, y + h);
     },
     arc: (x: number, y: number, radius: number, start: number, end: number, counterclockwise: boolean): void => {
       arcPoints(x, y, radius, radius, 0, start, end, counterclockwise);
@@ -754,8 +787,9 @@ export function createDraw2D(gpu: RenderGpu, width: number, height: number): Dra
     },
     fill: (): void => {
       for (let s = 0; s < subpathCount; s++) {
-        const points = subpaths[s];
-        const count = points.length / 2;
+        const points = pathData;
+        const base = subpathStart(s);
+        const count = (subpathEnd(s) - base) / 2;
         if (convex[s] && count >= 3) {
           const total = (count - 2) * 3;
           if (!useTexture(white.id, total) || vertexCount + total > capacity) return;
@@ -764,14 +798,14 @@ export function createDraw2D(gpu: RenderGpu, width: number, height: number): Dra
           const fill = t.fill;
           const packed = words;
           const rgba = packColor(fill.r, fill.g, fill.b, fill.a * t.alpha);
-          const fx = t.a * points[0] + t.c * points[1] + t.e;
-          const fy = t.b * points[0] + t.d * points[1] + t.f;
-          let px = t.a * points[2] + t.c * points[3] + t.e;
-          let py = t.b * points[2] + t.d * points[3] + t.f;
+          const fx = t.a * points[base] + t.c * points[base + 1] + t.e;
+          const fy = t.b * points[base] + t.d * points[base + 1] + t.f;
+          let px = t.a * points[base + 2] + t.c * points[base + 3] + t.e;
+          let py = t.b * points[base + 2] + t.d * points[base + 3] + t.f;
           let o = vertexCount * WORDS_PER_VERTEX;
           for (let i = 1; i + 1 < count; i++) {
-            const qx = t.a * points[i * 2 + 2] + t.c * points[i * 2 + 3] + t.e;
-            const qy = t.b * points[i * 2 + 2] + t.d * points[i * 2 + 3] + t.f;
+            const qx = t.a * points[base + i * 2 + 2] + t.c * points[base + i * 2 + 3] + t.e;
+            const qy = t.b * points[base + i * 2 + 2] + t.d * points[base + i * 2 + 3] + t.f;
             for (let k = 0; k < 3; k++) {
               out[o] = k === 0 ? fx : k === 1 ? px : qx;
               out[o + 1] = k === 0 ? fy : k === 1 ? py : qy;
@@ -787,19 +821,24 @@ export function createDraw2D(gpu: RenderGpu, width: number, height: number): Dra
           vertexCount = vertexCount + total;
           continue;
         }
-        const indices = triangulate(points);
+        // Concave subpaths are rare; ear clipping works on a plain copy of their points.
+        const flat: number[] = [];
+        for (let i = 0; i < count * 2; i++) flat.push(points[base + i]);
+        const indices = triangulate(flat);
         if (!useTexture(white.id, indices.length)) return;
-        for (const index of indices) vertex(points[index * 2], points[index * 2 + 1], 0, 0, state.fill, -1);
+        for (const index of indices) vertex(flat[index * 2], flat[index * 2 + 1], 0, 0, state.fill, -1);
       }
     },
     stroke: (): void => {
       for (let s = 0; s < subpathCount; s++) {
-        const points = subpaths[s];
-        const count = points.length / 2;
+        const points = pathData;
+        const base = subpathStart(s);
+        const count = (subpathEnd(s) - base) / 2;
         for (let i = 0; i + 1 < count; i++) {
-          strokeSegment(points[i * 2], points[i * 2 + 1], points[i * 2 + 2], points[i * 2 + 3]);
+          const o = base + i * 2;
+          strokeSegment(points[o], points[o + 1], points[o + 2], points[o + 3]);
         }
-        if (closed[s] && count > 2) strokeSegment(points[count * 2 - 2], points[count * 2 - 1], points[0], points[1]);
+        if (closed[s] && count > 2) strokeSegment(points[base + count * 2 - 2], points[base + count * 2 - 1], points[base], points[base + 1]);
       }
     },
     drawImageTinted: (
