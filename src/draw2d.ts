@@ -38,6 +38,19 @@ export interface Draw2D {
   closePath: () => void;
   fill: () => void;
   stroke: () => void;
+  // drawImage drawn as a solid-color silhouette of the image's alpha.
+  drawImageTinted: (
+    image: Texture,
+    sx: number,
+    sy: number,
+    sw: number,
+    sh: number,
+    dx: number,
+    dy: number,
+    dw: number,
+    dh: number,
+    color: string,
+  ) => void;
   // Registers an SDF font baked by tools/bake-font.c under one or more CSS family names.
   addFont: (families: string[], atlas: Texture, metricsJson: string) => void;
   // CSS font shorthand, e.g. 'italic 900 24px "Arial Black", Impact, sans-serif'.
@@ -152,13 +165,17 @@ fn vs_main(
   return out;
 }
 
-// edge < 0: plain texture sample. edge >= 0: signed distance field cut at that alpha.
+// edge >= 0: signed distance field cut at that alpha. -1: texture times color. -2: color with the texture's alpha
+// (a silhouette, like Canvas2D's source-in over an image).
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4f {
   let sample = textureSample(tex, samp, in.uv);
   let distance = sample.a;
   let smoothing = max(fwidth(distance) * 0.75, 0.001);
   let coverage = smoothstep(in.edge - smoothing, in.edge + smoothing, distance);
+  if (in.edge < -1.5) {
+    return vec4f(in.color.rgb, in.color.a * sample.a);
+  }
   if (in.edge < 0.0) {
     return sample * in.color;
   }
@@ -731,6 +748,21 @@ export function createDraw2D(gpu: Gpu, width: number, height: number): Draw2D {
         }
         if (closed[s] && count > 2) strokeSegment(points[count * 2 - 2], points[count * 2 - 1], points[0], points[1]);
       }
+    },
+    drawImageTinted: (
+      image: Texture,
+      sx: number,
+      sy: number,
+      sw: number,
+      sh: number,
+      dx: number,
+      dy: number,
+      dw: number,
+      dh: number,
+      color: string,
+    ): void => {
+      if (!useTexture(image.id, 6)) return;
+      emitQuad(dx, dy, dx + dw, dy, dx + dw, dy + dh, dx, dy + dh, sx / image.width, sy / image.height, (sx + sw) / image.width, (sy + sh) / image.height, parseColor(color), -2);
     },
     addFont: (families: string[], atlas: Texture, metricsJson: string): void => {
       const metrics = JSON.parse(metricsJson) as FontMetrics;
