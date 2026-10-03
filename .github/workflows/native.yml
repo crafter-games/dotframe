@@ -28,20 +28,26 @@ jobs:
             vendor/build
           key: vendor-${{ hashFiles('scripts/vendor.sh', 'vendor/toolchain/**') }}
       - run: scripts/vendor.sh macos && scripts/vendor.sh windows
-      - run: scripts/build-native.sh macos triangle
-      - run: scripts/build-native.sh windows triangle
       - run: bunx tsc -p tsconfig.json
-      - run: scripts/build-web.sh triangle
+      - name: Build examples
+        run: |
+          for example in triangle suzanne; do
+            scripts/build-native.sh macos $example
+            scripts/build-native.sh windows $example
+            scripts/build-web.sh $example
+          done
+          mkdir -p dist/macos dist/windows
+          cp build/macos/triangle build/macos/suzanne dist/macos/
+          cp build/windows/triangle.exe build/windows/suzanne.exe dist/windows/
+          cp -R assets dist/
       - uses: actions/upload-artifact@v4
         with:
-          name: triangle-web
-          path: build/web/triangle
+          name: binaries
+          path: dist
       - uses: actions/upload-artifact@v4
         with:
-          name: triangle-binaries
-          path: |
-            build/macos/triangle
-            build/windows/triangle.exe
+          name: web
+          path: build/web
 
   run-macos:
     needs: build
@@ -49,26 +55,28 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: triangle-binaries
+          name: binaries
       - name: Run and capture
         run: |
-          chmod +x macos/triangle
+          chmod +x macos/*
           curl -fsSLo cuse https://github.com/crafter-agents/cuse/releases/latest/download/cuse-macos-arm64
           chmod +x cuse
-          ./macos/triangle > run.log 2>&1 &
-          sleep 8
-          ./cuse windows --json > windows.json || true
-          ./cuse capture screen.png || screencapture -x screen.png
-          kill %1 || true
-          cat run.log windows.json
+          for example in triangle suzanne; do
+            ./macos/$example > $example.log 2>&1 &
+            pid=$!
+            sleep 8
+            ./cuse capture $example.png || screencapture -x $example.png
+            kill $pid || true
+            sleep 1
+            cat $example.log
+          done
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: capture-macos
           path: |
-            screen.png
-            run.log
-            windows.json
+            *.png
+            *.log
 
   run-windows:
     needs: build
@@ -76,26 +84,28 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: triangle-binaries
+          name: binaries
       - name: Run and capture
         shell: pwsh
         run: |
           Invoke-WebRequest https://github.com/crafter-agents/cuse/releases/latest/download/cuse-windows-x64.exe -OutFile cuse.exe
-          $p = Start-Process windows/triangle.exe -PassThru -RedirectStandardError run.err -RedirectStandardOutput run.out
-          Start-Sleep -Seconds 10
-          $alive = -not $p.HasExited
-          "alive=$alive exit=$($p.ExitCode)" | Tee-Object status.txt
-          ./cuse.exe windows --json | Tee-Object windows.json
-          ./cuse.exe capture screen.png
-          if ($alive) { Stop-Process -Id $p.Id -Force }
-          Get-Content run.err, run.out -ErrorAction SilentlyContinue
+          foreach ($example in "triangle", "suzanne") {
+            $p = Start-Process "windows/$example.exe" -PassThru -RedirectStandardError "$example.err" -RedirectStandardOutput "$example.out"
+            Start-Sleep -Seconds 10
+            $alive = -not $p.HasExited
+            "$example alive=$alive exit=$($p.ExitCode)" | Tee-Object -Append status.txt
+            ./cuse.exe capture "$example.png"
+            if ($alive) { Stop-Process -Id $p.Id -Force }
+            Start-Sleep -Seconds 1
+            Get-Content "$example.err", "$example.out" -ErrorAction SilentlyContinue
+          }
+          if ((Get-Content status.txt) -match "alive=False") { exit 1 }
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: capture-windows
           path: |
-            screen.png
-            run.err
-            run.out
+            *.png
+            *.err
+            *.out
             status.txt
-            windows.json
