@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>bench: canvas2d baseline</title>
+    <style>
+      @font-face { font-family: Bangers; src: url("./Bangers-Regular.ttf"); }
+      body { margin: 0; background: #000; display: grid; place-items: center; min-height: 100vh; }
+    </style>
+  </head>
+  <body>
+    <canvas id="c" width="960" height="540"></canvas>
+    <script type="module">
+      // Same scene as examples/bench2d/game.ts, drawn with the browser's Canvas2D (Crafter Smash's renderer today).
+      const stages = [1000, 5000, 10000, 20000, 50000];
+      const WARMUP = 1, MEASURE = 3, W = 960, H = 540;
+      const ctx = document.getElementById("c").getContext("2d");
+      ctx.imageSmoothingEnabled = false;
+      const sprite = new Image();
+      sprite.src = "./crafter.png";
+      await sprite.decode();
+      await document.fonts.load("20px Bangers");
+
+      const max = stages[stages.length - 1];
+      const x = new Float32Array(max), y = new Float32Array(max), vx = new Float32Array(max), vy = new Float32Array(max);
+      let seed = 1;
+      const random = () => { seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296; };
+      for (let i = 0; i < max; i++) {
+        x[i] = random() * W; y[i] = random() * H; vx[i] = (random() - 0.5) * 4; vy[i] = (random() - 0.5) * 4;
+      }
+
+      const results = [];
+      window.benchResults = results;
+      let stage = 0, stageStart = -1, lastTime = -1, cpu = [], wall = [];
+      const start = performance.now();
+      const tick = (now) => {
+        const time = (now - start) / 1000;
+        if (stageStart < 0) stageStart = time;
+        const count = stages[stage];
+        const begin = performance.now();
+        for (let i = 0; i < count; i++) {
+          x[i] += vx[i]; y[i] += vy[i];
+          if (x[i] < 0 || x[i] > W) vx[i] = -vx[i];
+          if (y[i] < 0 || y[i] > H) vy[i] = -vy[i];
+        }
+        ctx.fillStyle = "#0f0f1a";
+        ctx.fillRect(0, 0, W, H);
+        const frame = Math.floor(time * 6) % 2;
+        for (let i = 0; i < count; i++) ctx.drawImage(sprite, frame * 16, 0, 16, 16, x[i] - 16, y[i] - 16, 32, 32);
+        ctx.fillStyle = "rgba(249, 115, 22, 0.5)";
+        for (let i = 0; i < count / 4; i++) { ctx.beginPath(); ctx.arc(x[i], y[i], 6, 0, Math.PI * 2); ctx.fill(); }
+        ctx.font = "20px Bangers"; ctx.textAlign = "left"; ctx.textBaseline = "top"; ctx.fillStyle = "#ffffff";
+        for (let line = 0; line < 20; line++) ctx.fillText(`${count} sprites line ${line}`, 10, 10 + line * 24);
+        const elapsed = time - stageStart;
+        if (elapsed >= WARMUP) { cpu.push(performance.now() - begin); if (lastTime >= 0) wall.push((time - lastTime) * 1000); }
+        lastTime = time;
+        if (elapsed >= WARMUP + MEASURE) {
+          const sorted = cpu.slice().sort((a, b) => a - b);
+          const mean = (v) => v.reduce((s, n) => s + n, 0) / Math.max(v.length, 1);
+          results.push({ sprites: count, frames: cpu.length, frameMs: mean(wall), cpuMs: mean(cpu), p95CpuMs: sorted[Math.floor(sorted.length * 0.95)] ?? 0 });
+          console.log(JSON.stringify(results[results.length - 1]));
+          stage++; stageStart = time; cpu = []; wall = [];
+          if (stage >= stages.length) { window.benchDone = true; return; }
+        }
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    </script>
+  </body>
+</html>
