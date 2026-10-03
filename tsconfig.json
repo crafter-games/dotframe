@@ -9,5 +9,5 @@
     "noEmit": true,
     "skipLibCheck": true
   },
-  "include": ["src/gpu.ts", "src/web", "examples/*/game.ts", "examples/*/main.web.ts"]
+  "include": ["src/*.ts", "src/web", "examples/*/game.ts", "examples/*/main.web.ts"]
 }
