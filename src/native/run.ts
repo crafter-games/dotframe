@@ -1,48 +1,17 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import type { Audio } from "../audio";
-import type { Color, Draw, Gpu, PipelineOptions, Setup, Texture, WindowOptions } from "../gpu";
-import { type Input, keyScancodes, type Pointer, sdlGamepadButtons } from "../input";
+import type { Gpu, Setup, Texture, WindowOptions } from "../gpu";
 import type { Storage } from "../storage";
 import {
-  dfAudioOpen,
-  dfBegin,
-  dfBind,
-  dfBuffer,
-  dfBufferDestroy,
-  dfBufferWrite,
-  dfClose,
-  dfDraw,
-  dfEnd,
-  dfGamepadAxis,
-  dfGamepadButton,
-  dfHeight,
-  dfImage,
-  dfMasterVolume,
-  dfMusicPause,
-  dfMusicPlay,
-  dfMusicStop,
-  dfMusicVolume,
-  dfKeyDown,
-  dfMouseButtons,
-  dfMouseX,
-  dfMouseY,
-  dfOpen,
-  dfPipeline,
-  dfPlay,
-  dfPoll,
-  dfPrefPath,
-  dfSound,
-  dfTexture,
-  dfTextureHeight,
-  dfTextureWidth,
-  dfTone,
-  dfTrack,
-  dfWidth,
-} from "./ffi";
-
-const PIPELINE_DEPTH = 1;
-const PIPELINE_BLEND = 4;
-
+  createNativeAudioPlayer,
+  createNativeImage,
+  createNativeInput,
+  createNativeRenderGpu,
+  decodeNativeSound,
+  openNativeAudio,
+  storeNativeTrack,
+} from "./backend";
+import { dfClose, dfOpen, dfPoll, dfPrefPath } from "./ffi";
 
 export async function loadBytes(path: string): Promise<Uint8Array> {
   const data = readFileSync(path);
@@ -75,90 +44,32 @@ export async function run(options: WindowOptions, setup: Setup): Promise<void> {
   const status = dfOpen(options.width, options.height, options.title);
   if (status !== 0) throw new Error(`dfOpen failed: ${status}`);
 
-  const depthPipelines = new Set<number>();
+  const render = createNativeRenderGpu();
   const gpu: Gpu = {
-    createBuffer: (usage: number, data: Uint8Array): number => {
-      const buffer = dfBuffer(usage, data);
-      if (buffer < 0) throw new Error(`dfBuffer failed: ${buffer}`);
-      return buffer;
-    },
-    writeBuffer: (buffer: number, data: Uint8Array): void => dfBufferWrite(buffer, data),
-    destroyBuffer: (buffer: number): void => dfBufferDestroy(buffer),
-    createPipeline: (pipelineOptions: PipelineOptions): number => {
-      const attributes = new Uint32Array(pipelineOptions.attributes.length * 3);
-      for (let i = 0; i < pipelineOptions.attributes.length; i++) {
-        const attribute = pipelineOptions.attributes[i];
-        attributes[i * 3] = attribute.format;
-        attributes[i * 3 + 1] = attribute.offset;
-        attributes[i * 3 + 2] = attribute.location;
-      }
-      const flags = (pipelineOptions.depth ? PIPELINE_DEPTH : 0) | (pipelineOptions.blend ? PIPELINE_BLEND : 0);
-      const attributeBytes = new Uint8Array(attributes.buffer, attributes.byteOffset, attributes.byteLength);
-      const pipeline = dfPipeline(pipelineOptions.wgsl, pipelineOptions.stride, attributeBytes, flags);
-      if (pipeline < 0) throw new Error(`dfPipeline failed: ${pipeline}`);
-      if (pipelineOptions.depth) depthPipelines.add(pipeline);
-      return pipeline;
-    },
-    bind: (pipeline: number, buffer: number, texture: number): number => {
-      const group = dfBind(pipeline, buffer, texture);
-      if (group < 0) throw new Error(`dfBind failed: ${group}`);
-      return group;
-    },
-    createTexture: (width: number, height: number, rgba: Uint8Array, smooth: boolean): Texture => {
-      const id = dfTexture(width, height, rgba, smooth);
-      if (id < 0) throw new Error(`dfTexture failed: ${id}`);
-      return { id, width, height };
-    },
-    createImage: async (png: Uint8Array, smooth: boolean): Promise<Texture> => {
-      const id = dfImage(png, smooth);
-      if (id < 0) throw new Error(`dfImage failed: ${id}`);
-      return { id, width: dfTextureWidth(id), height: dfTextureHeight(id) };
-    },
-    frame: (clear: Color, draws: Draw[]): void => {
-      // Pipelines without depth cannot run in a pass with a depth attachment.
-      let usesDepth = false;
-      for (const draw of draws) if (depthPipelines.has(draw.pipeline)) usesDepth = true;
-      if (dfBegin(clear.r, clear.g, clear.b, usesDepth) !== 0) return;
-      for (const draw of draws) {
-        dfDraw(draw.pipeline, draw.bindGroup, draw.vertexBuffer, draw.indexBuffer, draw.first, draw.count);
-      }
-      dfEnd();
-    },
-    aspect: (): number => dfWidth() / Math.max(dfHeight(), 1),
+    createBuffer: render.createBuffer,
+    writeBuffer: render.writeBuffer,
+    destroyBuffer: render.destroyBuffer,
+    createPipeline: render.createPipeline,
+    bind: render.bind,
+    createTexture: render.createTexture,
+    frame: render.frame,
+    aspect: render.aspect,
+    createImage: async (png: Uint8Array, smooth: boolean): Promise<Texture> => createNativeImage(png, smooth),
   };
-
-  const input: Input = {
-    down: (key: number): boolean => key >= 0 && key < keyScancodes.length && dfKeyDown(keyScancodes[key]),
-    firstDown: (): number => {
-      for (let key = 0; key < keyScancodes.length; key++) if (dfKeyDown(keyScancodes[key])) return key;
-      return -1;
-    },
-    axis: (pad: number, axis: number): number => dfGamepadAxis(pad, axis),
-    button: (pad: number, button: number): boolean => {
-      if (button === 6 || button === 7) return dfGamepadAxis(pad, button === 6 ? 4 : 5) > 0.5;
-      const sdl = button >= 0 && button < sdlGamepadButtons.length ? sdlGamepadButtons[button] : -1;
-      return sdl >= 0 && dfGamepadButton(pad, sdl);
-    },
-    pointer: (): Pointer => ({ x: dfMouseX(), y: dfMouseY(), buttons: dfMouseButtons() }),
-  };
-
+  const input = createNativeInput();
   const storage = openStorage(options.title);
-
-  // A missing audio device leaves sounds silent instead of failing the game.
-  const audioReady = dfAudioOpen() === 0;
-  if (!audioReady) console.error("dotframe: no audio device, continuing without sound");
+  const audioReady = openNativeAudio();
+  const player = createNativeAudioPlayer();
   const audio: Audio = {
-    loadSound: async (mp3: Uint8Array): Promise<number> => (audioReady ? dfSound(mp3) : -1),
-    play: (sound: number, volume: number, rate: number): void => dfPlay(sound, volume, rate),
-    tone: (frequency: number, duration: number, volume: number): void => dfTone(frequency, duration, volume),
-    loadMusic: async (mp3: Uint8Array): Promise<number> => dfTrack(mp3),
-    playMusic: (track: number, loop: boolean, volume: number): void => {
-      dfMusicPlay(track, loop, volume);
-    },
-    stopMusic: (): void => dfMusicStop(),
-    pauseMusic: (paused: boolean): void => dfMusicPause(paused),
-    setMusicVolume: (volume: number): void => dfMusicVolume(volume),
-    setMasterVolume: (volume: number): void => dfMasterVolume(volume),
+    play: player.play,
+    tone: player.tone,
+    playMusic: player.playMusic,
+    stopMusic: player.stopMusic,
+    pauseMusic: player.pauseMusic,
+    setMusicVolume: player.setMusicVolume,
+    setMasterVolume: player.setMasterVolume,
+    loadSound: async (mp3: Uint8Array): Promise<number> => (audioReady ? decodeNativeSound(mp3) : -1),
+    loadMusic: async (mp3: Uint8Array): Promise<number> => storeNativeTrack(mp3),
   };
 
   const frame = setup({ gpu, input, audio, storage });
