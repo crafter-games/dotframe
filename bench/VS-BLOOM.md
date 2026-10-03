@@ -56,3 +56,21 @@ Rerun back to back on the same machine:
 | Peak resident memory | 266 MB | 242 MB | 243 MB |
 
 Frame time and memory are now level with Bloom; frame building is 18% behind, down from 42%. The remaining gap is mostly path points kept in `number[]` (`fill` and `arc`, scriptc pattern H) and the refcounting on captured typed arrays in the benchmark's own update loop (pattern G).
+
+## Clean rerun, path points in a Float64Array
+
+A Next.js dev server was using about nine cores during the earlier runs on this page (found at 941% CPU); it slowed both engines, so the absolute numbers above are pessimistic, and the first table was not alternated. With it stopped, three alternating rounds (dotframe, Bloom, dotframe, ...) at 50,000 sprites:
+
+| Round | dotframe build | Bloom build | dotframe frame | Bloom frame |
+|---|---:|---:|---:|---:|
+| 1 | 7.56 ms | 8.45 ms | 8.99 ms | 11.03 ms |
+| 2 | 7.61 ms | 8.41 ms | 9.04 ms | 10.98 ms |
+| 3 | 7.58 ms | 8.51 ms | 9.20 ms | 11.01 ms |
+
+dotframe now builds the frame about 10% faster than Bloom and finishes it about 18% sooner. Peak memory: dotframe 221 to 237 MB, Bloom 210 to 236 MB.
+
+The change since the previous section: path points (arcs, fills, strokes) live in one flat `Float64Array` instead of pooled `number[]`s, which avoids scriptc pattern H.
+
+## Known issue: occasional memory blowup with vsync off
+
+With `DF_VSYNC=0`, some runs grew by about 1.5 GB per second during the 50,000 stage (peaks of 3.7 to 7.4 GB), in roughly one run out of three after the 24-byte vertex change. The shim now waits for the previous frame's submission before continuing (`wgpuQueueSubmitForIndex` plus `wgpuDevicePoll`), which bounds frames in flight; that cut it to one run in 27, and the frame time cost is about 0.3 ms. The remaining case is not explained yet. No run with vsync on has shown it.
