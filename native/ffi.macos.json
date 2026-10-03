@@ -1,0 +1,132 @@
+{
+  "ffi_format": 7,
+  "functions": [
+    {
+      "name": "dfOpen",
+      "symbol": "df_open",
+      "params": [
+        "i32",
+        "i32",
+        "string"
+      ],
+      "returns": "i32"
+    },
+    {
+      "name": "dfWidth",
+      "symbol": "df_width",
+      "params": [],
+      "returns": "i32"
+    },
+    {
+      "name": "dfHeight",
+      "symbol": "df_height",
+      "params": [],
+      "returns": "i32"
+    },
+    {
+      "name": "dfBuffer",
+      "symbol": "df_buffer",
+      "params": [
+        "u32",
+        "bytes"
+      ],
+      "returns": "i32"
+    },
+    {
+      "name": "dfBufferWrite",
+      "symbol": "df_buffer_write",
+      "params": [
+        "i32",
+        "bytes"
+      ],
+      "returns": "void"
+    },
+    {
+      "name": "dfPipeline",
+      "symbol": "df_pipeline",
+      "params": [
+        "string",
+        "u32",
+        "bytes",
+        "u32"
+      ],
+      "returns": "i32"
+    },
+    {
+      "name": "dfBindUniform",
+      "symbol": "df_bind_uniform",
+      "params": [
+        "i32",
+        "i32"
+      ],
+      "returns": "i32"
+    },
+    {
+      "name": "dfPoll",
+      "symbol": "df_poll",
+      "params": [],
+      "returns": "bool"
+    },
+    {
+      "name": "dfBegin",
+      "symbol": "df_begin",
+      "params": [
+        "f64",
+        "f64",
+        "f64",
+        "bool"
+      ],
+      "returns": "i32"
+    },
+    {
+      "name": "dfDraw",
+      "symbol": "df_draw",
+      "params": [
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "u32"
+      ],
+      "returns": "void"
+    },
+    {
+      "name": "dfEnd",
+      "symbol": "df_end",
+      "params": [],
+      "returns": "void"
+    },
+    {
+      "name": "dfClose",
+      "symbol": "df_close",
+      "params": [],
+      "returns": "void"
+    }
+  ],
+  "libraries": [
+    "../build/macos/libdf_native.a",
+    "../vendor/build/sdl-macos/libSDL3.a",
+    "../vendor/wgpu/macos/lib/libwgpu_native.a"
+  ],
+  "system_libraries": [
+    "c++",
+    "iconv"
+  ],
+  "frameworks": [
+    "Metal",
+    "QuartzCore",
+    "Cocoa",
+    "IOKit",
+    "CoreVideo",
+    "CoreAudio",
+    "AudioToolbox",
+    "CoreHaptics",
+    "GameController",
+    "ForceFeedback",
+    "Carbon",
+    "UniformTypeIdentifiers",
+    "AVFoundation",
+    "CoreMedia",
+    "Foundation"
+  ]
+}
