@@ -32,14 +32,14 @@ jobs:
       - run: bun test
       - name: Build examples
         run: |
-          for example in triangle suzanne smash-lite; do
+          for example in triangle suzanne smash-lite canvas2d; do
             scripts/build-native.sh macos $example
             scripts/build-native.sh windows $example
             scripts/build-web.sh $example
           done
           mkdir -p dist/macos dist/windows
-          cp build/macos/triangle build/macos/suzanne build/macos/smash-lite dist/macos/
-          cp build/windows/triangle.exe build/windows/suzanne.exe build/windows/smash-lite.exe dist/windows/
+          cp build/macos/triangle build/macos/suzanne build/macos/smash-lite build/macos/canvas2d dist/macos/
+          cp build/windows/triangle.exe build/windows/suzanne.exe build/windows/smash-lite.exe build/windows/canvas2d.exe dist/windows/
           cp -R assets dist/
       - uses: actions/upload-artifact@v4
         with:
@@ -63,7 +63,7 @@ jobs:
           curl -fsSLo cuse https://github.com/crafter-agents/cuse/releases/latest/download/cuse-macos-arm64
           chmod +x cuse
           export DF_DEMO=1
-          for example in triangle suzanne smash-lite; do
+          for example in triangle suzanne smash-lite canvas2d; do
             ./macos/$example > $example.log 2>&1 &
             pid=$!
             sleep 8
@@ -92,7 +92,7 @@ jobs:
         run: |
           Invoke-WebRequest https://github.com/crafter-agents/cuse/releases/latest/download/cuse-windows-x64.exe -OutFile cuse.exe
           $env:DF_DEMO = "1"
-          foreach ($example in "triangle", "suzanne", "smash-lite") {
+          foreach ($example in "triangle", "suzanne", "smash-lite", "canvas2d") {
             $p = Start-Process "windows/$example.exe" -PassThru -RedirectStandardError "$example.err" -RedirectStandardOutput "$example.out"
             Start-Sleep -Seconds 10
             $alive = -not $p.HasExited
