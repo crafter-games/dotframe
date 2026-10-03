@@ -6,6 +6,8 @@
   "license": "MIT",
   "type": "module",
   "devDependencies": {
-    "@scriptc/runtime-win32-x64-msvc": "0.2.0"
+    "@scriptc/runtime-win32-x64-msvc": "0.2.0",
+    "@webgpu/types": "^0.1.74",
+    "typescript": "^7.0.2"
   }
 }
