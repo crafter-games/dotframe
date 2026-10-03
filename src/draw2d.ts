@@ -184,7 +184,34 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
 }
 `;
 
-const FLOATS_PER_VERTEX = 9;
+// Vertex layout, in 4-byte words: position (2 × f32), uv (2 × f32), color packed as unorm8x4, edge (f32).
+const WORDS_PER_VERTEX = 6;
+const COLOR_WORD = 4;
+const EDGE_WORD = 5;
+
+// Packs a color with components in [0, 1] into the unorm8x4 word the shader reads as a vec4f. Consecutive
+// draw calls almost always share a color, so the last result is reused.
+const lastColor = new Float64Array(5);
+lastColor[0] = -1;
+function packColor(r: number, g: number, b: number, a: number): number {
+  const memo = lastColor;
+  if (r === memo[0] && g === memo[1] && b === memo[2] && a === memo[3]) return memo[4];
+  const packed = computeColor(r, g, b, a);
+  memo[0] = r;
+  memo[1] = g;
+  memo[2] = b;
+  memo[3] = a;
+  memo[4] = packed;
+  return packed;
+}
+
+function computeColor(r: number, g: number, b: number, a: number): number {
+  const R = Math.round(Math.min(Math.max(r, 0), 1) * 255);
+  const G = Math.round(Math.min(Math.max(g, 0), 1) * 255);
+  const B = Math.round(Math.min(Math.max(b, 0), 1) * 255);
+  const A = Math.round(Math.min(Math.max(a, 0), 1) * 255);
+  return (R | (G << 8) | (B << 16) | (A << 24)) >>> 0;
+}
 const WHITE: Rgba = { r: 1, g: 1, b: 1, a: 1 };
 // stb_truetype SDF: 0.5 alpha on the outline, 128/distanceRange alpha steps per atlas pixel.
 const SDF_ON_EDGE = 128 / 255;
@@ -318,28 +345,31 @@ export function parseFont(font: string): FontSpec {
 export function createDraw2D(gpu: RenderGpu, width: number, height: number): Draw2D {
   const pipeline = gpu.createPipeline({
     wgsl: shader,
-    stride: FLOATS_PER_VERTEX * 4,
+    stride: WORDS_PER_VERTEX * 4,
     attributes: [
       { format: VertexFormat.Float32x2, offset: 0, location: 0 },
       { format: VertexFormat.Float32x2, offset: 8, location: 1 },
-      { format: VertexFormat.Float32x4, offset: 16, location: 2 },
-      { format: VertexFormat.Float32, offset: 32, location: 3 },
+      { format: VertexFormat.Unorm8x4, offset: COLOR_WORD * 4, location: 2 },
+      { format: VertexFormat.Float32, offset: EDGE_WORD * 4, location: 3 },
     ],
     depth: false,
     blend: true,
   });
   // Grows by doubling when a frame needs more room; the GPU buffer is recreated to match at the end of the frame.
   let capacity = INITIAL_VERTICES;
-  let vertices = new Float32Array(capacity * FLOATS_PER_VERTEX);
+  let vertices = new Float32Array(capacity * WORDS_PER_VERTEX);
+  // The same memory as words, for packed colors.
+  let words = new Uint32Array(vertices.buffer);
   let vertexBuffer = gpu.createBuffer(BufferUsage.Vertex, new Uint8Array(vertices.byteLength));
   let gpuCapacity = capacity;
   const grow = (needed: number): boolean => {
     if (needed <= capacity) return true;
     if (needed > MAX_VERTICES) return false;
     while (capacity < needed) capacity *= 2;
-    const larger = new Float32Array(capacity * FLOATS_PER_VERTEX);
-    larger.set(vertices.subarray(0, vertexCount * FLOATS_PER_VERTEX));
+    const larger = new Float32Array(capacity * WORDS_PER_VERTEX);
+    larger.set(vertices.subarray(0, vertexCount * WORDS_PER_VERTEX));
     vertices = larger;
+    words = new Uint32Array(larger.buffer);
     return true;
   };
   const uniforms = new Float32Array([width, height, 0, 0]);
@@ -405,16 +435,13 @@ export function createDraw2D(gpu: RenderGpu, width: number, height: number): Dra
     // Local aliases: each access to a captured binding costs an indirection plus a retain in compiled builds.
     const out = vertices;
     const t = state;
-    const o = vertexCount * FLOATS_PER_VERTEX;
+    const o = vertexCount * WORDS_PER_VERTEX;
     out[o] = t.a * x + t.c * y + t.e;
     out[o + 1] = t.b * x + t.d * y + t.f;
     out[o + 2] = u;
     out[o + 3] = v;
-    out[o + 4] = color.r;
-    out[o + 5] = color.g;
-    out[o + 6] = color.b;
-    out[o + 7] = color.a * t.alpha;
-    out[o + 8] = edge;
+    words[o + COLOR_WORD] = packColor(color.r, color.g, color.b, color.a * t.alpha);
+    out[o + EDGE_WORD] = edge;
     vertexCount = vertexCount + 1;
   };
 
@@ -447,11 +474,9 @@ export function createDraw2D(gpu: RenderGpu, width: number, height: number): Dra
     const cy = t.b * x2 + t.d * y2 + t.f;
     const dx = t.a * x3 + t.c * y3 + t.e;
     const dy = t.b * x3 + t.d * y3 + t.f;
-    const r = color.r;
-    const g = color.g;
-    const b = color.b;
-    const a = color.a * t.alpha;
-    let o = vertexCount * FLOATS_PER_VERTEX;
+    const packed = words;
+    const rgba = packColor(color.r, color.g, color.b, color.a * t.alpha);
+    let o = vertexCount * WORDS_PER_VERTEX;
     // Corner order: a b c, a c d.
     for (let k = 0; k < 6; k++) {
       const corner = k === 0 || k === 3 ? 0 : k === 1 ? 1 : k === 2 || k === 4 ? 2 : 3;
@@ -459,22 +484,32 @@ export function createDraw2D(gpu: RenderGpu, width: number, height: number): Dra
       out[o + 1] = corner === 0 ? ay : corner === 1 ? by : corner === 2 ? cy : dy;
       out[o + 2] = corner === 0 || corner === 3 ? u0 : u1;
       out[o + 3] = corner === 0 || corner === 1 ? v0 : v1;
-      out[o + 4] = r;
-      out[o + 5] = g;
-      out[o + 6] = b;
-      out[o + 7] = a;
-      out[o + 8] = edge;
-      o += FLOATS_PER_VERTEX;
+      packed[o + COLOR_WORD] = rgba;
+      out[o + EDGE_WORD] = edge;
+      o += WORDS_PER_VERTEX;
     }
     vertexCount = vertexCount + 6;
+  };
+
+  // The batch being filled lives in plain numbers and joins `batches` only when the texture changes: reading
+  // the array's last element back on every draw call costs an allocation in compiled builds.
+  let openTexture = -1;
+  let openFirst = 0;
+  let openCount = 0;
+  const closeBatch = (): void => {
+    if (openCount > 0) batches.push({ texture: openTexture, first: openFirst, count: openCount });
+    openCount = 0;
   };
 
   // Reserves room for whole triangles on the given texture, starting a new batch when it changes.
   const useTexture = (texture: number, triangleVertices: number): boolean => {
     if (!grow(vertexCount + triangleVertices)) return false;
-    const last = batches[batches.length - 1];
-    if (last && last.texture === texture) last.count += triangleVertices;
-    else batches.push({ texture, first: vertexCount, count: triangleVertices });
+    if (openCount === 0 || texture !== openTexture) {
+      closeBatch();
+      openTexture = texture;
+      openFirst = vertexCount;
+    }
+    openCount = openCount + triangleVertices;
     return true;
   };
 
@@ -594,16 +629,18 @@ export function createDraw2D(gpu: RenderGpu, width: number, height: number): Dra
     begin: (): void => {
       vertexCount = 0;
       batches.length = 0;
+      openCount = 0;
       state = initialState();
       stack.length = 0;
     },
     end: (clear: Color): void => {
       if (gpuCapacity < capacity) {
         gpu.destroyBuffer(vertexBuffer);
-        vertexBuffer = gpu.createBuffer(BufferUsage.Vertex, new Uint8Array(capacity * FLOATS_PER_VERTEX * 4));
+        vertexBuffer = gpu.createBuffer(BufferUsage.Vertex, new Uint8Array(capacity * WORDS_PER_VERTEX * 4));
         gpuCapacity = capacity;
       }
-      gpu.writeBuffer(vertexBuffer, new Uint8Array(vertices.buffer, 0, vertexCount * FLOATS_PER_VERTEX * 4));
+      closeBatch();
+      gpu.writeBuffer(vertexBuffer, new Uint8Array(vertices.buffer, 0, vertexCount * WORDS_PER_VERTEX * 4));
       const draws: Draw[] = [];
       for (const batch of batches) {
         draws.push({
@@ -725,12 +762,13 @@ export function createDraw2D(gpu: RenderGpu, width: number, height: number): Dra
           const out = vertices;
           const t = state;
           const fill = t.fill;
-          const alpha = fill.a * t.alpha;
+          const packed = words;
+          const rgba = packColor(fill.r, fill.g, fill.b, fill.a * t.alpha);
           const fx = t.a * points[0] + t.c * points[1] + t.e;
           const fy = t.b * points[0] + t.d * points[1] + t.f;
           let px = t.a * points[2] + t.c * points[3] + t.e;
           let py = t.b * points[2] + t.d * points[3] + t.f;
-          let o = vertexCount * FLOATS_PER_VERTEX;
+          let o = vertexCount * WORDS_PER_VERTEX;
           for (let i = 1; i + 1 < count; i++) {
             const qx = t.a * points[i * 2 + 2] + t.c * points[i * 2 + 3] + t.e;
             const qy = t.b * points[i * 2 + 2] + t.d * points[i * 2 + 3] + t.f;
@@ -739,12 +777,9 @@ export function createDraw2D(gpu: RenderGpu, width: number, height: number): Dra
               out[o + 1] = k === 0 ? fy : k === 1 ? py : qy;
               out[o + 2] = 0;
               out[o + 3] = 0;
-              out[o + 4] = fill.r;
-              out[o + 5] = fill.g;
-              out[o + 6] = fill.b;
-              out[o + 7] = alpha;
-              out[o + 8] = -1;
-              o += FLOATS_PER_VERTEX;
+              packed[o + COLOR_WORD] = rgba;
+              out[o + EDGE_WORD] = -1;
+              o += WORDS_PER_VERTEX;
             }
             px = qx;
             py = qy;
