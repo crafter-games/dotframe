@@ -56,6 +56,69 @@ const project = (x: number, y: number): number =>
 
 The 2D layer's `vertices` buffer is a captured `let` because it is reassigned when it grows. Each access paid `scr_box_get_ref` plus a typed-array retain/release (`scr_bytes_retain_v`/`scr_bytes_release` in the engine profile). Taking a local alias once per call (B) recovers part of it; hoisting the alias out of a loop and avoiding the call (C) recovers most.
 
+### Second round: where the time goes after the workarounds
+
+After the first round, dotframe's 2D layer already avoids every pattern above in its hot paths. `bench/VS-BLOOM.md` then compared it with Bloom, an engine built on the Perry TS compiler with a hand-written Rust core: at 50,000 sprites dotframe builds a frame in 13.8 ms and Bloom in 9.7 ms. `sample` on bench2d during the 50,000 stage, active samples only:
+
+| Where | Share |
+|---|---:|
+| scriptc refcounting (`*_retain_v`, `*_release`, `scr_cyc_on_release`) | 27.9% |
+| Game and engine code (`sc_f_*`) | 19.7% |
+| Array access and growth (`scr_arr_*`, `scr_bytes_*` other than refcounting) | 17.0% |
+| `memmove` (vertex upload, dotframe's own cost, see below) | 14.5% |
+| Boxed captures (`scr_box_get_ref`) | 5.8% |
+| `malloc` / `free` | 5.7% |
+| Dynamic `this` (`scr_dyn_this_*`) | 3.4% |
+| Union narrowing, exception checks, other | 6.2% |
+
+About 80% of the frame is runtime work around the program, not the program. `emitQuad` itself compiles well: typed-array stores are inline with a range check, and `scr_bytes_get` appears only on the out-of-range path. The overhead concentrates in three patterns, isolated in `patterns2.ts` (same machine, same runtimes as above):
+
+| Case | scriptc | Node (V8) | Bun (JSC) | scriptc / V8 |
+|---|---:|---:|---:|---:|
+| G. update loop over captured `const` `Float32Array`s, 50k elements × 200 | 36.2 ms | 13.9 ms | 8.2 ms | 2.6× |
+| G'. G with local aliases taken once per call | 30.9 ms | 14.0 ms | 9.0 ms | 2.2× |
+| H. read a 96-element `number[]`, 200k times | 27.5 ms | 13.6 ms | 12.0 ms | 2.0× |
+| H'. H from a `Float64Array` | 12.0 ms | 12.6 ms | 12.1 ms | 1.0× |
+| I. read the last `Batch` as `Batch \| undefined`, narrow, compare, 3 M times | 67.1 ms | 4.4 ms | 1.1 ms | 15× |
+
+### G: captured `const` typed arrays retain and release on every access
+
+```ts
+const px = new Float32Array(N);
+const pvx = new Float32Array(N);
+const step = (): void => {
+  for (let i = 0; i < N; i++) px[i] += pvx[i];
+};
+```
+
+`sample` on `profile-captured-const-typed.ts`: `scr_bytes_release` (760 samples) and `scr_bytes_retain_v` (238) against 706 in the function body. Refcounting is 58% of the loop. The bindings are `const`, never reassigned and never escape the call, so each access could borrow the captured reference instead of taking a retain/release pair. Hoisting a local alias (G') removes only part of it. This is the shape of every game loop that keeps entity state in module-level typed arrays (struct of arrays), which is the standard way to write fast game code in TS.
+
+### H: `number[]` reads go through the runtime
+
+The same reads take 2.3× longer from a dense `number[]` than from a `Float64Array`; in V8 and JSC they cost the same. In the engine profile `scr_arr_get_number` is the top runtime call inside `fill()` (101 samples), where path points live in pooled `number[]`s. A dense array whose elements are all numbers could index inline like a typed array, with a fallback when the representation changes.
+
+### I: reading an optional element allocates
+
+```ts
+const last: Batch | undefined = batches[batches.length - 1];
+if (last && last.texture === 1) hits += 1;
+```
+
+`sample` on `profile-optional-narrow.ts`: `_xzm_free`, `scr_arr_release`, `__bzero`, `scr_arr_require_slot`, `calloc`, `scr_cyc_on_release` and `scr_arr_state`. Each read heap-allocates a zeroed temporary (the union box), runs cycle-collector bookkeeping on its release and frees it. 15× V8 and 61× JSC, close to case F; F and I are probably the same root cause, the element read creating a boxed temporary instead of a borrowed reference. In the engine this runs once per draw call (`useTexture` checks the last batch), and through `union_narrow` it accounts for 106 samples.
+
+### Suggested order
+
+1. **I and F** (element reads that allocate): the largest ratios, and every engine and game reads array elements of record type in hot code.
+2. **G** (borrowing captured `const` references): about 58% of a struct-of-arrays update loop.
+3. **H** (inline indexing for dense `number[]`).
+4. **D** (dynamic `this` for arrow functions) still shows up as 3.4% in the engine profile, from closures called through object fields (`ctx.drawImage`).
+
+dotframe will keep the workarounds until these land, and rerun bench2d against Bloom after each scriptc release.
+
+### dotframe's own share (not scriptc)
+
+`memmove` under `writeBuffer` is 14.5% of the frame: dotframe uploads 36-byte vertices (9 floats), about 10.8 MB per frame at 50,000 sprites. Packing color into 4 bytes and dropping the edge float halves that. Bloom batches in Rust, so part of its lead is this upload, not the compiler.
+
 ### Workarounds dotframe uses today
 
 1. Write vertices from inline loops that take a local alias of captured bindings once, not from a helper called per vertex (`emitQuad`, the convex fan writer in `src/draw2d.ts`).
@@ -97,6 +160,7 @@ cd bench/scriptc
 scriptc build patterns.ts -o patterns && ./patterns
 node --experimental-strip-types patterns.ts
 bun patterns.ts
+scriptc build patterns2.ts -o patterns2 && ./patterns2   # second round: G, H, I
 # Profiles: build a profile-*.ts file, run it, then `sample <pid> 2` while it loops for 5 s.
 ```
 
