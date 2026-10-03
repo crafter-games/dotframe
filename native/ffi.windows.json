@@ -96,6 +96,14 @@
       "returns": "void"
     },
     {
+      "name": "dfBufferDestroy",
+      "symbol": "df_buffer_destroy",
+      "params": [
+        "i32"
+      ],
+      "returns": "void"
+    },
+    {
       "name": "dfPipeline",
       "symbol": "df_pipeline",
       "params": [

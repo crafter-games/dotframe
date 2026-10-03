@@ -45,6 +45,7 @@ static WGPUSampler g_sampler_linear;
 static WGPUTexture g_depth_texture;
 static WGPUTextureView g_depth_view;
 static int g_width, g_height;
+static WGPUPresentMode g_present_mode = WGPUPresentMode_Fifo;
 #define DF_MAX_GAMEPADS 4
 static SDL_Gamepad *g_gamepads[DF_MAX_GAMEPADS];
 
@@ -94,7 +95,7 @@ static void configure_surface(void) {
   config.usage = WGPUTextureUsage_RenderAttachment;
   config.width = (uint32_t)g_width;
   config.height = (uint32_t)g_height;
-  config.presentMode = WGPUPresentMode_Fifo;
+  config.presentMode = g_present_mode;
   config.alphaMode = WGPUCompositeAlphaMode_Auto;
   wgpuSurfaceConfigure(g_surface, &config);
 
@@ -164,6 +165,15 @@ int32_t df_open(int32_t width, int32_t height, const uint8_t *title, size_t titl
   WGPUSurfaceCapabilities caps = WGPU_SURFACE_CAPABILITIES_INIT;
   wgpuSurfaceGetCapabilities(g_surface, g_adapter, &caps);
   // Match the browser's preferred canvas format (non-sRGB) so colors agree across targets.
+  // DF_VSYNC=0 uncaps the frame rate for benchmarks when the surface supports it.
+  const char *vsync = SDL_getenv("DF_VSYNC");
+  if (vsync && vsync[0] == '0') {
+    for (size_t i = 0; i < caps.presentModeCount; i++) {
+      if (caps.presentModes[i] == WGPUPresentMode_Immediate) g_present_mode = WGPUPresentMode_Immediate;
+      else if (caps.presentModes[i] == WGPUPresentMode_Mailbox && g_present_mode != WGPUPresentMode_Immediate)
+        g_present_mode = WGPUPresentMode_Mailbox;
+    }
+  }
   g_format = caps.formats[0];
   for (size_t i = 0; i < caps.formatCount; i++) {
     if (caps.formats[i] == WGPUTextureFormat_BGRA8Unorm || caps.formats[i] == WGPUTextureFormat_RGBA8Unorm) {
@@ -266,8 +276,14 @@ int32_t df_buffer(uint32_t usage, const uint8_t *data, size_t len) {
   return g_buffer_count++;
 }
 
+void df_buffer_destroy(int32_t buffer) {
+  if (buffer < 0 || buffer >= g_buffer_count || !g_buffers[buffer]) return;
+  wgpuBufferRelease(g_buffers[buffer]);
+  g_buffers[buffer] = NULL;
+}
+
 void df_buffer_write(int32_t buffer, const uint8_t *data, size_t len) {
-  if (buffer < 0 || buffer >= g_buffer_count) return;
+  if (buffer < 0 || buffer >= g_buffer_count || !g_buffers[buffer]) return;
   wgpuQueueWriteBuffer(g_queue, g_buffers[buffer], 0, data, len);
 }
 
@@ -505,7 +521,8 @@ void df_audio_close(void);
 void df_close(void) {
   df_audio_close();
   for (int32_t i = 0; i < g_bind_group_count; i++) wgpuBindGroupRelease(g_bind_groups[i]);
-  for (int32_t i = 0; i < g_buffer_count; i++) wgpuBufferRelease(g_buffers[i]);
+  for (int32_t i = 0; i < g_buffer_count; i++)
+    if (g_buffers[i]) wgpuBufferRelease(g_buffers[i]);
   for (int32_t i = 0; i < g_texture_count; i++) {
     wgpuTextureViewRelease(g_texture_views[i]);
     wgpuTextureRelease(g_textures[i]);

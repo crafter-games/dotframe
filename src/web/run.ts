@@ -86,6 +86,9 @@ export async function run(options: WindowOptions, setup: Setup): Promise<void> {
       const target = buffers[buffer];
       if (target) device.queue.writeBuffer(target, 0, data);
     },
+    destroyBuffer: (buffer: number): void => {
+      buffers[buffer]?.destroy();
+    },
     createPipeline: (pipelineOptions: PipelineOptions): number => {
       const module = device.createShaderModule({ code: pipelineOptions.wgsl });
       const buffersLayout: GPUVertexBufferLayout[] =

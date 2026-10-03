@@ -8,6 +8,7 @@ import {
   dfBegin,
   dfBind,
   dfBuffer,
+  dfBufferDestroy,
   dfBufferWrite,
   dfClose,
   dfDraw,
@@ -82,6 +83,7 @@ export async function run(options: WindowOptions, setup: Setup): Promise<void> {
       return buffer;
     },
     writeBuffer: (buffer: number, data: Uint8Array): void => dfBufferWrite(buffer, data),
+    destroyBuffer: (buffer: number): void => dfBufferDestroy(buffer),
     createPipeline: (pipelineOptions: PipelineOptions): number => {
       const attributes = new Uint32Array(pipelineOptions.attributes.length * 3);
       for (let i = 0; i < pipelineOptions.attributes.length; i++) {

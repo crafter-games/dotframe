@@ -11,6 +11,7 @@ export declare function dfWidth(): number;
 export declare function dfHeight(): number;
 export declare function dfBuffer(usage: number, data: Uint8Array): number;
 export declare function dfBufferWrite(buffer: number, data: Uint8Array): void;
+export declare function dfBufferDestroy(buffer: number): void;
 export declare function dfPipeline(wgsl: string, stride: number, attributes: Uint8Array, flags: number): number;
 export declare function dfBind(pipeline: number, buffer: number, texture: number): number;
 export declare function dfTexture(width: number, height: number, rgba: Uint8Array, smooth: boolean): number;

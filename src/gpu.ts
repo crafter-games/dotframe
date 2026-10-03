@@ -53,6 +53,7 @@ export interface Draw {
 export interface Gpu {
   createBuffer: (usage: number, data: Uint8Array) => number;
   writeBuffer: (buffer: number, data: Uint8Array) => void;
+  destroyBuffer: (buffer: number) => void;
   createPipeline: (options: PipelineOptions) => number;
   // Group 0: binding 0 uniform buffer, binding 1 texture, binding 2 nearest sampler; -1 skips one.
   bind: (pipeline: number, buffer: number, texture: number) => number;
