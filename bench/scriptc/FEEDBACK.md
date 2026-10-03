@@ -68,7 +68,8 @@ The 2D layer's `vertices` buffer is a captured `let` because it is reassigned wh
 1. **A class instance cannot be passed where an interface is expected** (SC2002, "record shapes must match exactly or width-coerce"). `run(new NativeScaler())` with `interface Scaler { scale(v: number): number }` fails. dotframe's whole backend API is plain objects of closures because of this. The diagnostic's hint ("build a literal with exactly the expected fields") is accurate but the restriction shapes the architecture of any engine with swappable backends.
 2. **`number.toString(radix)`** is not available in static builds; the diagnostic suggests `--dynamic`.
 3. **Increment and decrement on non-variables** (SC1090): `cells[0]++` and `counter.value++` are rejected; `x = x + 1` works.
-4. **Promise callbacks in synchronous loops**: a game loop written as `while (poll()) frame()` never runs `.then` callbacks, so an async image load never completes. Correct per the event loop, but surprising for anyone porting a browser game, where `requestAnimationFrame` yields every frame. dotframe awaits `Promise.resolve()` once per frame. A short note in the docs for loop-style programs would help.
+4. **`TypedArray.prototype.fill`** has no lowering yet (SC2020); dotframe clears pixels in a loop.
+5. **Promise callbacks in synchronous loops**: a game loop written as `while (poll()) frame()` never runs `.then` callbacks, so an async image load never completes. Correct per the event loop, but surprising for anyone porting a browser game, where `requestAnimationFrame` yields every frame. dotframe awaits `Promise.resolve()` once per frame. A short note in the docs for loop-style programs would help.
 
 ## FFI
 
