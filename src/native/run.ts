@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import type { Audio } from "../audio";
 import type { Color, Draw, Gpu, PipelineOptions, Setup, Texture, WindowOptions } from "../gpu";
-import { type Input, keyScancodes, type Pointer } from "../input";
+import { type Input, keyScancodes, type Pointer, sdlGamepadButtons } from "../input";
 import type { Storage } from "../storage";
 import {
   dfAudioOpen,
@@ -134,7 +134,11 @@ export async function run(options: WindowOptions, setup: Setup): Promise<void> {
       return -1;
     },
     axis: (pad: number, axis: number): number => dfGamepadAxis(pad, axis),
-    button: (pad: number, button: number): boolean => dfGamepadButton(pad, button),
+    button: (pad: number, button: number): boolean => {
+      if (button === 6 || button === 7) return dfGamepadAxis(pad, button === 6 ? 4 : 5) > 0.5;
+      const sdl = button >= 0 && button < sdlGamepadButtons.length ? sdlGamepadButtons[button] : -1;
+      return sdl >= 0 && dfGamepadButton(pad, sdl);
+    },
     pointer: (): Pointer => ({ x: dfMouseX(), y: dfMouseY(), buttons: dfMouseButtons() }),
   };
 

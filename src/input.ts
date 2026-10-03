@@ -162,7 +162,28 @@ export const keyScancodes: number[] = [
 ];
 
 export const GamepadAxis = { LeftX: 0, LeftY: 1, RightX: 2, RightY: 3 };
-export const GamepadButton = { South: 0, East: 1, West: 2, North: 3, Back: 4, Start: 6 };
+// Button ids follow the W3C "standard" gamepad layout on every backend.
+export const GamepadButton = {
+  South: 0,
+  East: 1,
+  West: 2,
+  North: 3,
+  LeftShoulder: 4,
+  RightShoulder: 5,
+  LeftTrigger: 6,
+  RightTrigger: 7,
+  Back: 8,
+  Start: 9,
+  LeftStick: 10,
+  RightStick: 11,
+  DpadUp: 12,
+  DpadDown: 13,
+  DpadLeft: 14,
+  DpadRight: 15,
+  Guide: 16,
+};
+// SDL_GamepadButton for each standard id; -1 marks the triggers, which SDL reports as axes 4 and 5.
+export const sdlGamepadButtons: number[] = [0, 1, 2, 3, 9, 10, -1, -1, 4, 6, 7, 8, 11, 12, 13, 14, 5];
 export const MouseButton = { Left: 1, Middle: 2, Right: 4 };
 
 export interface Pointer {
