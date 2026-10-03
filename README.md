@@ -2,13 +2,15 @@
 
 TS-first game engine. One TypeScript codebase runs on the web (WebGPU) and compiles to native macOS and Windows binaries with [scriptc](https://scriptc.dev), with no JavaScript engine in the binary.
 
-Status: S2. `examples/suzanne` loads a glTF mesh, spawns three entities in a minimal ECS and renders them lit with depth and a perspective camera. The same game code renders in the browser (WebGPU) and in native macOS and Windows binaries (SDL3 + wgpu-native through a flat C shim). CI runs both binaries and captures them with [cuse](https://github.com/crafter-agents/cuse).
+Status: S4. `examples/smash-lite` is a two-player platform fighter: keyboard and gamepad input, fixed-step AABB physics, hitstun, knockback that scales with damage, and KOs. `DF_DEMO=1` (native) or `?demo` (web) lets scripted players fight, which is how CI captures it. Earlier slices: `examples/suzanne` loads a glTF mesh, spawns three entities in a minimal ECS and renders them lit with depth and a perspective camera. The same game code renders in the browser (WebGPU) and in native macOS and Windows binaries (SDL3 + wgpu-native through a flat C shim). CI runs both binaries and captures them with [cuse](https://github.com/crafter-agents/cuse).
 
 ## Layout
 
 - `native/df_native.c`: flat C ABI over SDL3 and wgpu-native. scriptc FFI accepts scalars and byte spans only, so the shim owns every WebGPU struct.
 - `src/gpu.ts`: backend-agnostic types for game code. Backends are plain objects of functions, because scriptc compiles structural types as record copies and a class cannot stand in for an interface.
 - `src/math.ts`, `src/ecs.ts`, `src/gltf.ts`, `src/render.ts`: column-major matrices, a Map-per-component ECS, a `.glb` reader (positions, normals, indices) and a lit mesh renderer.
+- `src/input.ts`, `src/physics.ts`, `src/shapes.ts`: engine key ids mapped per backend (SDL scancodes, `KeyboardEvent.code`, first gamepad), side-view AABB physics, and a unit box mesh.
+- `test/`: `bun test` covers physics (landing, walls, ceilings, falling off edges).
 - `src/native`: FFI declarations and the native run loop. `native/ffi.{macos,windows}.json` bind them for every example.
 - `src/web`: the browser run loop over `navigator.gpu`.
 - `examples/*`: `game.ts` is shared; `main.native.ts` and `main.web.ts` pick the backend.
