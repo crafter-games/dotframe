@@ -1,6 +1,7 @@
 import { createDraw2D } from "../../src/draw2d";
 import type { Frame, Setup, Texture } from "../../src/gpu";
 import { MouseButton } from "../../src/input";
+import { addColorStop, createLinearGradient, createRaster, createRaster2D } from "../../src/raster2d";
 import type { Platform } from "../../src/platform";
 
 export const windowOptions = { width: 800, height: 450, title: "dotframe: canvas2d" };
@@ -30,6 +31,30 @@ export function createSetup(assets: Assets): Setup {
     gpu.createImage(assets.sprite, false).then((texture: Texture): void => {
       sprite = texture;
     });
+    // Pixel-art panel baked on the CPU at load time, like Crafter Smash's stages.
+    const baked = createRaster(80, 48);
+    const bake = createRaster2D(baked);
+    const sky = createLinearGradient(0, 0, 0, 48);
+    addColorStop(sky, 0, "#2a55c8");
+    addColorStop(sky, 0.6, "#5b8ff0");
+    addColorStop(sky, 1, "#a9d0ff");
+    bake.setFillGradient(sky);
+    bake.fillRect(0, 0, 80, 48);
+    bake.setFillStyle("#8e6fc9");
+    for (let x = 0; x < 80; x += 2) {
+      const peak = 30 - Math.abs(((x * 7) % 40) - 20) * 0.8;
+      bake.fillRect(x, peak, 2, 48 - peak);
+    }
+    bake.setFillStyle("#e9cf68");
+    bake.beginPath();
+    bake.moveTo(16, 34);
+    bake.arcTo(64, 34, 64, 44, 4);
+    bake.arcTo(64, 44, 16, 44, 4);
+    bake.arcTo(16, 44, 16, 34, 4);
+    bake.arcTo(16, 34, 64, 34, 4);
+    bake.closePath();
+    bake.fill();
+    const bakedTexture = gpu.createTexture(baked.width, baked.height, baked.pixels, false);
     const decoder = new TextDecoder();
     gpu.createImage(assets.bangersAtlas, true).then((atlas: Texture): void => {
       ctx.addFont(["Bangers"], atlas, decoder.decode(assets.bangersMetrics));
@@ -82,6 +107,8 @@ export function createSetup(assets: Assets): Setup {
       ctx.ellipse(680, 180, 60, 30, time, 0, Math.PI * 2, false);
       ctx.fill();
       ctx.setGlobalAlpha(1);
+
+      ctx.drawImage(bakedTexture, 0, 0, 80, 48, 600, 270, 160, 96);
 
       const current = sprite;
       if (current) {
