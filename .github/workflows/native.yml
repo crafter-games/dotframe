@@ -81,6 +81,17 @@ jobs:
             sleep 1
             cat $example.log
           done
+      - name: Pointer check
+        run: |
+          ./macos/canvas2d > pointer.log 2>&1 &
+          pid=$!
+          sleep 6
+          rect=$(./cuse windows --json | jq -r '.data[] | select(.title == "dotframe: canvas2d") | "\(.x + .width / 2 | floor) \(.y + .height / 2 | floor)"')
+          echo "click at $rect"
+          ./cuse click $rect
+          sleep 1
+          ./cuse capture pointer.png || screencapture -x pointer.png
+          kill $pid || true
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -102,7 +113,8 @@ jobs:
         run: |
           $env:SDL_AUDIO_DRIVER = "disk"
           $env:SDL_AUDIO_DISK_OUTPUT_FILE = "mix.raw"
-          ./windows/audio-check.exe
+          # GUI-subsystem executables return to the shell immediately; wait for the timeline to finish.
+          Start-Process windows/audio-check.exe -Wait -NoNewWindow
           bun check-audio.ts mix.raw
       - name: Run and capture
         shell: pwsh
@@ -120,6 +132,19 @@ jobs:
             Get-Content "$example.err", "$example.out" -ErrorAction SilentlyContinue
           }
           if ((Get-Content status.txt) -match "alive=False") { exit 1 }
+      - name: Pointer check
+        shell: pwsh
+        run: |
+          $p = Start-Process windows/canvas2d.exe -PassThru
+          Start-Sleep -Seconds 8
+          $window = (./cuse.exe windows --json | ConvertFrom-Json).data | Where-Object { $_.title -eq "dotframe: canvas2d" }
+          $x = [int]($window.x + $window.width / 2)
+          $y = [int]($window.y + $window.height / 2)
+          "click at $x $y"
+          ./cuse.exe click $x $y
+          Start-Sleep -Seconds 1
+          ./cuse.exe capture pointer.png
+          Stop-Process -Id $p.Id -Force
       - uses: actions/upload-artifact@v4
         if: always()
         with:
