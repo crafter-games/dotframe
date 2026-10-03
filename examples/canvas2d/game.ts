@@ -3,15 +3,36 @@ import type { Frame, Gpu, Setup, Texture } from "../../src/gpu";
 import type { Input } from "../../src/input";
 
 export const windowOptions = { width: 800, height: 450, title: "dotframe: canvas2d" };
-export const assetPath = "assets/crafter.png";
+export const assetPaths = {
+  sprite: "assets/crafter.png",
+  bangersAtlas: "assets/fonts/bangers.png",
+  bangersMetrics: "assets/fonts/bangers.json",
+  archivoAtlas: "assets/fonts/archivo-black.png",
+  archivoMetrics: "assets/fonts/archivo-black.json",
+};
 
-// Exercises the Canvas2D-style layer: transforms, alpha, concave paths, arcs, strokes and sprites.
-export function createSetup(png: Uint8Array): Setup {
+export interface Assets {
+  sprite: Uint8Array;
+  bangersAtlas: Uint8Array;
+  bangersMetrics: Uint8Array;
+  archivoAtlas: Uint8Array;
+  archivoMetrics: Uint8Array;
+}
+
+// Exercises the Canvas2D-style layer: transforms, alpha, concave paths, arcs, strokes, sprites and text.
+export function createSetup(assets: Assets): Setup {
   return (gpu: Gpu, _input: Input): Frame => {
     const ctx = createDraw2D(gpu, windowOptions.width, windowOptions.height);
     let sprite: Texture | null = null;
-    gpu.createImage(png).then((texture: Texture): void => {
+    gpu.createImage(assets.sprite, false).then((texture: Texture): void => {
       sprite = texture;
+    });
+    const decoder = new TextDecoder();
+    gpu.createImage(assets.bangersAtlas, true).then((atlas: Texture): void => {
+      ctx.addFont(["Bangers"], atlas, decoder.decode(assets.bangersMetrics));
+    });
+    gpu.createImage(assets.archivoAtlas, true).then((atlas: Texture): void => {
+      ctx.addFont(["Archivo Black", "Arial Black", "Impact", "sans-serif", "monospace"], atlas, decoder.decode(assets.archivoMetrics));
     });
 
     return (_gpu: Gpu, time: number): boolean => {
@@ -65,6 +86,31 @@ export function createSetup(png: Uint8Array): Setup {
         const x = ((time * 120) % 900) - 50;
         ctx.drawImage(current, frame * 16, 0, 16, 16, x, 296, 64, 64);
       }
+
+      // Text, in the styles Crafter Smash uses for its HUD and menus.
+      const pulse = 1 + 0.08 * Math.sin(time * 6);
+      ctx.setFont(`${Math.round(72 * pulse)}px Bangers, Impact`);
+      ctx.setTextAlign("center");
+      ctx.setTextBaseline("middle");
+      ctx.setStrokeStyle("#000000");
+      ctx.setLineWidth(8);
+      ctx.strokeText("¡GO!", 400, 72);
+      ctx.setFillStyle("#facc15");
+      ctx.fillText("¡GO!", 400, 72);
+
+      ctx.setFont('italic 900 36px "Arial Black", Impact, sans-serif');
+      ctx.setTextAlign("left");
+      ctx.setTextBaseline("alphabetic");
+      const damage = Math.floor((time * 23) % 300);
+      ctx.setLineWidth(5);
+      ctx.strokeText(`${damage}%`, 40, 420);
+      ctx.setFillStyle(damage > 120 ? "#ef4444" : "#ffffff");
+      ctx.fillText(`${damage}%`, 40, 420);
+
+      ctx.setFont("bold 14px Menlo, monospace");
+      ctx.setTextAlign("right");
+      ctx.setFillStyle("#94a3b8");
+      ctx.fillText("Railly · Anthony · Jibaru · Shiara · Edward — ñandú, acción", 770, 430);
 
       ctx.end({ r: 0.06, g: 0.06, b: 0.1 });
       return true;
