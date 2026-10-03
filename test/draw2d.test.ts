@@ -11,7 +11,7 @@ test("parses hex, rgb, rgba and named colors", () => {
   expect([red.r, red.g, red.b]).toEqual([1, 0, 0]);
   const yellow = parseColor("hsl(55,100%,92%)");
   expect(yellow.r).toBeCloseTo(1, 2);
-  expect(yellow.g).toBeCloseTo(0.9933, 2);
+  expect(yellow.g).toBeCloseTo(0.9867, 3);
   expect(yellow.b).toBeCloseTo(0.84, 2);
 });
 
