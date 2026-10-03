@@ -166,7 +166,7 @@ export const GamepadButton = { South: 0, East: 1, West: 2, North: 3, Back: 4, St
 export const MouseButton = { Left: 1, Middle: 2, Right: 4 };
 
 export interface Pointer {
-  // Normalized to the window, [0, 1] on each axis.
+  // Normalized to the window content: [0, 1] inside, past those bounds outside it.
   x: number;
   y: number;
   // Bitmask of MouseButton values.

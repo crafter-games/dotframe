@@ -197,26 +197,33 @@ uint8_t df_gamepad_button(int32_t pad, int32_t button) {
   return gamepad && SDL_GetGamepadButton(gamepad, (SDL_GamepadButton)button);
 }
 
-// Mouse position normalized to the window, [0, 1] on each axis.
-double df_mouse_x(void) {
-  float x = 0, y = 0;
-  int w = 1, h = 1;
-  SDL_GetMouseState(&x, &y);
+// Mouse position relative to the window's content, normalized to [0, 1] inside it (outside values extend past).
+// Uses global state so the position does not depend on the window holding mouse focus.
+static void mouse_relative(double *nx, double *ny) {
+  float gx = 0, gy = 0;
+  int wx = 0, wy = 0, w = 1, h = 1;
+  SDL_GetGlobalMouseState(&gx, &gy);
+  SDL_GetWindowPosition(g_window, &wx, &wy);
   SDL_GetWindowSize(g_window, &w, &h);
-  return w > 0 ? x / w : 0.0;
+  *nx = w > 0 ? (gx - wx) / w : 0.0;
+  *ny = h > 0 ? (gy - wy) / h : 0.0;
+}
+
+double df_mouse_x(void) {
+  double x, y;
+  mouse_relative(&x, &y);
+  return x;
 }
 
 double df_mouse_y(void) {
-  float x = 0, y = 0;
-  int w = 1, h = 1;
-  SDL_GetMouseState(&x, &y);
-  SDL_GetWindowSize(g_window, &w, &h);
-  return h > 0 ? y / h : 0.0;
+  double x, y;
+  mouse_relative(&x, &y);
+  return y;
 }
 
 // Bit 0 left, bit 1 middle, bit 2 right.
 uint32_t df_mouse_buttons(void) {
-  SDL_MouseButtonFlags flags = SDL_GetMouseState(NULL, NULL);
+  SDL_MouseButtonFlags flags = SDL_GetGlobalMouseState(NULL, NULL);
   return (flags & SDL_BUTTON_LMASK ? 1u : 0u) | (flags & SDL_BUTTON_MMASK ? 2u : 0u) | (flags & SDL_BUTTON_RMASK ? 4u : 0u);
 }
 
