@@ -1,3 +1,4 @@
+import type { Audio } from "../../src/audio";
 import { createWorld, spawn, type World } from "../../src/ecs";
 import type { Frame, Gpu, Setup } from "../../src/gpu";
 import { GamepadAxis, GamepadButton, type Input, Key } from "../../src/input";
@@ -85,7 +86,7 @@ function respawn(player: Player): void {
 }
 
 export function createSetup(demo: boolean): Setup {
-  return (gpu: Gpu, input: Input): Frame => {
+  return (gpu: Gpu, input: Input, audio: Audio): Frame => {
     const renderer = createRenderer(gpu);
     const cube = renderer.addMesh(box());
     const world: World = createWorld();

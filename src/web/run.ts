@@ -8,6 +8,7 @@ import {
   type Texture,
   type WindowOptions,
 } from "../gpu";
+import type { Audio } from "../audio";
 import type { Input } from "../input";
 
 // KeyboardEvent.code values indexed by the engine Key ids in src/input.ts.
@@ -215,7 +216,88 @@ export async function run(options: WindowOptions, setup: Setup): Promise<void> {
     button: (button: number): boolean => gamepad()?.buttons[button]?.pressed ?? false,
   };
 
-  const frame = setup(gpu, input);
+  // Browsers start audio suspended until a user gesture.
+  const audioContext = new AudioContext();
+  const master = audioContext.createGain();
+  master.gain.value = 0.8;
+  master.connect(audioContext.destination);
+  const resume = (): void => {
+    if (audioContext.state === "suspended") audioContext.resume();
+    if (music && musicWanted && music.paused) music.play().catch(() => {});
+  };
+  globalThis.addEventListener("keydown", resume);
+  globalThis.addEventListener("pointerdown", resume);
+  const sounds: AudioBuffer[] = [];
+  const tracks: string[] = [];
+  let music: HTMLAudioElement | null = null;
+  let musicWanted = false;
+  let musicVolume = 1;
+  let masterVolume = 0.8;
+  const audio: Audio = {
+    loadSound: async (mp3: Uint8Array): Promise<number> => {
+      sounds.push(await audioContext.decodeAudioData(new Uint8Array(mp3).buffer));
+      return sounds.length - 1;
+    },
+    play: (sound: number, volume: number, rate: number): void => {
+      const buffer = sounds[sound];
+      if (!buffer) return;
+      const source = audioContext.createBufferSource();
+      source.buffer = buffer;
+      source.playbackRate.value = rate;
+      const gain = audioContext.createGain();
+      gain.gain.value = volume;
+      source.connect(gain).connect(master);
+      source.start();
+    },
+    tone: (frequency: number, duration: number, volume: number): void => {
+      const now = audioContext.currentTime;
+      const oscillator = audioContext.createOscillator();
+      const gain = audioContext.createGain();
+      oscillator.type = "square";
+      oscillator.frequency.value = frequency;
+      gain.gain.setValueAtTime(volume, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+      oscillator.connect(gain).connect(master);
+      oscillator.start(now);
+      oscillator.stop(now + duration);
+    },
+    loadMusic: async (mp3: Uint8Array): Promise<number> => {
+      tracks.push(URL.createObjectURL(new Blob([new Uint8Array(mp3)], { type: "audio/mpeg" })));
+      return tracks.length - 1;
+    },
+    playMusic: (track: number, loop: boolean, volume: number): void => {
+      music?.pause();
+      const url = tracks[track];
+      if (!url) return;
+      music = new globalThis.Audio(url);
+      music.loop = loop;
+      musicVolume = volume;
+      music.volume = musicVolume * masterVolume;
+      musicWanted = true;
+      music.play().catch(() => {});
+    },
+    stopMusic: (): void => {
+      music?.pause();
+      music = null;
+      musicWanted = false;
+    },
+    pauseMusic: (paused: boolean): void => {
+      musicWanted = !paused;
+      if (paused) music?.pause();
+      else music?.play().catch(() => {});
+    },
+    setMusicVolume: (volume: number): void => {
+      musicVolume = volume;
+      if (music) music.volume = musicVolume * masterVolume;
+    },
+    setMasterVolume: (volume: number): void => {
+      masterVolume = volume;
+      master.gain.value = volume;
+      if (music) music.volume = musicVolume * masterVolume;
+    },
+  };
+
+  const frame = setup(gpu, input, audio);
   const start = performance.now();
   const tick = (): void => {
     if (!frame(gpu, (performance.now() - start) / 1000)) return;

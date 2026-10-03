@@ -25,3 +25,14 @@ export declare function dfDraw(
 ): void;
 export declare function dfEnd(): void;
 export declare function dfClose(): void;
+export declare function dfAudioOpen(): number;
+export declare function dfSound(mp3: Uint8Array): number;
+export declare function dfPlay(sound: number, volume: number, rate: number): void;
+export declare function dfTone(frequency: number, duration: number, volume: number): void;
+export declare function dfTrack(mp3: Uint8Array): number;
+export declare function dfMusicPlay(track: number, loop: boolean, volume: number): number;
+export declare function dfMusicStop(): void;
+export declare function dfMusicPause(paused: boolean): void;
+export declare function dfMusicVolume(volume: number): void;
+export declare function dfMasterVolume(volume: number): void;
+export declare function dfAudioActive(): number;

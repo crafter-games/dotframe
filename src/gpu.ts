@@ -1,3 +1,4 @@
+import type { Audio } from "./audio";
 import type { Input } from "./input";
 
 // Backend-agnostic surface shared by game code. Backends return plain objects of functions:
@@ -68,7 +69,7 @@ export interface Gpu {
 export type Frame = (gpu: Gpu, time: number) => boolean;
 
 // Called once after the GPU is ready.
-export type Setup = (gpu: Gpu, input: Input) => Frame;
+export type Setup = (gpu: Gpu, input: Input, audio: Audio) => Frame;
 
 export function f32Bytes(data: Float32Array): Uint8Array {
   return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);

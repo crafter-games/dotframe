@@ -1,3 +1,4 @@
+import type { Audio } from "../../src/audio";
 import { createWorld, spawn } from "../../src/ecs";
 import { parseGlb } from "../../src/gltf";
 import type { Frame, Gpu, Setup } from "../../src/gpu";
@@ -9,7 +10,7 @@ export const windowOptions = { width: 960, height: 540, title: "dotframe: suzann
 export const assetPath = "assets/suzanne.glb";
 
 export function createSetup(glb: Uint8Array): Setup {
-  return (gpu: Gpu, _input: Input): Frame => {
+  return (gpu: Gpu, _input: Input, _audio: Audio): Frame => {
     const renderer = createRenderer(gpu);
     const mesh = renderer.addMesh(parseGlb(glb));
     const world = createWorld();

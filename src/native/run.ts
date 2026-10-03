@@ -1,7 +1,9 @@
 import { readFileSync } from "node:fs";
+import type { Audio } from "../audio";
 import type { Color, Draw, Gpu, PipelineOptions, Setup, Texture, WindowOptions } from "../gpu";
 import type { Input } from "../input";
 import {
+  dfAudioOpen,
   dfBegin,
   dfBind,
   dfBuffer,
@@ -13,13 +15,22 @@ import {
   dfGamepadButton,
   dfHeight,
   dfImage,
+  dfMasterVolume,
+  dfMusicPause,
+  dfMusicPlay,
+  dfMusicStop,
+  dfMusicVolume,
   dfKeyDown,
   dfOpen,
   dfPipeline,
+  dfPlay,
   dfPoll,
+  dfSound,
   dfTexture,
   dfTextureHeight,
   dfTextureWidth,
+  dfTone,
+  dfTrack,
   dfWidth,
 } from "./ffi";
 
@@ -95,7 +106,24 @@ export async function run(options: WindowOptions, setup: Setup): Promise<void> {
     button: (button: number): boolean => dfGamepadButton(button),
   };
 
-  const frame = setup(gpu, input);
+  // A missing audio device leaves sounds silent instead of failing the game.
+  const audioReady = dfAudioOpen() === 0;
+  if (!audioReady) console.error("dotframe: no audio device, continuing without sound");
+  const audio: Audio = {
+    loadSound: async (mp3: Uint8Array): Promise<number> => (audioReady ? dfSound(mp3) : -1),
+    play: (sound: number, volume: number, rate: number): void => dfPlay(sound, volume, rate),
+    tone: (frequency: number, duration: number, volume: number): void => dfTone(frequency, duration, volume),
+    loadMusic: async (mp3: Uint8Array): Promise<number> => dfTrack(mp3),
+    playMusic: (track: number, loop: boolean, volume: number): void => {
+      dfMusicPlay(track, loop, volume);
+    },
+    stopMusic: (): void => dfMusicStop(),
+    pauseMusic: (paused: boolean): void => dfMusicPause(paused),
+    setMusicVolume: (volume: number): void => dfMusicVolume(volume),
+    setMasterVolume: (volume: number): void => dfMasterVolume(volume),
+  };
+
+  const frame = setup(gpu, input, audio);
   // DF_FRAMES bounds the run for headless checks.
   const maxFrames = Number(process.env.DF_FRAMES ?? "0");
   const start = performance.now();

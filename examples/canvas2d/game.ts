@@ -1,3 +1,4 @@
+import type { Audio } from "../../src/audio";
 import { createDraw2D } from "../../src/draw2d";
 import type { Frame, Gpu, Setup, Texture } from "../../src/gpu";
 import type { Input } from "../../src/input";
@@ -21,7 +22,7 @@ export interface Assets {
 
 // Exercises the Canvas2D-style layer: transforms, alpha, concave paths, arcs, strokes, sprites and text.
 export function createSetup(assets: Assets): Setup {
-  return (gpu: Gpu, _input: Input): Frame => {
+  return (gpu: Gpu, _input: Input, _audio: Audio): Frame => {
     const ctx = createDraw2D(gpu, windowOptions.width, windowOptions.height);
     let sprite: Texture | null = null;
     gpu.createImage(assets.sprite, false).then((texture: Texture): void => {
