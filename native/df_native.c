@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <webgpu/webgpu.h>
+#include <webgpu/wgpu.h>
 #if defined(__APPLE__)
 #include <SDL3/SDL_metal.h>
 #include <TargetConditionals.h>
@@ -47,6 +48,8 @@ static WGPUTexture g_depth_texture;
 static WGPUTextureView g_depth_view;
 static int g_width, g_height;
 static WGPUPresentMode g_present_mode = WGPUPresentMode_Fifo;
+static WGPUSubmissionIndex g_last_submit;
+static int g_has_last_submit;
 #define DF_MAX_GAMEPADS 4
 static SDL_Gamepad *g_gamepads[DF_MAX_GAMEPADS];
 
@@ -563,8 +566,13 @@ void df_end(void) {
   wgpuRenderPassEncoderRelease(g_frame_pass);
   g_frame_pass = NULL;
   WGPUCommandBuffer commands = wgpuCommandEncoderFinish(g_frame_encoder, NULL);
-  wgpuQueueSubmit(g_queue, 1, &commands);
+  WGPUSubmissionIndex submitted = wgpuQueueSubmitForIndex(g_queue, 1, &commands);
   wgpuSurfacePresent(g_surface);
+  // At most two frames in flight: wait for the previous one. Without a bound, a CPU faster than the GPU (vsync
+  // off) queues frames and their upload staging without limit, and memory grows by gigabytes.
+  if (g_has_last_submit) wgpuDevicePoll(g_device, 1, &g_last_submit);
+  g_last_submit = submitted;
+  g_has_last_submit = 1;
   wgpuCommandBufferRelease(commands);
   wgpuCommandEncoderRelease(g_frame_encoder);
   wgpuTextureViewRelease(g_frame_view);
