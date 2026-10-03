@@ -69,7 +69,9 @@ The 2D layer's `vertices` buffer is a captured `let` because it is reassigned wh
 2. **`number.toString(radix)`** is not available in static builds; the diagnostic suggests `--dynamic`.
 3. **Increment and decrement on non-variables** (SC1090): `cells[0]++` and `counter.value++` are rejected; `x = x + 1` works.
 4. **`TypedArray.prototype.fill`** has no lowering yet (SC2020); dotframe clears pixels in a loop.
-5. **Promise callbacks in synchronous loops**: a game loop written as `while (poll()) frame()` never runs `.then` callbacks, so an async image load never completes. Correct per the event loop, but surprising for anyone porting a browser game, where `requestAnimationFrame` yields every frame. dotframe awaits `Promise.resolve()` once per frame. A short note in the docs for loop-style programs would help.
+5. **Elements of nested array literals are not numbers** (SC1043): `for (const rail of [[a, b], [c, d]]) for (let x = rail[0]; x < rail[1]; x++)` fails with "comparing non-number, non-string values". A flat `const values = [x1, x1 + 26]` read as `values[k]` fails the same way when `x1` comes from a function destructured out of an object (`const { X } = layer; const x1 = X(10)`); passing the values as typed parameters to a helper works.
+6. **Spread of an annotated `.map()` callback parameter** (SC1090): `specs.map((spec: Spec): Out => ({ ...spec, extra: 0 }))` is rejected because the parameter is treated as possibly `undefined`. Building the object field by field in a `for...of` works.
+7. **Promise callbacks in synchronous loops**: a game loop written as `while (poll()) frame()` never runs `.then` callbacks, so an async image load never completes. Correct per the event loop, but surprising for anyone porting a browser game, where `requestAnimationFrame` yields every frame. dotframe awaits `Promise.resolve()` once per frame. A short note in the docs for loop-style programs would help.
 
 ## FFI
 
