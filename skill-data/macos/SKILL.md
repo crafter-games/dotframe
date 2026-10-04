@@ -20,7 +20,7 @@ A target with `"native"` is built by the CLI itself:
 "windows": { "native": { "platform": "windows", "entry": "main.native.ts" } }
 ```
 
-The CLI copies the engine (`src/`) and the game's `.ts` and `.json` files into `.dotframe/native/<target>/`, rewrites `dotframe/...` imports to relative paths, compiles the C shim against the vendored SDL3 and wgpu-native, and runs scriptc. This is why it works from `node_modules`: scriptc treats code under `node_modules` as package code for its dynamic engine and takes only relative imports in a static build, so building in place fails.
+The CLI copies the engine (`src/`) and every file the entry reaches into `.dotframe/native/<target>/`: relative imports (including ones that leave the game folder, as in a monorepo port importing `../../packages/shared/src`) and workspace packages that resolve to source (`@my/shared` linked by bun or npm workspaces). It keeps their relative layout, rewrites `dotframe/...` and workspace imports to relative paths, compiles the C shim against the vendored SDL3 and wgpu-native, and runs scriptc. This is why it works from `node_modules`: scriptc treats code under `node_modules` as package code for its dynamic engine and takes only relative imports in a static build, so building in place fails.
 
 - Vendor lives in `DOTFRAME_VENDOR`, else a dotframe git checkout's `vendor/` when populated, else `~/.dotframe/vendor`. It survives reinstalling dotframe and is shared by every game.
 - Output goes to the game's `dist/<target>/`, never into `node_modules`.

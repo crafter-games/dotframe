@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.5
+
+- Native builds follow the entry's import graph instead of copying the game folder: relative imports that leave the game root and workspace packages that resolve to source are staged with their relative layout and rewritten to relative paths, so ports inside monorepos compile.
+
 ## 0.1.4
 
 Fixes from rounds 2 and 3 of the Craft Ones dogfood.

@@ -1,6 +1,6 @@
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { CliError, type Ctx, exec, home, print, type RunResult, which } from "./lib";
 
 // The engine this CLI belongs to: a git checkout or node_modules/dotframe.
@@ -44,42 +44,104 @@ export function vendorFix(platform: NativePlatform): string {
   return `dotframe vendor ${platform}`;
 }
 
-const SKIP = new Set(["node_modules", ".git", ".dotframe", "dist", "build", ".vercel"]);
+const SPECIFIER = /(?:from\s+|import\s*\(\s*|import\s+)(["'])([^"']+)\1/g;
+const EXTENSIONS = ["", ".ts", ".tsx", ".json", "/index.ts", "/index.tsx"];
 
-function copyTs(from: string, to: string): number {
-  let n = 0;
-  for (const name of readdirSync(from)) {
-    if (SKIP.has(name)) continue;
-    const src = join(from, name);
-    if (statSync(src).isDirectory()) n += copyTs(src, join(to, name));
-    else if (name.endsWith(".ts") || name.endsWith(".json")) {
-      mkdirSync(to, { recursive: true });
-      cpSync(src, join(to, name));
-      n += 1;
-    }
-  }
-  return n;
+function resolveFile(base: string): string | null {
+  const candidates = [base.replace(/\.js$/, ".ts"), base];
+  for (const c of candidates) for (const ext of EXTENSIONS) if (existsSync(c + ext) && statSync(c + ext).isFile()) return realpathSync(c + ext);
+  return null;
 }
 
-// scriptc's static build takes relative imports only, and treats anything under node_modules as package code
-// for its dynamic engine. Staging copies the engine and the game side by side and rewrites "dotframe/..."
-// imports to relative paths.
-function rewriteImports(dir: string, engineRoot: string): void {
-  for (const name of readdirSync(dir)) {
-    const path = join(dir, name);
-    if (statSync(path).isDirectory()) {
-      rewriteImports(path, engineRoot);
-      continue;
+// A bare specifier that resolves, through node_modules, to TypeScript source outside node_modules: a workspace
+// package (bun and npm link those). Published packages stay packages.
+function resolveWorkspace(specifier: string, fromDir: string): string | null {
+  const parts = specifier.split("/");
+  const name = specifier.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0];
+  const sub = parts.slice(name.split("/").length).join("/");
+  for (let dir = fromDir; ; dir = dirname(dir)) {
+    const pkgDir = join(dir, "node_modules", name);
+    if (existsSync(pkgDir)) {
+      const real = realpathSync(pkgDir);
+      if (real.split(sep).includes("node_modules")) return null;
+      if (sub) return resolveFile(join(real, sub));
+      const pkg = JSON.parse(readFileSync(join(real, "package.json"), "utf8")) as Record<string, unknown>;
+      const exp = pkg.exports as Record<string, unknown> | string | undefined;
+      const dot = typeof exp === "string" ? exp : (exp?.["."] as Record<string, string> | string | undefined);
+      const entry = typeof dot === "string" ? dot : (dot?.import ?? dot?.default ?? dot?.types ?? (pkg.module as string) ?? (pkg.main as string) ?? "index.ts");
+      return resolveFile(join(real, entry));
     }
-    if (!name.endsWith(".ts")) continue;
-    const text = readFileSync(path, "utf8");
-    const next = text.replace(/(from\s+|import\s*\(\s*)(["'])dotframe\/([^"']+)\2/g, (_m: string, head: string, q: string, rest: string): string => {
-      let rel = relative(dirname(path), join(engineRoot, rest));
-      if (!rel.startsWith(".")) rel = `./${rel}`;
-      return `${head}${q}${rel}${q}`;
-    });
-    if (next !== text) writeFileSync(path, next);
+    if (dirname(dir) === dir) return null;
   }
+}
+
+interface Graph {
+  files: string[];
+  // Per file, the specifiers to rewrite and the absolute file each one points at.
+  links: Map<string, Map<string, string>>;
+}
+
+// Every source file the entry reaches: relative imports (including ones that leave the game root) and workspace
+// packages. "dotframe/..." is the engine, staged separately.
+function importGraph(entry: string): Graph {
+  const files: string[] = [];
+  const links = new Map<string, Map<string, string>>();
+  const queue = [realpathSync(entry)];
+  const seen = new Set(queue);
+  while (queue.length > 0) {
+    const file = queue.shift() as string;
+    files.push(file);
+    if (!/\.tsx?$/.test(file)) continue;
+    const map = new Map<string, string>();
+    for (const m of readFileSync(file, "utf8").matchAll(SPECIFIER)) {
+      const spec = m[2];
+      if (spec.startsWith("dotframe/") || spec.startsWith("node:")) continue;
+      const target = spec.startsWith(".") ? resolveFile(resolve(dirname(file), spec)) : resolveWorkspace(spec, dirname(file));
+      if (!target) continue;
+      if (!spec.startsWith(".")) map.set(spec, target);
+      if (!seen.has(target)) {
+        seen.add(target);
+        queue.push(target);
+      }
+    }
+    links.set(file, map);
+  }
+  return { files, links };
+}
+
+function commonDir(paths: string[]): string {
+  let base = dirname(paths[0]);
+  for (const p of paths) while (!(p + sep).startsWith(base === sep ? sep : base + sep)) base = dirname(base);
+  return base;
+}
+
+function rel(fromFile: string, to: string): string {
+  const r = relative(dirname(fromFile), to);
+  return r.startsWith(".") ? r : `./${r}`;
+}
+
+// scriptc's static build takes relative imports only, and treats anything under node_modules as package code for
+// its dynamic engine. Staging copies the engine and every reached game file side by side, keeping their relative
+// layout, and rewrites "dotframe/..." and workspace imports to relative paths.
+function stageGame(root: string, entry: string, tree: string, engineStage: string): string {
+  const graph = importGraph(join(root, entry));
+  const base = commonDir([realpathSync(root) + sep + "x", ...graph.files]);
+  const staged = (file: string): string => join(tree, relative(base, file));
+  for (const file of graph.files) {
+    const to = staged(file);
+    mkdirSync(dirname(to), { recursive: true });
+    let text = readFileSync(file, "utf8");
+    if (/\.tsx?$/.test(file)) {
+      const map = graph.links.get(file) ?? new Map<string, string>();
+      text = text.replace(SPECIFIER, (whole: string, q: string, spec: string): string => {
+        if (spec.startsWith("dotframe/")) return whole.replace(`${q}${spec}${q}`, `${q}${rel(to, join(engineStage, spec.slice("dotframe/".length)))}${q}`);
+        const target = map.get(spec);
+        return target ? whole.replace(`${q}${spec}${q}`, `${q}${rel(to, staged(target)).replace(/\.tsx?$/, "")}${q}`) : whole;
+      });
+    }
+    writeFileSync(to, text);
+  }
+  return join(tree, relative(base, realpathSync(root)));
 }
 
 export async function buildNative(ctx: Ctx, root: string, gameName: string, targetName: string, t: NativeTarget): Promise<{ binary: string; log: string; steps: RunResult[] }> {
@@ -95,6 +157,7 @@ export async function buildNative(ctx: Ctx, root: string, gameName: string, targ
   const log = join(logDir, `build-${targetName}.log`);
   const out = join(root, "dist", targetName);
   const binary = join(out, `${t.name ?? gameName}${platform === "windows" ? ".exe" : ""}`);
+  if (!existsSync(join(root, t.entry))) throw new CliError("ENTRY_MISSING", `native entry ${t.entry} does not exist`, `add ${t.entry} (see the macos skill) or fix targets.${targetName}.native.entry`, skill);
   if (ctx.dryRun) {
     print(ctx, { dryRun: true, platform, stage, vendor: vendor.dir, binary }, (): string => `would stage the engine and game in ${stage} and build ${binary}`);
     return { binary, log, steps: [] };
@@ -104,9 +167,7 @@ export async function buildNative(ctx: Ctx, root: string, gameName: string, targ
   mkdirSync(out, { recursive: true });
   const engineStage = join(stage, "dotframe");
   cpSync(join(ENGINE, "src"), join(engineStage, "src"), { recursive: true });
-  const gameStage = join(stage, "game");
-  copyTs(root, gameStage);
-  rewriteImports(gameStage, engineStage);
+  const gameStage = stageGame(root, t.entry, join(stage, "game"), engineStage);
 
   const inc = [`-I${join(vendor.dir, vendor.sdl ?? "", "include")}`, `-I${join(vendor.dir, "wgpu", platform, "include")}`];
   const lib = join(stage, "lib");
@@ -120,8 +181,6 @@ export async function buildNative(ctx: Ctx, root: string, gameName: string, targ
   const ffi = JSON.parse(readFileSync(join(ENGINE, "native", `ffi.${platform}.json`), "utf8")) as { libraries: string[] };
   ffi.libraries = [join(lib, "libdf_native.a"), join(vendor.dir, "build", `sdl-${platform}`, "libSDL3.a"), join(vendor.dir, "wgpu", platform, "lib", "libwgpu_native.a")];
   writeFileSync(join(stage, "ffi.json"), JSON.stringify(ffi, null, 2));
-  const entry = join(gameStage, t.entry);
-  if (!existsSync(entry)) throw new CliError("ENTRY_MISSING", `native entry ${t.entry} does not exist`, `add ${t.entry} (see the macos skill) or fix targets.${targetName}.native.entry`, skill);
   let env: Record<string, string> = {};
   if (platform === "windows") {
     // A devDependency of dotframe, so an npm install of dotframe does not bring it; the game can.
