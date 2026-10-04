@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.1
+
+- First release published from CI through npm trusted publishing, with provenance.
+
 ## 0.1.0
 
 First npm release: the engine plus the agent-first `dotframe` CLI.
