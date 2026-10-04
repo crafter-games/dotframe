@@ -39,6 +39,33 @@ scriptc compiles a subset of TypeScript. What tripped the templates:
 
 Run `dotframe build macos` early and after each feature: one scriptc error is a quick fix, ninety are a port.
 
+## Porting existing TypeScript
+
+What a real port (Craft Ones, 66 errors) hit, and the fix for each:
+
+| scriptc rejects | Do instead |
+|---|---|
+| `Object.assign(target, ...)` | Assign fields one by one |
+| `ArrayLike<T>` / `Iterable<T>` parameters | Take `T[]` |
+| `readonly T[]`, `.find`/`.filter` on readonly tuples, `for...of` over tuples | Plain arrays (`T[]`), indexed loops |
+| Destructuring an `unknown` network payload | Narrow field by field with `typeof` checks |
+| Non-literal index into a tuple | Make it an array |
+| Dynamic keyed reads on a record whose entries have different shapes | Give every entry the same shape (optional fields), or a `switch` |
+| `string[i]` | `s.charAt(i)` or `s.charCodeAt(i)` |
+| `Number.parseInt` in a static build | `parseInt` or `Math.trunc(Number(s))` |
+| `++`/`--` inside an expression | Its own statement |
+| `satisfies Record<K, Record<string, T>>` | A plain type annotation |
+
+Runtime traps (compile clean, fail when run):
+
+- **Structural coercion copies.** Passing a class instance, or a wider record, to a parameter typed as a narrower structural type passes a copy: the callee's writes to scalar fields are lost (arrays inside still alias). In Craft Ones every projectile froze mid-flight. Pass the exact type, or return the updated record and copy it back. Reported to scriptc.
+- **Out-of-range reads.** `rows[y - 1]?.[x]` typed as `string` but `undefined` at runtime crashes with "undefined is not representable in the target union". Bounds-check before reading.
+- **`JSON.stringify` key order** differed from JavaScript in Craft Ones (not reproduced in a minimal case). Never build checksums or netplay comparisons from it.
+
+## Debugging a native crash
+
+`--optimization dev` builds failed to link in Craft Ones (undefined `_main`; a template game links fine). When that happens, debug the release binary with lldb: `lldb ./dist/macos/<name>`, `breakpoint set -n scr_error_new`, `run`, then `bt` shows the TypeScript call site of a runtime error.
+
 ## Other notes
 
 - Benchmarks mean nothing while other processes load the machine. Check `top` first and say what else was running.

@@ -227,6 +227,8 @@ static void mouse_relative(double *nx, double *ny) {
 // Field 0 x, 1 y (normalized), 2 buttons (bit 0 left, bit 1 middle, bit 2 right).
 double df_mouse(int32_t field) {
   if (field == 2) {
+    // Clicks in other apps must not reach the game: buttons count only while the window has input focus.
+    if (!(SDL_GetWindowFlags(g_window) & SDL_WINDOW_INPUT_FOCUS)) return 0;
     SDL_MouseButtonFlags flags = SDL_GetGlobalMouseState(NULL, NULL);
     return (flags & SDL_BUTTON_LMASK ? 1 : 0) | (flags & SDL_BUTTON_MMASK ? 2 : 0) | (flags & SDL_BUTTON_RMASK ? 4 : 0);
   }

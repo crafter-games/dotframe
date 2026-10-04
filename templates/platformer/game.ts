@@ -9,6 +9,8 @@ export const PLAYERS = 1;
 const LEFT = 1;
 const RIGHT = 2;
 const JUMP = 4;
+// The input bit a released mouse or touch press sets for player 1 (jumps); see src/setup.ts.
+export const POINTER_BIT = JUMP;
 const GRAVITY = 0.7;
 const SPEED = 4.5;
 const JUMP_SPEED = 13;
