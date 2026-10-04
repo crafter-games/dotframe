@@ -3,13 +3,6 @@ import { join, resolve } from "node:path";
 import { CliError, type Ctx, exec, loadConfig, print, runSteps, target } from "../lib";
 
 const TEMPLATES = resolve(import.meta.dir, "../../templates");
-const STUB = `---
-name: dotframe
-description: Build, test, and export this dotframe game. Use when changing gameplay, simulating or replaying frames, checking a render, debugging netplay desyncs, or building and deploying a target.
----
-Run \`dotframe skills get core\` before any dotframe command. It matches the installed CLI version.
-List the specialized guides with \`dotframe skills list\`.
-`;
 
 export async function create(ctx: Ctx, name: string | undefined, template: string, install = true): Promise<void> {
   if (!name || !/^[a-z0-9][a-z0-9-]*$/.test(name)) throw new CliError("BAD_NAME", "new needs a lowercase name (letters, digits, dashes)", "dotframe new my-game --template fighter", "game-design");
@@ -30,7 +23,7 @@ export async function create(ctx: Ctx, name: string | undefined, template: strin
     writeFileSync(join(dir, to), readFileSync(from, "utf8").replaceAll("__NAME__", name).replaceAll("__SCOPE__", "your-vercel-team"));
   }
   mkdirSync(join(dir, ".agents/skills/dotframe"), { recursive: true });
-  writeFileSync(join(dir, ".agents/skills/dotframe/SKILL.md"), STUB);
+  cpSync(resolve(import.meta.dir, "../../skills/dotframe/SKILL.md"), join(dir, ".agents/skills/dotframe/SKILL.md"));
   mkdirSync(join(dir, "replays"), { recursive: true });
   const steps = [
     { label: "git init", argv: ["git", "init", "-q"] },

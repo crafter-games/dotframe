@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.2
+
+- `npx skills add crafter-games/dotframe` installs a `dotframe` discovery skill that points agents at `dotframe skills get core`. The guides served by the CLI moved to `skill-data/`, so they are not installed as separate skills.
+
 ## 0.1.1
 
 - First release published from CI through npm trusted publishing, with provenance.

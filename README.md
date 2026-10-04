@@ -9,7 +9,8 @@ Status: S5 in progress (porting Crafter Smash). `examples/canvas2d` exercises `s
 `dotframe` is an agent-first CLI over the engine. The simulation is deterministic, so an agent can play a game without a screen, render a frame with the real renderer, and catch netplay desyncs before a real match.
 
 ```sh
-bun link                                    # or: bun add -g github:crafter-games/dotframe
+npm i -g dotframe                           # needs Bun on PATH
+npx skills add crafter-games/dotframe      # installs the agent skill stub
 dotframe new my-game --template fighter     # fighter, platformer, blank
 dotframe sim --mash 7 --frames 600 --json   # headless run: state + checksum
 dotframe snap --frame 300 --mash 7          # one frame through WebGPU (agent-browser)
@@ -23,7 +24,7 @@ dotframe skills list                        # guides bundled with this version
 
 A game opts in with a `dotframe.json` (targets, deploy, relay, vendor links, local-only assets) and a `sim` module that default-exports `defineSim` from `src/sim.ts`. Agents start with `dotframe skills get core`. Every command takes `--json`; errors carry a `code`, a `fix`, and the `skill` to read.
 
-- `cli/`: the CLI (Bun). `skills/`: the guides served by `dotframe skills`. `templates/`: the `dotframe new` templates.
+- `cli/`: the CLI (Bun). `skill-data/`: the guides served by `dotframe skills`. `skills/dotframe`: the discovery stub that `npx skills add crafter-games/dotframe` installs. `templates/`: the `dotframe new` templates.
 
 ## Layout
 

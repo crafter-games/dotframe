@@ -1,6 +1,6 @@
 {
   "name": "dotframe",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "TS-first game engine and agent-first CLI: one codebase for web, Discord, iOS and native binaries",
   "license": "MIT",
   "type": "module",
@@ -16,7 +16,7 @@
   "files": [
     "cli",
     "src",
-    "skills",
+    "skill-data",
     "templates",
     "assets",
     "tools/*.ts",
@@ -24,7 +24,8 @@
     "scripts",
     "README.md",
     "CHANGELOG.md",
-    "LICENSE"
+    "LICENSE",
+    "skills"
   ],
   "repository": {
     "type": "git",

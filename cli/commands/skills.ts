@@ -4,7 +4,7 @@ import { CliError, type Ctx, print } from "../lib";
 
 // Skills ship inside the dotframe package, so the guide always matches the installed CLI.
 export function skillsDir(): string {
-  return resolve(process.env.DOTFRAME_SKILLS_DIR ?? join(import.meta.dir, "../../skills"));
+  return resolve(process.env.DOTFRAME_SKILLS_DIR ?? join(import.meta.dir, "../../skill-data"));
 }
 
 interface Skill {
