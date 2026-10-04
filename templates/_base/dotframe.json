@@ -3,10 +3,7 @@
   "sim": "sim.ts",
   "targets": {
     "web": {
-      "steps": [
-        { "label": "bundle", "argv": ["bun", "build", "main.web.ts", "--outfile", "dist/web/main.js", "--target", "browser", "--minify"] },
-        { "label": "page", "argv": ["cp", "index.html", "dist/web/index.html"] }
-      ],
+      "steps": [{ "label": "bundle (hashed)", "argv": ["bun", "scripts/build-web.ts"] }],
       "out": "dist/web",
       "deploy": { "provider": "vercel", "project": "__NAME__", "scope": "__SCOPE__" }
     }

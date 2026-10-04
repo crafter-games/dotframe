@@ -12,6 +12,8 @@ import type { Audio } from "../audio";
 import { type Input, keyCodes, type Pointer, type Touch } from "../input";
 import type { Storage } from "../storage";
 
+// Engine buffers are always plain ArrayBuffer-backed; the casts below satisfy TS 5.9+ WebGPU typings, which reject
+// Uint8Array<ArrayBufferLike> (it could be a SharedArrayBuffer).
 const vertexFormats: GPUVertexFormat[] = ["float32x2", "float32x3", "float32x4", "float32", "unorm8x4"];
 
 export async function loadBytes(path: string): Promise<Uint8Array> {
@@ -78,13 +80,13 @@ export async function run(options: WindowOptions, setup: Setup): Promise<void> {
       if (usage & BufferUsage.Index) flags |= GPUBufferUsage.INDEX;
       if (usage & BufferUsage.Uniform) flags |= GPUBufferUsage.UNIFORM;
       const buffer = device.createBuffer({ size: Math.ceil(data.byteLength / 4) * 4, usage: flags });
-      device.queue.writeBuffer(buffer, 0, data);
+      device.queue.writeBuffer(buffer, 0, data as Uint8Array<ArrayBuffer>);
       buffers.push(buffer);
       return buffers.length - 1;
     },
     writeBuffer: (buffer: number, data: Uint8Array): void => {
       const target = buffers[buffer];
-      if (target) device.queue.writeBuffer(target, 0, data);
+      if (target) device.queue.writeBuffer(target, 0, data as Uint8Array<ArrayBuffer>);
     },
     destroyBuffer: (buffer: number): void => {
       buffers[buffer]?.destroy();
@@ -144,7 +146,7 @@ export async function run(options: WindowOptions, setup: Setup): Promise<void> {
     },
     createTexture: (width: number, height: number, rgba: Uint8Array, smooth: boolean): Texture =>
       uploadTexture(width, height, smooth, (texture) =>
-        device.queue.writeTexture({ texture }, rgba, { bytesPerRow: width * 4, rowsPerImage: height }, [width, height]),
+        device.queue.writeTexture({ texture }, rgba as Uint8Array<ArrayBuffer>, { bytesPerRow: width * 4, rowsPerImage: height }, [width, height]),
       ),
     createImage: async (png: Uint8Array, smooth: boolean): Promise<Texture> => {
       const bitmap = await createImageBitmap(new Blob([new Uint8Array(png)], { type: "image/png" }), { premultiplyAlpha: "none" });
@@ -189,12 +191,13 @@ export async function run(options: WindowOptions, setup: Setup): Promise<void> {
   };
 
   const pressed = new Set<string>();
-  globalThis.addEventListener("keydown", (event) => {
+  // window, not globalThis: with Bun's types loaded, globalThis listeners receive a plain Event.
+  window.addEventListener("keydown", (event: KeyboardEvent) => {
     if (keyCodes.includes(event.code)) event.preventDefault();
     pressed.add(event.code);
   });
-  globalThis.addEventListener("keyup", (event) => pressed.delete(event.code));
-  globalThis.addEventListener("blur", () => pressed.clear());
+  window.addEventListener("keyup", (event: KeyboardEvent) => pressed.delete(event.code));
+  window.addEventListener("blur", () => pressed.clear());
   const pointer: Pointer = { x: 0, y: 0, buttons: 0 };
   const trackPointer = (event: PointerEvent): void => {
     const rect = canvas.getBoundingClientRect();

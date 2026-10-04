@@ -33,7 +33,9 @@ export interface SimRun {
   // Optional: the whole simulation state as a plain object graph. desync walks it at checkpoints and reports the
   // first differing path, which catches state the checksum does not cover.
   inspect?: () => unknown;
-  // Optional: draws the current frame; must not change simulation state.
+  // Optional: draws the current frame; must not change simulation state. It must also draw with a stub Draw2D
+  // that renders nothing: desync calls it that way to prove rendering leaves the simulation alone, so a render
+  // that skips itself without a real draw makes that check blind.
   render?: (draw: Draw2D) => void;
 }
 
@@ -49,6 +51,8 @@ export interface Sim {
   // A random input, for mashing scripts. next() returns [0, 1).
   random: (next: () => number) => number;
   create: (platform: SimPlatform) => SimRun;
+  // Optional: the most frames the game's netplay can roll back. desync warns when a link needs more.
+  rollbackWindow?: number;
 }
 
 export function defineSim(sim: Sim): Sim {

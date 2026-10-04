@@ -31,6 +31,10 @@ Never claim a visual change works from the JSON alone. Snap it and look.
 - All simulation state changes only inside `step`. `render` reads, never writes (no spawning particles or texts from draw code).
 - Randomness comes from a seeded generator that `save`/`restore` capture.
 - `inspect` returns the whole state graph so `desync` can name the exact field that differs.
+- `render` must draw with whatever Draw2D it receives, including a stub that renders nothing. `desync` calls `render(stubDraw)` to prove rendering leaves state alone; a render that skips itself when there is no real renderer makes that check pass without checking anything. `dotframe doctor` fails `sim:render` when render makes no draw calls.
+- Declare `rollbackWindow` (the most frames your netplay rolls back) so `desync` warns when a link needs more.
+
+Prove a check can fail before trusting its green: make render change one field on purpose, run `desync`, and confirm it fails on peer 1 and names that field. Then revert.
 
 ## Trust ladder
 

@@ -7,6 +7,8 @@ export default defineSim({
   window: WINDOW,
   options: {},
   neutral: 0,
+  // Frames your netplay may roll back; desync warns when a link needs more. Match it when you add online play.
+  rollbackWindow: 20,
   encode,
   random: randomInput,
   create: (_platform: SimPlatform): SimRun => {

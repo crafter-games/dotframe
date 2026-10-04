@@ -2,7 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { Draw2D } from "../../src/draw2d";
 import type { Sim, SimRun } from "../../src/sim";
-import { CliError, type Ctx, loadConfig, print } from "../lib";
+import { CliError, type Ctx, frames60, loadConfig, num, print } from "../lib";
 import { firstDifference, flatten, headlessRun, type InputSource, inputSource, lcg, loadSim, parseOptions } from "../simkit";
 
 export interface PlayArgs {
@@ -37,7 +37,7 @@ function play(run: SimRun, source: InputSource, frames: number, every: number): 
 async function setup(args: PlayArgs): Promise<{ sim: Sim; run: SimRun; source: InputSource; seed: number; options: Record<string, unknown>; root: string }> {
   const config = loadConfig();
   const sim = await loadSim(config);
-  const seed = Number(args.seed ?? "1");
+  const seed = num("seed", args.seed, 1);
   const options = parseOptions(sim, args.options);
   const source = inputSource(sim, config.root, args.inputs, args.mash);
   const run = await headlessRun(sim, config.root);
@@ -47,7 +47,7 @@ async function setup(args: PlayArgs): Promise<{ sim: Sim; run: SimRun; source: I
 
 export async function sim(ctx: Ctx, args: PlayArgs): Promise<void> {
   const { run, source, seed } = await setup(args);
-  const r = play(run, source, Number(args.frames ?? "600"), Number(args.every ?? "0"));
+  const r = play(run, source, num("frames", args.frames, 600, 1), num("every", args.every, 0));
   print(ctx, { seed, inputs: source.describe, ...r }, (): string =>
     [`${r.frames} frames in ${r.ms} ms (${source.describe}, seed ${seed})${r.over ? ", match over" : ""}`, `checksum ${r.checksum}`, JSON.stringify(r.state, null, 2)].join("\n"),
   );
@@ -67,7 +67,7 @@ interface Replay {
 export async function record(ctx: Ctx, file: string, args: PlayArgs): Promise<void> {
   if (!file) throw new CliError("MISSING_ARG", "replay record needs an output file", "dotframe replay record replays/smoke.json --mash 7 --frames 1800");
   const { run, source, seed, options } = await setup(args);
-  const frames = Number(args.frames ?? "1800");
+  const frames = num("frames", args.frames, 1800, 1);
   const r = play(run, source, frames, 60);
   const inputs: Replay["inputs"] = [];
   for (let f = 0; f < r.frames; f++) {
@@ -135,13 +135,13 @@ export async function desync(ctx: Ctx, args: DesyncArgs): Promise<void> {
   const config = loadConfig();
   const sim = await loadSim(config);
   if (sim.players !== 2) throw new CliError("UNSUPPORTED", "desync simulates two peers; this sim has " + sim.players + " players", "", "netplay");
-  const frames = Number(args.frames ?? "1800");
-  const seed = Number(args.seed ?? "1");
-  const latency = Math.round(Number((args.latency ?? "100ms").replace("ms", "")) / (1000 / 60));
-  const jitter = Math.round(Number((args.jitter ?? "0ms").replace("ms", "")) / (1000 / 60));
-  const delay = Number(args.delay ?? "2");
-  const renders = Number(args.renders ?? "3");
-  const every = Number(args.every ?? "30");
+  const frames = num("frames", args.frames, 1800, 1);
+  const seed = num("seed", args.seed, 1);
+  const latency = frames60("latency", args.latency, 100);
+  const jitter = frames60("jitter", args.jitter, 0);
+  const delay = num("delay", args.delay, 2);
+  const renders = num("renders", args.renders, 3);
+  const every = num("every", args.every, 30, 1);
   const options = parseOptions(sim, args.options);
   const source = inputSource(sim, config.root, args.inputs, args.mash ?? (args.inputs ? undefined : "7"));
   // Input a player presses at frame f applies at frame f + delay, on both peers.
@@ -230,7 +230,13 @@ export async function desync(ctx: Ctx, args: DesyncArgs): Promise<void> {
     maxRollbackFrames: p.maxDepth,
   }));
   const ok = report.every((r): boolean => r.firstDivergentFrame < 0 && r.firstStateDifference === null);
-  print(ctx, { ok, frames, latencyFrames: latency, jitterFrames: jitter, delay, inputs: source.describe, peers: report }, (): string =>
+  const deepest = Math.max(...report.map((r): number => r.maxRollbackFrames));
+  const warnings: string[] = [];
+  if (sim.rollbackWindow !== undefined && deepest > sim.rollbackWindow) {
+    warnings.push(`this link needed ${deepest}-frame rollbacks but the game's window is ${sim.rollbackWindow}: real play would stall`);
+  }
+  if (!sim.rollbackWindow) warnings.push("the sim declares no rollbackWindow, so rollback depth is not checked against the game");
+  print(ctx, { ok, warnings, frames, latencyFrames: latency, jitterFrames: jitter, delay, inputs: source.describe, peers: report }, (): string =>
     [
       `${frames} frames, latency ${latency}f, jitter ${jitter}f, delay ${delay}f (${source.describe})`,
       ...report.map((r): string => {
@@ -238,6 +244,7 @@ export async function desync(ctx: Ctx, args: DesyncArgs): Promise<void> {
         return `peer ${r.peer}${r.rendersBetweenSteps ? " (renders)" : ""}: ${sync}, ${r.rollbacks} rollbacks, max ${r.maxRollbackFrames}f`;
       }),
       reference.inspect ? "" : "note: the sim has no inspect(), so only the checksum is compared",
+      ...warnings.map((w: string): string => `warning: ${w}`),
     ].filter(Boolean).join("\n"),
   );
   if (!ok) process.exit(1);

@@ -4,9 +4,15 @@
   "type": "module",
   "scripts": {
     "dev": "dotframe dev",
-    "test": "dotframe replay verify replays/*.json"
+    "test": "dotframe replay verify replays/*.json",
+    "typecheck": "tsc"
   },
   "dependencies": {
     "dotframe": "^0.1.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.0",
+    "@webgpu/types": "^0.1.74",
+    "typescript": "^5.9.0"
   }
 }

@@ -9,3 +9,4 @@ description: Asset licensing and loading for dotframe games. Use when adding spr
 - Fonts render through SDF atlases baked by `tools/bake-font.c`. Keep the font license (for example SIL OFL) with the atlas.
 - Headless runs (`sim`, `replay`, `desync`) skip asset loading. If gameplay depends on asset data (sprite boxes, frame counts), load that data in headless too, or the sim will differ from the real game.
 - `snap` loads assets from the game root over HTTP, so asset paths must be relative to the repo root.
+- The engine loads PNG, not SVG. Rasterize SVGs at build time (for example with sharp in a build step) at the largest size the game draws them, and commit or generate the PNGs.

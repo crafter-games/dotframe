@@ -4,6 +4,10 @@ import { CliError, type Command, type Ctx, exec, gate, loadConfig, print, runSte
 
 const skillFor = (t: string): string => (t === "web" ? "export-web" : t);
 
+function countFiles(dir: string): number {
+  return readdirSync(dir, { withFileTypes: true }).reduce((n, e) => n + (e.isDirectory() ? countFiles(join(dir, e.name)) : 1), 0);
+}
+
 // Paths marked local-only (unlicensed for distribution) that would ship with a release build.
 function licenseBlockers(root: string, paths: string[]): string[] {
   return paths.filter((p: string): boolean => {
@@ -41,7 +45,7 @@ export async function deploy(ctx: Ctx, name: string | undefined, prod: boolean):
   if (!existsSync(join(out, "index.html"))) throw new CliError("NOT_BUILT", `${t.out}/index.html is missing`, `dotframe build ${name}`, skill);
   if (t.deploy.scope === "your-vercel-team") throw new CliError("CONFIG_PLACEHOLDER", `targets.${name}.deploy.scope is still the template placeholder`, `dotframe config set targets.${name}.deploy.scope '"<team>"'`, skill);
   const argv = ["vercel", "deploy", ...(prod ? ["--prod"] : []), "--yes", "--scope", t.deploy.scope, "--name", t.deploy.project];
-  const plan = { target: name, provider: t.deploy.provider, project: `${t.deploy.scope}/${t.deploy.project}`, dir: out, production: prod, files: readdirSync(out).length, command: argv.join(" ") };
+  const plan = { target: name, provider: t.deploy.provider, project: `${t.deploy.scope}/${t.deploy.project}`, dir: out, production: prod, files: countFiles(out), command: argv.join(" ") };
   if (ctx.dryRun) {
     print(ctx, { dryRun: true, ...plan }, (): string => `would deploy ${out} to ${plan.project}${prod ? " (production)" : " (preview)"}\n  ${plan.command}`);
     return;

@@ -1,7 +1,9 @@
 import { existsSync, lstatSync, mkdirSync, readlinkSync, symlinkSync, unlinkSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { type Config, type Ctx, findRoot, home, loadConfig, print, which } from "../lib";
-import { loadSim } from "../simkit";
+import type { Draw2D } from "../../src/draw2d";
+import type { Sim } from "../../src/sim";
+import { headlessRun, loadSim } from "../simkit";
 
 interface Check {
   check: string;
@@ -33,8 +35,14 @@ export async function doctor(ctx: Ctx, fix: boolean): Promise<void> {
       try {
         const sim = await loadSim(config);
         checks.push({ check: "sim", ok: true, detail: `${config.sim} (${sim.players} players)`, fix: "", skill: "core" });
+        checks.push(await renderCheck(sim, config.root));
       } catch (error) {
         checks.push({ check: "sim", ok: false, detail: error instanceof Error ? error.message : "failed to load", fix: "dotframe skills get core (Sim contract)", skill: "core" });
+      }
+    }
+    for (const [name, t] of Object.entries(config.targets)) {
+      if (t.deploy?.scope === "your-vercel-team") {
+        checks.push({ check: `deploy:${name}`, ok: false, detail: "deploy scope is still the template placeholder", fix: `dotframe config set targets.${name}.deploy.scope '"<vercel team>"'`, skill: "export-web" });
       }
     }
     const targets = Object.keys(config.targets);
@@ -68,4 +76,28 @@ export async function doctor(ctx: Ctx, fix: boolean): Promise<void> {
     checks.map((c: Check): string => `${c.ok ? "ok  " : "FAIL"} ${c.check}: ${c.detail}${c.fix ? `\n     fix: ${c.fix}` : ""}`).join("\n"),
   );
   if (failed.length > 0) process.exit(1);
+}
+
+// desync proves rendering is pure by calling render() with a stub Draw2D. A render that draws nothing in that
+// case (for example, one that waits for a real renderer) makes the check pass without checking anything.
+async function renderCheck(sim: Sim, root: string): Promise<Check> {
+  const base = { check: "sim:render", skill: "netplay" };
+  const run = await headlessRun(sim, root);
+  if (!run.render) return { ...base, ok: false, detail: "the sim has no render(); desync cannot check render purity", fix: "add render: (draw) => ... to the SimRun", skill: "core" };
+  let calls = 0;
+  const draw = new Proxy({} as Draw2D, {
+    get: (_t: Draw2D, key: string | symbol): unknown => {
+      if (key === "measureText") return (): { width: number } => ({ width: 10 });
+      if (key === "getGlobalAlpha") return (): number => 1;
+      return (): void => {
+        calls += 1;
+      };
+    },
+  });
+  run.start(1, { ...sim.options });
+  for (let f = 0; f < 30; f++) run.step(new Array(sim.players).fill(sim.neutral));
+  run.render(draw);
+  return calls > 0
+    ? { ...base, ok: true, detail: `render() drew ${calls} calls with a stub Draw2D`, fix: "" }
+    : { ...base, ok: false, detail: "render() made no draw calls with a stub Draw2D, so desync never exercises it", fix: "render with whatever Draw2D it is given; do not skip when platform.draw is missing" };
 }

@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { Sim, SimRun } from "../src/sim";
 import type { RenderGpu, Texture } from "../src/gpu";
-import { CliError, type Config } from "./lib";
+import { CliError, type Config, num } from "./lib";
 
 let nextTexture = 1;
 // Texture ids restart per run so two runs of the same game have identical state graphs.
@@ -105,7 +105,7 @@ export function mash(sim: Sim, seed: number): InputSource {
 
 export function inputSource(sim: Sim, root: string, inputs: string | undefined, mashSeed: string | undefined): InputSource {
   if (inputs) return inputsFromFile(sim, resolve(process.cwd(), inputs));
-  if (mashSeed !== undefined) return mash(sim, Number(mashSeed));
+  if (mashSeed !== undefined) return mash(sim, num("mash", mashSeed, 0));
   return { describe: "neutral", at: (): number[] => new Array(sim.players).fill(sim.neutral) };
 }
 

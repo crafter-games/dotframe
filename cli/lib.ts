@@ -146,3 +146,31 @@ export async function runSteps(ctx: Ctx, root: string, steps: Command[], skill: 
   }
   return results;
 }
+
+// Numeric flags: a bad value is an error, never a silent NaN that runs zero frames.
+export function num(flag: string, raw: string | undefined, fallback: number, min = 0): number {
+  if (raw === undefined) return fallback;
+  const value = Number(raw);
+  if (raw.trim() === "" || !Number.isInteger(value) || value < min) {
+    throw new CliError("BAD_ARG", `--${flag} must be an integer >= ${min}, got "${raw}"`, `--${flag} ${Math.max(min, fallback)}`);
+  }
+  return value;
+}
+
+// Durations in milliseconds ("120ms" or "120"), converted to 60 Hz frames.
+export function frames60(flag: string, raw: string | undefined, fallbackMs: number): number {
+  const text = raw ?? `${fallbackMs}ms`;
+  const match = text.trim().match(/^(\d+(?:\.\d+)?)(ms)?$/);
+  if (!match) throw new CliError("BAD_ARG", `--${flag} must be a duration like 120ms, got "${text}"`, `--${flag} ${fallbackMs}ms`);
+  return Math.round(Number(match[1]) / (1000 / 60));
+}
+
+// JSON with short objects and arrays kept on one line, so `config set` does not explode a hand-written file.
+export function formatJson(value: unknown, indent = "", width = 100): string {
+  const inline = JSON.stringify(value, null, 1).replace(/\n\s*/g, " ").replace(/\[ /g, "[").replace(/ \]/g, "]").replace(/\{ /g, "{ ").replace(/ \}/g, " }");
+  if (value === null || typeof value !== "object" || indent.length + inline.length <= width) return inline;
+  const next = `${indent}  `;
+  if (Array.isArray(value)) return `[\n${value.map((v) => next + formatJson(v, next, width)).join(",\n")}\n${indent}]`;
+  const entries = Object.entries(value as Record<string, unknown>);
+  return `{\n${entries.map(([k, v]) => `${next}${JSON.stringify(k)}: ${formatJson(v, next, width)}`).join(",\n")}\n${indent}}`;
+}

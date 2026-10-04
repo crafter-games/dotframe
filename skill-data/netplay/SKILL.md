@@ -16,7 +16,7 @@ It runs a reference simulation and two peers over a deterministic simulated link
 
 - `firstDivergentFrame`: the checksum differed. A rollback or determinism bug.
 - `firstStateDifference`: `{frame, path}` of the first field that differs at a checkpoint (`--every 30`). Catches state the checksum does not cover. Needs `inspect()` in the sim.
-- `rollbacks`, `maxRollbackFrames`: how hard the link worked. Keep max under the game's rollback window.
+- `rollbacks`, `maxRollbackFrames`: how hard the link worked. With `rollbackWindow` in the sim, `warnings` says when a link needs deeper rollbacks than the game allows (real play would stall).
 
 Run several seeds and a high latency (474 ms is what a transatlantic relay measured). A pass on one seed proves little.
 

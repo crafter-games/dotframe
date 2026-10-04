@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { CliError, type Ctx, exec, loadConfig, print, which } from "../lib";
+import { CliError, type Ctx, exec, loadConfig, num, print, which } from "../lib";
 import { inputSource, loadSim, parseOptions, simPath } from "../simkit";
 import type { PlayArgs } from "./play";
 
@@ -11,16 +12,17 @@ const ENGINE = resolve(import.meta.dir, "../../src");
 export async function snap(ctx: Ctx, args: PlayArgs & { frame?: string; out?: string }): Promise<void> {
   const config = loadConfig();
   const sim = await loadSim(config);
-  const frame = Number(args.frame ?? "0");
+  if (args.frame === undefined) throw new CliError("MISSING_ARG", "snap needs --frame <n>", "dotframe snap --frame 300 --mash 7");
+  const frame = num("frame", args.frame, 0);
   const out = resolve(process.cwd(), args.out ?? `snap-${frame}.png`);
-  const seed = Number(args.seed ?? "1");
+  const seed = num("seed", args.seed, 1);
   const options = parseOptions(sim, args.options);
   const source = inputSource(sim, config.root, args.inputs, args.mash);
   const inputs = Array.from({ length: frame }, (_: unknown, f: number): number[] => source.at(f));
   if (!which("agent-browser")) throw new CliError("TOOL_MISSING", "agent-browser not found (snap drives a real browser)", "npm i -g agent-browser && agent-browser install");
 
-  const work = join(config.root, ".dotframe", "snap");
-  mkdirSync(work, { recursive: true });
+  // Outside the repo, so a snap never leaves files to commit.
+  const work = mkdtempSync(join(tmpdir(), "dotframe-snap-"));
   const entry = join(work, "entry.ts");
   writeFileSync(
     entry,
@@ -84,5 +86,6 @@ run(sim.window, (p) => {
   } finally {
     await ab("close");
     server.stop(true);
+    rmSync(work, { recursive: true, force: true });
   }
 }

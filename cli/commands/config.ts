@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { CONFIG_FILE, CliError, type Ctx, loadConfig, print } from "../lib";
+import { CONFIG_FILE, CliError, type Ctx, formatJson, loadConfig, print } from "../lib";
 
 // Dotted keys: targets.web.deploy.project
 export async function configCmd(ctx: Ctx, args: string[]): Promise<void> {
@@ -30,6 +30,6 @@ export async function configCmd(ctx: Ctx, args: string[]): Promise<void> {
     print(ctx, { dryRun: true, key, value: parsed }, (): string => `would set ${key} = ${JSON.stringify(parsed)}`);
     return;
   }
-  writeFileSync(file, `${JSON.stringify(raw, null, 2)}\n`);
+  writeFileSync(file, `${formatJson(raw)}\n`);
   print(ctx, { key, value: parsed }, (): string => `${key} = ${JSON.stringify(parsed)}`);
 }
