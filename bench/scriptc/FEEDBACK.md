@@ -173,3 +173,33 @@ scriptc build patterns2.ts -o patterns2 && ./patterns2   # second round: G, H, I
 ### iOS library link: `scr_bytes_io.o` needs the promise runtime
 
 With `SCRIPTC_TARGET=aarch64-apple-ios scriptc build --lib --profile`, the archive's `scr_bytes_io.o` has undefined `_scr_promise_settled_ref` and `_scr_promise_settled_void`, and library mode ships no promise runtime. The app links only after the host defines stubs for both. Library mode should either drop the async half of bytes IO or ship those two symbols.
+
+## Correctness, from porting Craft Ones (2026-10-04)
+
+### Structural coercion silently copies (high)
+
+Passing a class instance, or a record with more fields, to a parameter typed as a narrower structural type passes a copy. The callee's writes to scalar fields are lost; arrays inside still alias. It compiles with no warning. In Craft Ones every projectile froze mid-flight.
+
+```ts
+class P {
+  x = 0;
+}
+function f(s: { x: number }): void {
+  s.x += 1;
+}
+const p = new P();
+f(p);
+const wide = { x: 0, y: 5 };
+f(wide);
+console.log(`class ${p.x} wide ${wide.x}`); // bun: class 1 wide 1, scriptc 0.2.0: class 0 wide 0
+```
+
+Reproduced on scriptc 0.2.0. Either keep reference semantics or reject the coercion at compile time; a silent divergence is the worst outcome.
+
+### JSON.stringify key order (medium, not reproduced minimally)
+
+In Craft Ones the native build serialized the same state with `roundNumber` in a different position than bun, so any checksum built on `JSON.stringify` differs between web and native peers. A minimal object with the same fields keeps insertion order, so the trigger is something in how that object is built. Matching JS insertion order everywhere would remove the trap.
+
+### `--optimization dev` fails to link (low, not reproduced minimally)
+
+`scriptc build main.native.ts --optimization dev` failed in Craft Ones with `Undefined symbols: _main`. A small file and a template game with `--ffi` both link in dev mode, so the trigger is project-specific.

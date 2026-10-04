@@ -30,6 +30,8 @@ Run several seeds and a high latency (474 ms is what a transatlantic relay measu
 
 ## Rules
 
+- Build checksums from numbers in a fixed order, never from `JSON.stringify`: native builds can order keys differently from JavaScript, so a web peer and a native peer would report false desyncs.
+
 - The camera, effects, and HUD timers are simulation state if the simulation ever reads them. Update them once per step, never per drawn frame.
 - Render must restore any random state it uses, or use a separate visual generator.
 - Input delay (`--delay`, default 2) trades latency for fewer rollbacks.

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.6
+
+From the Craft Ones native port.
+
+- Native: mouse buttons read 0 while the window lacks input focus, so clicks in other apps no longer reach the game. The pointer position stays global, so aiming is unchanged.
+- Templates: `src/setup.ts` reads the pointer and touches with a hold-to-charge, release-to-act pattern (a charge meter while holding, a tone on release), on web and native. Each `game.ts` declares the `POINTER_BIT` a release sets.
+- Skills: the macos guide gains "Porting existing TypeScript" (what scriptc rejects and the fix for each, plus runtime traps such as structural coercion copying and out-of-range reads) and "Debugging a native crash" with lldb. Netplay warns against checksums built on `JSON.stringify`.
+
 ## 0.1.5
 
 - Native builds follow the entry's import graph instead of copying the game folder: relative imports that leave the game root and workspace packages that resolve to source are staged with their relative layout and rewritten to relative paths, so ports inside monorepos compile.

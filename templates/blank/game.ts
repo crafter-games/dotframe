@@ -4,6 +4,8 @@ import type { Draw2D } from "dotframe/src/draw2d";
 import type { Input } from "dotframe/src/input";
 
 export const WINDOW = { width: 960, height: 540, title: "__NAME__" };
+// The input bit a released mouse or touch press sets for player 1 (fires the action bit); see src/setup.ts.
+export const POINTER_BIT = 8;
 export const PLAYERS = 2;
 
 export interface Game {

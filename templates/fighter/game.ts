@@ -11,6 +11,8 @@ const RIGHT = 2;
 const JUMP = 4;
 const ATTACK = 8;
 const GROUND = 440;
+// The input bit a released mouse or touch press sets for player 1 (attacks); see src/setup.ts.
+export const POINTER_BIT = ATTACK;
 const GRAVITY = 0.8;
 const SPEED = 5;
 const JUMP_SPEED = 15;
