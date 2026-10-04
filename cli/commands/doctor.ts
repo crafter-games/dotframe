@@ -3,7 +3,8 @@ import { dirname, resolve } from "node:path";
 import { type Config, type Ctx, findRoot, home, loadConfig, print, which } from "../lib";
 import type { Draw2D } from "../../src/draw2d";
 import type { Sim } from "../../src/sim";
-import { headlessRun, loadSim } from "../simkit";
+import { vendorFix, vendorStatus } from "../native";
+import { firstDifference, flatten, headlessRun, loadSim } from "../simkit";
 
 interface Check {
   check: string;
@@ -45,6 +46,13 @@ export async function doctor(ctx: Ctx, fix: boolean): Promise<void> {
         checks.push({ check: `deploy:${name}`, ok: false, detail: "deploy scope is still the template placeholder", fix: `dotframe config set targets.${name}.deploy.scope '"<vercel team>"'`, skill: "export-web" });
       }
     }
+    for (const [name, t] of Object.entries(config.targets)) {
+      if (!t.native) continue;
+      const v = vendorStatus(t.native.platform);
+      checks.push({ check: `vendor:${name}`, ok: v.missing.length === 0, detail: v.missing.length === 0 ? `${v.dir} (${v.sdl})` : `missing in ${v.dir}: ${v.missing.join(", ")}`, fix: v.missing.length === 0 ? "" : vendorFix(t.native.platform), skill: t.native.platform });
+      checks.push(tool("scriptc", "native builds", "npm i -g scriptc", t.native.platform));
+      if (t.native.platform === "windows") checks.push(tool("zig", "windows cross builds", "brew install zig", "macos"));
+    }
     const targets = Object.keys(config.targets);
     if (targets.some((t: string): boolean => t === "web" || t === "discord")) {
       checks.push(tool("vercel", "deploy web", "npm i -g vercel", "export-web"), tool("agent-browser", "dotframe snap", "npm i -g agent-browser && agent-browser install", "core"));
@@ -78,8 +86,9 @@ export async function doctor(ctx: Ctx, fix: boolean): Promise<void> {
   if (failed.length > 0) process.exit(1);
 }
 
-// desync proves rendering is pure by calling render() with a stub Draw2D. A render that draws nothing in that
-// case (for example, one that waits for a real renderer) makes the check pass without checking anything.
+// desync proves rendering is pure by calling render() with a stub Draw2D. Two failure modes are checked here,
+// instantly: a render that draws nothing with the stub (desync's check would be blind), and a render that
+// changes simulation state (checksum or, with inspect(), any field).
 async function renderCheck(sim: Sim, root: string): Promise<Check> {
   const base = { check: "sim:render", skill: "netplay" };
   const run = await headlessRun(sim, root);
@@ -95,9 +104,26 @@ async function renderCheck(sim: Sim, root: string): Promise<Check> {
     },
   });
   run.start(1, { ...sim.options });
-  for (let f = 0; f < 30; f++) run.step(new Array(sim.players).fill(sim.neutral));
-  run.render(draw);
-  return calls > 0
-    ? { ...base, ok: true, detail: `render() drew ${calls} calls with a stub Draw2D`, fix: "" }
-    : { ...base, ok: false, detail: "render() made no draw calls with a stub Draw2D, so desync never exercises it", fix: "render with whatever Draw2D it is given; do not skip when platform.draw is missing" };
+  let next = 1;
+  const random = (): number => {
+    next = (Math.imul(next, 1103515245) + 12345) >>> 0;
+    return next / 4294967296;
+  };
+  // Mashed inputs, so effects, projectiles, and HUD state exist when render runs.
+  let impure = "";
+  for (let f = 0; f < 3000 && impure === "" && !run.over(); f++) {
+    run.step(Array.from({ length: sim.players }, (): number => sim.random(random)));
+    if (f % 10 !== 0) continue;
+    const sum = run.checksum();
+    const before = run.inspect ? flatten(run.inspect()) : null;
+    run.render(draw);
+    if (run.checksum() !== sum) impure = `frame ${f}: checksum changed`;
+    else if (before && run.inspect) {
+      const diff = firstDifference(before, flatten(run.inspect()));
+      if (diff) impure = `frame ${f}: ${diff}`;
+    }
+  }
+  if (calls === 0) return { ...base, ok: false, detail: "render() made no draw calls with a stub Draw2D, so desync never exercises it", fix: "render with whatever Draw2D it is given; do not skip when platform.draw is missing" };
+  if (impure) return { ...base, ok: false, detail: `render() changed simulation state at ${impure}`, fix: "move that write into step(); render must only read", skill: "netplay" };
+  return { ...base, ok: true, detail: `render() drew ${calls} calls with a stub Draw2D and left state unchanged${run.inspect ? "" : " (checksum only; add inspect() for every field)"}`, fix: "" };
 }

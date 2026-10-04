@@ -18,6 +18,8 @@ It runs a reference simulation and two peers over a deterministic simulated link
 - `firstStateDifference`: `{frame, path}` of the first field that differs at a checkpoint (`--every 30`). Catches state the checksum does not cover. Needs `inspect()` in the sim.
 - `rollbacks`, `maxRollbackFrames`: how hard the link worked. With `rollbackWindow` in the sim, `warnings` says when a link needs deeper rollbacks than the game allows (real play would stall).
 
+Long runs: rendering on the stub costs whatever the game's render costs. `--renders 0` speeds desync up but turns off the render purity half of the check; use it for rollback depth or latency sweeps, and keep at least one run with renders. `dotframe doctor` also checks render purity on its own, in about a second.
+
 Run several seeds and a high latency (474 ms is what a transatlantic relay measured). A pass on one seed proves little.
 
 ## Reading a failure

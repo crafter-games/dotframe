@@ -6,7 +6,9 @@
       "steps": [{ "label": "bundle (hashed)", "argv": ["bun", "scripts/build-web.ts"] }],
       "out": "dist/web",
       "deploy": { "provider": "vercel", "project": "__NAME__", "scope": "__SCOPE__" }
-    }
+    },
+    "macos": { "native": { "platform": "macos", "entry": "main.native.ts" } },
+    "windows": { "native": { "platform": "windows", "entry": "main.native.ts" } }
   },
   "assets": { "localOnly": [] }
 }

@@ -1,11 +1,13 @@
 #!/bin/sh
 # Downloads wgpu-native prebuilts and builds SDL3 static for a target. Usage: scripts/vendor.sh <macos|windows>
+# DOTFRAME_VENDOR picks the directory (the dotframe CLI uses ~/.dotframe/vendor); default is this checkout's vendor/.
 set -e
 target=$1
 root=$(cd "$(dirname "$0")/.." && pwd)
 wgpu_version=v29.0.1.1
 sdl_version=3.4.16
-vendor="$root/vendor"
+vendor=${DOTFRAME_VENDOR:-$root/vendor}
+toolchain="$root/vendor/toolchain"
 mkdir -p "$vendor/build"
 
 case $target in
@@ -28,7 +30,7 @@ fi
 if [ ! -f "$vendor/build/sdl-$target/libSDL3.a" ]; then
   case $target in
     macos) extra="-DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0" ;;
-    windows) extra="-DCMAKE_TOOLCHAIN_FILE=$vendor/toolchain/zig-windows.cmake" ;;
+    windows) extra="-DCMAKE_TOOLCHAIN_FILE=$toolchain/zig-windows.cmake" ;;
   esac
   cmake -S "$vendor/SDL3-$sdl_version" -B "$vendor/build/sdl-$target" -DCMAKE_BUILD_TYPE=Release \
     -DSDL_SHARED=OFF -DSDL_STATIC=ON -DSDL_TEST_LIBRARY=OFF $extra

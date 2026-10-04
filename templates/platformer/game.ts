@@ -43,13 +43,9 @@ export interface Game {
 }
 
 export function createGame(_seed: number): Game {
-  const coins = [
-    { x: 220, y: 370 },
-    { x: 470, y: 290 },
-    { x: 720, y: 210 },
-    { x: 480, y: 120 },
-    { x: 880, y: 470 },
-  ].map((c) => ({ ...c, taken: false }));
+  const spots = [220, 370, 470, 290, 720, 210, 480, 120, 880, 470];
+  const coins: { x: number; y: number; taken: boolean }[] = [];
+  for (let i = 0; i < spots.length; i += 2) coins.push({ x: spots[i], y: spots[i + 1], taken: false });
   return { frame: 0, x: 60, y: 500 - SIZE, vx: 0, vy: 0, onGround: true, held: 0, coins, winner: -1 };
 }
 

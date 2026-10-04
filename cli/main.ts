@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { parseArgs } from "node:util";
 import pkg from "../package.json" with { type: "json" };
-import { build, deploy, device, relay } from "./commands/ship";
+import { build, deploy, device, relay, vendor } from "./commands/ship";
 import { doctor } from "./commands/doctor";
 import { configCmd } from "./commands/config";
 import { desync, record, sim, verify } from "./commands/play";
@@ -25,7 +25,8 @@ Build and ship
   deploy   <target> [--prod]            gated: --yes, preview with --dry-run
   relay    deploy [--region eze]        gated
   device   install <target>             gated
-  doctor   [--fix]                      toolchain, links, config, signing
+  vendor   <macos|windows>              SDL3 + wgpu-native for native builds (~/.dotframe/vendor)
+  doctor   [--fix]                      toolchain, vendor, links, config, sim render
   config   get [key] | set <key> <json>
 
 Project
@@ -38,9 +39,10 @@ Global: --json  --yes  --dry-run  --help  --version`;
 const INPUTS = `Inputs: --mash <seed> (random players) or --inputs f.jsonl (one [p0, p1] per frame, or {"frame": n, "inputs": [...]} held until the next line). --seed <n> seeds the sim, --options '<json>' overrides match options.`;
 
 const COMMAND_HELP: Record<string, string> = {
-  sim: `dotframe sim [--mash <seed> | --inputs f.jsonl] [--frames 600] [--seed 1] [--options json] [--every n] [--json]
+  sim: `dotframe sim [--mash <seed> | --inputs f.jsonl] [--frames 600] [--seed 1] [--options json] [--every n] [--through-over] [--json]
 
-Runs the game headless and prints the final state and checksum. --every n adds a checksum trace.
+Runs the game headless and prints the final state and checksum. It stops when the match is over unless
+--through-over (rematch and results flows). --every n adds a checksum trace.
 ${INPUTS}
 
   dotframe sim --mash 7 --frames 600 --json
@@ -51,7 +53,7 @@ Steps the sim to frame n in a real browser (WebGPU, through agent-browser) and s
 ${INPUTS}
 
   dotframe snap --frame 300 --mash 7 --out /tmp/f300.png`,
-  replay: `dotframe replay record <file> [--mash <seed> | --inputs f.jsonl] [--frames 1800] [--seed 1] [--options json]
+  replay: `dotframe replay record <file> [--mash <seed> | --inputs f.jsonl] [--frames 1800] [--seed 1] [--options json] [--through-over]
 dotframe replay verify <file...>
 
 record stores seed, options, inputs, and a checksum every 60 frames. verify replays them and exits 1 with the
@@ -68,7 +70,9 @@ Warns when rollbacks exceed the sim's rollbackWindow.
   dotframe desync --latency 474ms --jitter 40ms --mash 42 --json`,
   build: `dotframe build <target> [--release] [--dry-run] [--json]
 
-Runs targets.<target>.steps from dotframe.json. --release refuses assets listed in assets.localOnly.
+Runs targets.<target>.steps from dotframe.json, or for a native target ({"native": {"platform": "macos",
+"entry": "main.native.ts"}}) stages the engine and game in .dotframe/native/<target> and writes dist/<target>/<name>.
+Failures keep the full output in .dotframe/logs and return its path. --release refuses assets.localOnly.
 
   dotframe build web
   dotframe build ios --release`,
@@ -84,6 +88,10 @@ Redeploys the netplay relay (dokploy) or deploys it to a region (fly). Gated lik
   device: `dotframe device install <target> [--dry-run] [--yes]
 
 Installs targets.<target>.app on targets.<target>.device with devicectl. Gated like deploy.`,
+  vendor: `dotframe vendor <macos|windows> [--dry-run]
+
+Downloads wgpu-native and builds SDL3 for native targets into DOTFRAME_VENDOR (default ~/.dotframe/vendor), which
+survives reinstalling dotframe and is shared by every game.`,
   doctor: `dotframe doctor [--fix] [--json]
 
 Checks tools, dotframe.json, the sim (loads, renders with a stub Draw2D), placeholders, and vendor links.
@@ -136,11 +144,12 @@ const { values, positionals } = parseArgs({
     template: { type: "string" },
     port: { type: "string" },
     "no-install": { type: "boolean" },
+    "through-over": { type: "boolean" },
   },
 });
 
 const ctx: Ctx = { json: values.json === true, yes: values.yes === true, dryRun: values["dry-run"] === true };
-const v = values as Record<string, string | undefined>;
+const v = { ...(values as Record<string, string | undefined>), throughOver: values["through-over"] === true } as Record<string, string | undefined> & { throughOver: boolean };
 const [command, ...rest] = positionals;
 
 try {
@@ -156,6 +165,7 @@ try {
   else if (command === "deploy") await deploy(ctx, rest[0], values.prod === true);
   else if (command === "relay" && rest[0] === "deploy") await relay(ctx, v.region);
   else if (command === "device" && rest[0] === "install") await device(ctx, rest[1] ?? "ios");
+  else if (command === "vendor") await vendor(ctx, rest[0]);
   else if (command === "doctor") await doctor(ctx, values.fix === true);
   else if (command === "config") await configCmd(ctx, rest);
   else if (command === "skills") await skills(ctx, rest, values.full === true, values.all === true);

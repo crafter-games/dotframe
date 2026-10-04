@@ -44,6 +44,24 @@ jobs:
           cp build/windows/triangle.exe build/windows/suzanne.exe build/windows/smash-lite.exe build/windows/canvas2d.exe build/windows/audio-check.exe dist/windows/
           cp tools/check-audio.ts dist/
           cp -R assets dist/
+      - name: Build templates natively from the packed npm package
+        env:
+          DOTFRAME_VENDOR: ${{ github.workspace }}/vendor
+        run: |
+          npm pack
+          tarball="$PWD/$(ls dotframe-*.tgz)"
+          mkdir -p /tmp/templates
+          for t in fighter platformer blank; do
+            (cd /tmp/templates && bun "$GITHUB_WORKSPACE/cli/main.ts" new "$t" --template "$t" --no-install --json)
+            cd "/tmp/templates/$t"
+            sed -i '' "s#\"dotframe\": \"[^\"]*\"#\"dotframe\": \"file:$tarball\"#" package.json
+            bun install --minimum-release-age 0
+            bun add -d @scriptc/runtime-win32-x64-msvc@0.2.0 --minimum-release-age 0
+            bun node_modules/dotframe/cli/main.ts build macos --json
+            bun node_modules/dotframe/cli/main.ts build windows --json
+            test -x "dist/macos/$t" && test -f "dist/windows/$t.exe"
+            cd "$GITHUB_WORKSPACE"
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: binaries

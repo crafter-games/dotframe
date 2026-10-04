@@ -17,6 +17,12 @@ dotframe is a TypeScript game engine. One codebase runs on the web (WebGPU), in 
 
 Never claim a visual change works from the JSON alone. Snap it and look.
 
+`sim` and `replay` stop when `over()` turns true. Pass `--through-over` to keep stepping into results and rematch flows.
+
+## agent-browser
+
+`snap` drives agent-browser in its own session (`dotframe-snap`), writes to an absolute path, and checks the PNG size. When you drive agent-browser yourself, always pass `--session <name>` and absolute output paths: one daemon serves the whole machine, so a relative `screenshot out.png` lands in whatever directory the daemon started in (often another repo), and viewports can leak between sessions.
+
 ## Inputs
 
 - `--mash <seed>`: random mashing players, new input every 6 frames. Good default for smoke tests.

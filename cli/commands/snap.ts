@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { CliError, type Ctx, exec, loadConfig, num, print, which } from "../lib";
@@ -67,9 +67,10 @@ run(sim.window, (p) => {
   });
   const ab = (...a: string[]) => exec({ ...ctx, json: true }, config.root, { label: `agent-browser ${a[0]}`, argv: ["agent-browser", "--session", "dotframe-snap", ...a] });
   try {
-    await ab("set", "viewport", String(sim.window.width), String(sim.window.height));
     const opened = await ab("open", `http://localhost:${server.port}/`);
     if (opened.code !== 0) throw new CliError("BROWSER_FAILED", opened.tail, "agent-browser install");
+    // After open: agent-browser's daemon is shared, and a viewport set before open can be lost to another session.
+    await ab("set", "viewport", String(sim.window.width), String(sim.window.height));
     // Loading plus stepping can take a while for long inputs; poll for the marker.
     let result: { frame?: number; checksum?: number; state?: unknown; error?: string } | null = null;
     for (let i = 0; i < 120 && !result; i++) {
@@ -80,12 +81,32 @@ run(sim.window, (p) => {
     }
     if (!result) throw new CliError("SNAP_TIMEOUT", "the page never reported ready after 60 s", "open the page with agent-browser --headed and read the console; WebGPU may be unavailable", "core");
     if (result.error) throw new CliError("SNAP_PAGE_ERROR", result.error, "WebGPU unavailable? try AGENT_BROWSER_ARGS=--enable-unsafe-webgpu", "core");
-    const shot = await ab("screenshot", out);
+    let shot = await ab("screenshot", out);
     if (shot.code !== 0) throw new CliError("BROWSER_FAILED", shot.tail);
+    let size = pngSize(out);
+    if (!matches(size, sim.window)) {
+      await ab("set", "viewport", String(sim.window.width), String(sim.window.height));
+      shot = await ab("screenshot", out);
+      size = pngSize(out);
+    }
+    if (!matches(size, sim.window)) {
+      throw new CliError("SNAP_SIZE", `screenshot is ${size.width}x${size.height}, expected ${sim.window.width}x${sim.window.height} (or a device-pixel multiple)`, "close other agent-browser sessions and retry; check agent-browser session list", "core");
+    }
     print(ctx, { out, ...result }, (): string => `frame ${result?.frame} -> ${out} (checksum ${result?.checksum})`);
   } finally {
     await ab("close");
     server.stop(true);
     rmSync(work, { recursive: true, force: true });
   }
+}
+
+// Width and height from a PNG's IHDR chunk.
+function pngSize(path: string): { width: number; height: number } {
+  const head = readFileSync(path).subarray(16, 24);
+  return { width: head.readUInt32BE(0), height: head.readUInt32BE(4) };
+}
+
+function matches(size: { width: number; height: number }, window: { width: number; height: number }): boolean {
+  const scale = size.width / window.width;
+  return Number.isInteger(scale) && scale >= 1 && size.height === window.height * scale;
 }

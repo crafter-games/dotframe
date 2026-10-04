@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
 export class CliError extends Error {
@@ -8,6 +8,8 @@ export class CliError extends Error {
     readonly fix = "",
     readonly skill = "core",
     readonly exit = 1,
+    // Full output of a failed step, when it was too long for the message.
+    readonly log = "",
   ) {
     super(message);
   }
@@ -26,10 +28,11 @@ export function print(ctx: Ctx, data: unknown, human: () => string): void {
 
 export function fail(ctx: Ctx, error: unknown): never {
   const e = error instanceof CliError ? error : new CliError("INTERNAL", error instanceof Error ? error.message : String(error));
-  if (ctx.json) console.log(JSON.stringify({ ok: false, error: { code: e.code, message: e.message, fix: e.fix, skill: e.skill } }));
+  if (ctx.json) console.log(JSON.stringify({ ok: false, error: { code: e.code, message: e.message, fix: e.fix, skill: e.skill, ...(e.log ? { log: e.log } : {}) } }));
   else {
     console.error(`error ${e.code}: ${e.message}`);
     if (e.fix) console.error(`fix: ${e.fix}`);
+    if (e.log) console.error(`log: ${e.log}`);
     console.error(`guide: dotframe skills get ${e.skill}`);
   }
   process.exit(e.exit);
@@ -48,7 +51,9 @@ export interface Command {
 }
 
 export interface Target {
-  steps: Command[];
+  steps?: Command[];
+  // Native targets built by the CLI itself (staged engine, vendored SDL3 and wgpu-native).
+  native?: import("./native").NativeTarget;
   out?: string;
   app?: string;
   device?: string;
@@ -106,6 +111,8 @@ export interface RunResult {
   code: number;
   ms: number;
   tail: string;
+  // Everything the command printed; kept out of --json output.
+  output: string;
 }
 
 // Runs a command to completion. Output streams to stderr in human mode and is captured (tail kept) in JSON mode.
@@ -128,21 +135,29 @@ export async function exec(ctx: Ctx, root: string, command: Command): Promise<Ru
   };
   await Promise.all([pump(proc.stdout), pump(proc.stderr)]);
   const code = await proc.exited;
-  const tail = chunks.join("").split("\n").slice(-20).join("\n").trim();
-  return { label: command.label, code, ms: Math.round(performance.now() - t0), tail };
+  const output = chunks.join("");
+  const tail = output.split("\n").slice(-20).join("\n").trim();
+  return { label: command.label, code, ms: Math.round(performance.now() - t0), tail, output };
 }
 
 export async function runSteps(ctx: Ctx, root: string, steps: Command[], skill: string): Promise<RunResult[]> {
   const results: RunResult[] = [];
   for (const step of steps) {
     if (ctx.dryRun) {
-      results.push({ label: step.label, code: 0, ms: 0, tail: `would run: ${step.argv.join(" ")} (cwd ${step.cwd ?? "."})` });
+      results.push({ label: step.label, code: 0, ms: 0, tail: `would run: ${step.argv.join(" ")} (cwd ${step.cwd ?? "."})`, output: "" });
       continue;
     }
     if (!ctx.json) console.error(`> ${step.label}`);
     const r = await exec(ctx, root, step);
     results.push(r);
-    if (r.code !== 0) throw new CliError("STEP_FAILED", `step "${step.label}" exited ${r.code}\n${r.tail}`, "read the output above; dotframe doctor checks the toolchain", skill);
+    if (r.code !== 0) {
+      // The message keeps the tail; the whole output goes to a log an agent can read.
+      const log = join(root, ".dotframe", "logs", `${step.label.replace(/[^a-z0-9]+/gi, "-")}.log`);
+      mkdirSync(dirname(log), { recursive: true });
+      writeFileSync(log, r.output);
+      const count = r.output.match(/(\d+) errors?/)?.[1];
+      throw new CliError("STEP_FAILED", `step "${step.label}" exited ${r.code}${count ? ` with ${count} errors` : ""}; full output in ${log}\n${r.tail}`, `read ${log}; dotframe doctor checks the toolchain`, skill, 1, log);
+    }
   }
   return results;
 }

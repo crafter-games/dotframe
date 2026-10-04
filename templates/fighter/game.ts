@@ -88,7 +88,15 @@ export function step(game: Game, inputs: number[]): void {
     if (f.y >= GROUND) f.vy = 0;
     if (f.x < -100 || f.x > WINDOW.width + 100) {
       f.stocks -= 1;
-      Object.assign(f, { ...fighter(WINDOW.width / 2, f.facing), stocks: f.stocks });
+      // Field by field: scriptc compiles records, not Object.assign.
+      f.x = WINDOW.width / 2;
+      f.y = GROUND;
+      f.vx = 0;
+      f.vy = 0;
+      f.damage = 0;
+      f.cooldown = 0;
+      f.stun = 0;
+      f.held = 0;
       if (f.stocks === 0) game.winner = 1 - i;
     }
   });

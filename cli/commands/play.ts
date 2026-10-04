@@ -12,6 +12,8 @@ export interface PlayArgs {
   seed?: string;
   options?: string;
   every?: string;
+  // Keep stepping after over(), for rematch and results flows.
+  throughOver?: boolean;
 }
 
 interface Played {
@@ -23,11 +25,11 @@ interface Played {
   ms: number;
 }
 
-function play(run: SimRun, source: InputSource, frames: number, every: number): Played {
+function play(run: SimRun, source: InputSource, frames: number, every: number, throughOver = false): Played {
   const t0 = performance.now();
   const trace: { frame: number; checksum: number }[] = [];
   let f = 0;
-  for (; f < frames && !run.over(); f++) {
+  for (; f < frames && (throughOver || !run.over()); f++) {
     run.step(source.at(f));
     if (every > 0 && (f + 1) % every === 0) trace.push({ frame: f + 1, checksum: run.checksum() });
   }
@@ -47,7 +49,7 @@ async function setup(args: PlayArgs): Promise<{ sim: Sim; run: SimRun; source: I
 
 export async function sim(ctx: Ctx, args: PlayArgs): Promise<void> {
   const { run, source, seed } = await setup(args);
-  const r = play(run, source, num("frames", args.frames, 600, 1), num("every", args.every, 0));
+  const r = play(run, source, num("frames", args.frames, 600, 1), num("every", args.every, 0), args.throughOver === true);
   print(ctx, { seed, inputs: source.describe, ...r }, (): string =>
     [`${r.frames} frames in ${r.ms} ms (${source.describe}, seed ${seed})${r.over ? ", match over" : ""}`, `checksum ${r.checksum}`, JSON.stringify(r.state, null, 2)].join("\n"),
   );
@@ -60,6 +62,7 @@ interface Replay {
   // Encoded inputs as change points.
   inputs: { frame: number; inputs: number[] }[];
   frames: number;
+  throughOver?: boolean;
   checksums: { frame: number; checksum: number }[];
   final: number;
 }
@@ -68,14 +71,14 @@ export async function record(ctx: Ctx, file: string, args: PlayArgs): Promise<vo
   if (!file) throw new CliError("MISSING_ARG", "replay record needs an output file", "dotframe replay record replays/smoke.json --mash 7 --frames 1800");
   const { run, source, seed, options } = await setup(args);
   const frames = num("frames", args.frames, 1800, 1);
-  const r = play(run, source, frames, 60);
+  const r = play(run, source, frames, 60, args.throughOver === true);
   const inputs: Replay["inputs"] = [];
   for (let f = 0; f < r.frames; f++) {
     const cur = source.at(f);
     const last = inputs[inputs.length - 1];
     if (!last || last.inputs.some((v: number, i: number): boolean => v !== cur[i])) inputs.push({ frame: f, inputs: cur.slice() });
   }
-  const replay: Replay = { version: 1, seed, options, inputs, frames: r.frames, checksums: r.trace, final: r.checksum };
+  const replay: Replay = { version: 1, seed, options, inputs, frames: r.frames, ...(args.throughOver ? { throughOver: true } : {}), checksums: r.trace, final: r.checksum };
   writeFileSync(resolve(process.cwd(), file), `${JSON.stringify(replay)}\n`);
   print(ctx, { file, frames: r.frames, final: r.checksum, checkpoints: r.trace.length }, (): string => `recorded ${r.frames} frames to ${file} (final checksum ${r.checksum})`);
 }
@@ -102,7 +105,7 @@ export async function verify(ctx: Ctx, files: string[]): Promise<void> {
         return cur;
       },
     };
-    const r = play(run, source, replay.frames, 60);
+    const r = play(run, source, replay.frames, 60, replay.throughOver === true);
     const mismatch = replay.checksums.find((c, i): boolean => r.trace[i]?.checksum !== c.checksum);
     results.push({ file, ok: !mismatch && r.checksum === replay.final, firstMismatch: mismatch ? mismatch.frame : r.checksum === replay.final ? null : r.frames, expected: replay.final, got: r.checksum });
   }

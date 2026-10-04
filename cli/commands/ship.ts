@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { buildNative, ENGINE, type NativePlatform, vendorDir, vendorStatus } from "../native";
 import { CliError, type Command, type Ctx, exec, gate, loadConfig, print, runSteps, target, which } from "../lib";
 
 const skillFor = (t: string): string => (t === "web" ? "export-web" : t);
@@ -24,7 +25,14 @@ export async function build(ctx: Ctx, name: string | undefined, release: boolean
     const blocked = licenseBlockers(config.root, config.assets?.localOnly ?? []);
     if (blocked.length > 0) throw new CliError("ASSETS_LOCAL_ONLY", `release build would ship assets marked local-only: ${blocked.join(", ")}`, "replace them with licensed assets, then remove them from assets.localOnly", "assets");
   }
-  const steps = await runSteps(ctx, config.root, t.steps, skillFor(name));
+  if (t.native) {
+    const r = await buildNative(ctx, config.root, config.name, name, t.native);
+    if (ctx.dryRun) return;
+    print(ctx, { target: name, steps: r.steps.map(({ output: _o, ...s }) => s), artifact: r.binary, log: r.log }, (): string => `artifact: ${r.binary}\nlog: ${r.log}`);
+    return;
+  }
+  if (!t.steps) throw new CliError("BAD_CONFIG", `target "${name}" needs "steps" or "native"`, "see dotframe skills get macos", skillFor(name));
+  const steps = (await runSteps(ctx, config.root, t.steps, skillFor(name))).map(({ output: _o, ...s }) => s);
   const artifact = t.out ?? t.app;
   print(ctx, { target: name, dryRun: ctx.dryRun, steps, artifact: artifact ? resolve(config.root, artifact) : null }, (): string =>
     [...steps.map((s): string => (ctx.dryRun ? s.tail : `ok ${s.label} (${s.ms} ms)`)), artifact ? `artifact: ${artifact}` : ""].filter(Boolean).join("\n"),
@@ -95,4 +103,28 @@ export async function device(ctx: Ctx, name: string): Promise<void> {
   const r = await exec(ctx, config.root, { label: "devicectl install", argv });
   if (r.code !== 0) throw new CliError("INSTALL_FAILED", r.tail, "unlock the phone, trust this Mac, enable Developer Mode", "ios");
   print(ctx, { device: t.device, app, ms: r.ms }, (): string => `installed ${app} on ${t.device}`);
+}
+
+// Downloads wgpu-native and builds SDL3 into the vendor dir (default ~/.dotframe/vendor). Local only, slow once.
+export async function vendor(ctx: Ctx, platform: string | undefined): Promise<void> {
+  if (platform !== "macos" && platform !== "windows") throw new CliError("MISSING_ARG", "vendor needs macos or windows", "dotframe vendor macos", "macos");
+  const p = platform as NativePlatform;
+  const dir = vendorDir(p);
+  const before = vendorStatus(p);
+  if (before.missing.length === 0) {
+    print(ctx, { platform: p, dir, ready: true }, (): string => `vendor for ${p} is ready in ${dir}`);
+    return;
+  }
+  const command = { label: `vendor ${p}`, argv: ["sh", join(ENGINE, "scripts", "vendor.sh"), p], env: { DOTFRAME_VENDOR: dir } };
+  if (ctx.dryRun) {
+    print(ctx, { dryRun: true, platform: p, dir, missing: before.missing }, (): string => `would download and build ${before.missing.join(", ")} into ${dir}`);
+    return;
+  }
+  for (const tool of ["curl", "cmake", "unzip", ...(p === "windows" ? ["zig"] : [])]) {
+    if (!which(tool)) throw new CliError("TOOL_MISSING", `${tool} not found`, `brew install ${tool}`, "macos");
+  }
+  await runSteps(ctx, ENGINE, [command], "macos");
+  const after = vendorStatus(p);
+  if (after.missing.length > 0) throw new CliError("VENDOR_MISSING", `vendor.sh finished but ${after.missing.join(", ")} is still missing`, "", "macos");
+  print(ctx, { platform: p, dir, ready: true }, (): string => `vendor for ${p} ready in ${dir}`);
 }

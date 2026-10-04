@@ -54,7 +54,7 @@ export async function dev(ctx: Ctx, port: number): Promise<void> {
   const t = target(config, "web");
   if (!t.out) throw new CliError("NO_OUT", "the web target needs an out dir", "", "export-web");
   const out = resolve(config.root, t.out);
-  await runSteps(ctx, config.root, t.steps, "export-web");
+  await runSteps(ctx, config.root, t.steps ?? [], "export-web");
   const server = Bun.serve({
     port,
     fetch: (req: Request): Response => {
@@ -72,7 +72,7 @@ export async function dev(ctx: Ctx, port: number): Promise<void> {
     if (!file || /(^|\/)(node_modules|dist|\.dotframe|\.git)\//.test(`${file}/`) || file.startsWith(t.out ?? "dist")) return;
     if (pending) clearTimeout(pending);
     pending = setTimeout((): void => {
-      runSteps(ctx, config.root, t.steps, "export-web").then(
+      runSteps(ctx, config.root, t.steps ?? [], "export-web").then(
         (): void => console.error(`rebuilt (${file})`),
         (e: unknown): void => console.error(e instanceof Error ? e.message : e),
       );

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.4
+
+Fixes from rounds 2 and 3 of the Craft Ones dogfood.
+
+- Native builds work from the npm package. `build` on a target with `"native": {"platform", "entry"}` stages the engine and the game in `.dotframe/native/<target>`, rewrites `dotframe/...` imports to relative paths, and writes `dist/<target>/<name>`. Templates ship `main.native.ts`, `src/setup.ts`, and macos and windows targets, and compile on both.
+- `dotframe vendor <macos|windows>` puts SDL3 and wgpu-native in `~/.dotframe/vendor` (or `DOTFRAME_VENDOR`), outside `node_modules`. `doctor` checks it per native target.
+- Failed build steps keep the full output in `.dotframe/logs/` and return its path as `error.log`, with the compiler's error count in the message.
+- `doctor` `sim:render` fails when render changes simulation state (checksum or any `inspect()` field), not only when it draws nothing.
+- `sim` and `replay` take `--through-over` to keep stepping after the match ends.
+- `snap` sets the viewport after opening the page and fails with `SNAP_SIZE` when the screenshot does not match the window.
+- Skills: the macos guide covers native targets, vendor, logs, and scriptc-compatible code; core covers `--through-over` and agent-browser sessions; netplay covers `--renders 0`.
+
 ## 0.1.3
 
 Fixes from the Craft Ones port dogfood.
