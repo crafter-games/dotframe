@@ -1,6 +1,6 @@
 ---
 name: core
-description: Core dotframe usage. Read before running any dotframe command: the edit, sim, snap, replay loop, the Sim contract, the trust ladder, and how to read errors.
+description: Core dotframe usage. Read before running any dotframe command. Covers the edit, sim, snap, replay loop, the Sim contract, the trust ladder, and how to read errors.
 ---
 # dotframe core
 

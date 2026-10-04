@@ -17,6 +17,11 @@ jobs:
       - run: bun test
       - name: Typecheck engine and CLI
         run: bun x tsc -p tsconfig.json && bun x tsc -p cli/tsconfig.json
+      - name: Skill frontmatter is valid YAML
+        run: |
+          for f in skills/*/SKILL.md skill-data/*/SKILL.md; do
+            bun -e "const m = Bun.YAML.parse((await Bun.file('$f').text()).split('---')[1]); if (!m.name || !m.description) throw new Error('$f')"
+          done
       - name: Smoke the CLI on every template
         run: |
           for t in fighter platformer blank; do

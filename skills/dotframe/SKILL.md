@@ -1,6 +1,6 @@
 ---
 name: dotframe
-description: Agent-first CLI for the dotframe game engine. Use when building, testing, or exporting a dotframe game: creating a game from a template, simulating or replaying frames headless, rendering a frame to check what a player sees, debugging rollback netplay desyncs, or building and deploying for web, Discord Activities, iOS, and native macOS or Windows. Triggers include "make a game", "dotframe", "simulate the match", "snap a frame", "replay", "desync", "netplay", "build for iOS", "deploy the game", or any repo with a dotframe.json.
+description: Agent-first CLI for the dotframe game engine. Use when building, testing, or exporting a dotframe game, such as creating a game from a template, simulating or replaying frames headless, rendering a frame to check what a player sees, debugging rollback netplay desyncs, or building and deploying for web, Discord Activities, iOS, and native macOS or Windows. Triggers include "make a game", "dotframe", "simulate the match", "snap a frame", "replay", "desync", "netplay", "build for iOS", "deploy the game", or any repo with a dotframe.json.
 allowed-tools: Bash(dotframe:*), Bash(npx dotframe:*), Bash(bunx dotframe:*)
 hidden: true
 ---
