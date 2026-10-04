@@ -1,0 +1,148 @@
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+
+export class CliError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+    readonly fix = "",
+    readonly skill = "core",
+    readonly exit = 1,
+  ) {
+    super(message);
+  }
+}
+
+export interface Ctx {
+  json: boolean;
+  yes: boolean;
+  dryRun: boolean;
+}
+
+export function print(ctx: Ctx, data: unknown, human: () => string): void {
+  if (ctx.json) console.log(JSON.stringify({ ok: true, data }));
+  else console.log(human());
+}
+
+export function fail(ctx: Ctx, error: unknown): never {
+  const e = error instanceof CliError ? error : new CliError("INTERNAL", error instanceof Error ? error.message : String(error));
+  if (ctx.json) console.log(JSON.stringify({ ok: false, error: { code: e.code, message: e.message, fix: e.fix, skill: e.skill } }));
+  else {
+    console.error(`error ${e.code}: ${e.message}`);
+    if (e.fix) console.error(`fix: ${e.fix}`);
+    console.error(`guide: dotframe skills get ${e.skill}`);
+  }
+  process.exit(e.exit);
+}
+
+// External writes (deploys, installs, publishes) need --yes. --dry-run always wins.
+export function gate(ctx: Ctx, action: string, skill: string): void {
+  if (!ctx.yes) throw new CliError("APPROVAL_REQUIRED", `${action} changes something outside this machine`, "review with --dry-run, then rerun with --yes", skill, 2);
+}
+
+export interface Command {
+  label: string;
+  argv: string[];
+  cwd?: string;
+  env?: Record<string, string>;
+}
+
+export interface Target {
+  steps: Command[];
+  out?: string;
+  app?: string;
+  device?: string;
+  deploy?: { provider: "vercel"; project: string; scope: string };
+}
+
+export interface Config {
+  root: string;
+  name: string;
+  sim?: string;
+  targets: Record<string, Target>;
+  relay?: { provider: "dokploy"; compose: string } | { provider: "fly"; app: string; config: string; region?: string };
+  links?: { path: string; target: string }[];
+  assets?: { localOnly?: string[] };
+}
+
+export const CONFIG_FILE = "dotframe.json";
+
+export function findRoot(from = process.cwd()): string | null {
+  let dir = resolve(from);
+  for (;;) {
+    if (existsSync(join(dir, CONFIG_FILE))) return dir;
+    const up = dirname(dir);
+    if (up === dir) return null;
+    dir = up;
+  }
+}
+
+export function home(path: string): string {
+  return path.startsWith("~/") ? join(process.env.HOME ?? "", path.slice(2)) : path;
+}
+
+export function loadConfig(): Config {
+  const root = findRoot();
+  if (!root) throw new CliError("NO_CONFIG", `no ${CONFIG_FILE} in this directory or any parent`, "cd into a game repo, or run dotframe new <name>");
+  try {
+    return { ...(JSON.parse(readFileSync(join(root, CONFIG_FILE), "utf8")) as Omit<Config, "root">), root };
+  } catch (error) {
+    throw new CliError("BAD_CONFIG", `${CONFIG_FILE}: ${error instanceof Error ? error.message : "unreadable"}`, "fix the JSON syntax");
+  }
+}
+
+export function target(config: Config, name: string): Target {
+  const t = config.targets[name];
+  if (!t) throw new CliError("UNKNOWN_TARGET", `target "${name}" is not in ${CONFIG_FILE}`, `known targets: ${Object.keys(config.targets).join(", ") || "none"}`, "core");
+  return t;
+}
+
+export function which(bin: string): string | null {
+  return Bun.which(bin);
+}
+
+export interface RunResult {
+  label: string;
+  code: number;
+  ms: number;
+  tail: string;
+}
+
+// Runs a command to completion. Output streams to stderr in human mode and is captured (tail kept) in JSON mode.
+export async function exec(ctx: Ctx, root: string, command: Command): Promise<RunResult> {
+  const t0 = performance.now();
+  const proc = Bun.spawn(command.argv, {
+    cwd: command.cwd ? resolve(root, command.cwd) : root,
+    env: { ...process.env, ...command.env },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const chunks: string[] = [];
+  const pump = async (stream: ReadableStream<Uint8Array>): Promise<void> => {
+    const decoder = new TextDecoder();
+    for await (const chunk of stream) {
+      const text = decoder.decode(chunk);
+      chunks.push(text);
+      if (!ctx.json) process.stderr.write(text);
+    }
+  };
+  await Promise.all([pump(proc.stdout), pump(proc.stderr)]);
+  const code = await proc.exited;
+  const tail = chunks.join("").split("\n").slice(-20).join("\n").trim();
+  return { label: command.label, code, ms: Math.round(performance.now() - t0), tail };
+}
+
+export async function runSteps(ctx: Ctx, root: string, steps: Command[], skill: string): Promise<RunResult[]> {
+  const results: RunResult[] = [];
+  for (const step of steps) {
+    if (ctx.dryRun) {
+      results.push({ label: step.label, code: 0, ms: 0, tail: `would run: ${step.argv.join(" ")} (cwd ${step.cwd ?? "."})` });
+      continue;
+    }
+    if (!ctx.json) console.error(`> ${step.label}`);
+    const r = await exec(ctx, root, step);
+    results.push(r);
+    if (r.code !== 0) throw new CliError("STEP_FAILED", `step "${step.label}" exited ${r.code}\n${r.tail}`, "read the output above; dotframe doctor checks the toolchain", skill);
+  }
+  return results;
+}

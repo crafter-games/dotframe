@@ -4,6 +4,27 @@ TS-first game engine. One TypeScript codebase runs on the web (WebGPU) and compi
 
 Status: S5 in progress (porting Crafter Smash). `examples/canvas2d` exercises `src/draw2d.ts`, an immediate-mode 2D layer modeled on Canvas2D (transforms, alpha, concave paths, arcs, strokes, PNG sprites) so Canvas2D games port mechanically. Before that, S4: `examples/smash-lite` is a two-player platform fighter: keyboard and gamepad input, fixed-step AABB physics, hitstun, knockback that scales with damage, and KOs. `DF_DEMO=1` (native) or `?demo` (web) lets scripted players fight, which is how CI captures it. Earlier slices: `examples/suzanne` loads a glTF mesh, spawns three entities in a minimal ECS and renders them lit with depth and a perspective camera. The same game code renders in the browser (WebGPU) and in native macOS and Windows binaries (SDL3 + wgpu-native through a flat C shim). CI runs both binaries and captures them with [cuse](https://github.com/crafter-agents/cuse).
 
+## CLI
+
+`dotframe` is an agent-first CLI over the engine. The simulation is deterministic, so an agent can play a game without a screen, render a frame with the real renderer, and catch netplay desyncs before a real match.
+
+```sh
+bun link                                    # or: bun add -g github:crafter-games/dotframe
+dotframe new my-game --template fighter     # fighter, platformer, blank
+dotframe sim --mash 7 --frames 600 --json   # headless run: state + checksum
+dotframe snap --frame 300 --mash 7          # one frame through WebGPU (agent-browser)
+dotframe replay record replays/a.json --mash 7 && dotframe replay verify replays/*.json
+dotframe desync --latency 120ms --jitter 30ms
+dotframe build web|ios|macos|discord
+dotframe deploy web --prod --dry-run        # external actions need --yes
+dotframe doctor --fix
+dotframe skills list                        # guides bundled with this version
+```
+
+A game opts in with a `dotframe.json` (targets, deploy, relay, vendor links, local-only assets) and a `sim` module that default-exports `defineSim` from `src/sim.ts`. Agents start with `dotframe skills get core`. Every command takes `--json`; errors carry a `code`, a `fix`, and the `skill` to read.
+
+- `cli/`: the CLI (Bun). `skills/`: the guides served by `dotframe skills`. `templates/`: the `dotframe new` templates.
+
 ## Layout
 
 - `native/df_native.c`: flat C ABI over SDL3 and wgpu-native. scriptc FFI accepts scalars and byte spans only, so the shim owns every WebGPU struct.

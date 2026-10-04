@@ -1,13 +1,27 @@
 {
   "name": "dotframe",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
-  "description": "TS-first game engine: one codebase for web and native macOS/Windows binaries via scriptc",
+  "description": "TS-first game engine and agent-first CLI: one codebase for web, Discord, iOS and native binaries",
   "license": "MIT",
   "type": "module",
   "devDependencies": {
     "@scriptc/runtime-win32-x64-msvc": "0.2.0",
+    "@types/bun": "^1.4.2",
     "@webgpu/types": "^0.1.74",
     "typescript": "^7.0.2"
-  }
+  },
+  "bin": {
+    "dotframe": "cli/main.ts"
+  },
+  "files": [
+    "cli",
+    "src",
+    "skills",
+    "templates",
+    "assets",
+    "tools",
+    "native",
+    "scripts"
+  ]
 }

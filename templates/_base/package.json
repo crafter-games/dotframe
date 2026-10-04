@@ -1,0 +1,12 @@
+{
+  "name": "__NAME__",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "dotframe dev",
+    "test": "dotframe replay verify replays/*.json"
+  },
+  "dependencies": {
+    "dotframe": "github:crafter-games/dotframe"
+  }
+}
