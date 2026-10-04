@@ -28,7 +28,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/crafter-games/dotframe"
+    "url": "git+https://github.com/crafter-games/dotframe.git"
   },
   "homepage": "https://github.com/crafter-games/dotframe#readme",
   "keywords": [
