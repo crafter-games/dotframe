@@ -11,7 +11,7 @@ Run \`dotframe skills get core\` before any dotframe command. It matches the ins
 List the specialized guides with \`dotframe skills list\`.
 `;
 
-export async function create(ctx: Ctx, name: string | undefined, template: string): Promise<void> {
+export async function create(ctx: Ctx, name: string | undefined, template: string, install = true): Promise<void> {
   if (!name || !/^[a-z0-9][a-z0-9-]*$/.test(name)) throw new CliError("BAD_NAME", "new needs a lowercase name (letters, digits, dashes)", "dotframe new my-game --template fighter", "game-design");
   const templates = readdirSync(TEMPLATES).filter((t: string): boolean => !t.startsWith("_"));
   if (!templates.includes(template)) throw new CliError("UNKNOWN_TEMPLATE", `no template "${template}"`, `available: ${templates.join(", ")}`, "game-design");
@@ -34,7 +34,7 @@ export async function create(ctx: Ctx, name: string | undefined, template: strin
   mkdirSync(join(dir, "replays"), { recursive: true });
   const steps = [
     { label: "git init", argv: ["git", "init", "-q"] },
-    { label: "install", argv: ["bun", "install"] },
+    ...(install ? [{ label: "install", argv: ["bun", "install"] }] : []),
   ];
   for (const step of steps) {
     const r = await exec(ctx, dir, step);

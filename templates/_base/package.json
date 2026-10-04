@@ -7,6 +7,6 @@
     "test": "dotframe replay verify replays/*.json"
   },
   "dependencies": {
-    "dotframe": "github:crafter-games/dotframe"
+    "dotframe": "^0.1.0"
   }
 }

@@ -29,7 +29,7 @@ Build and ship
   config   get [key] | set <key> <json>
 
 Project
-  new      <name> [--template blank|fighter]
+  new      <name> [--template fighter|platformer|blank] [--no-install]
   dev      [--port 5173]                build web, serve it, rebuild on change
   skills   list | get <name...> [--full] | get --all | path [name]
 
@@ -64,6 +64,7 @@ const { values, positionals } = parseArgs({
     region: { type: "string" },
     template: { type: "string" },
     port: { type: "string" },
+    "no-install": { type: "boolean" },
   },
 });
 
@@ -86,7 +87,7 @@ try {
   else if (command === "doctor") await doctor(ctx, values.fix === true);
   else if (command === "config") await configCmd(ctx, rest);
   else if (command === "skills") await skills(ctx, rest, values.full === true, values.all === true);
-  else if (command === "new") await create(ctx, rest[0], v.template ?? "blank");
+  else if (command === "new") await create(ctx, rest[0], v.template ?? "blank", values["no-install"] !== true);
   else if (command === "dev") await dev(ctx, Number(v.port ?? "5173"));
   else throw new CliError("UNKNOWN_COMMAND", `unknown command: ${positionals.join(" ")}`, "dotframe --help");
 } catch (error) {

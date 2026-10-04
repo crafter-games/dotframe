@@ -1,0 +1,29 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - run: bun test
+      - name: Typecheck engine and CLI
+        run: bun x tsc -p tsconfig.json && bun x tsc -p cli/tsconfig.json
+      - name: Smoke the CLI on every template
+        run: |
+          for t in fighter platformer blank; do
+            bun cli/main.ts new "smoke-$t" --template "$t" --no-install --json > /dev/null
+            mkdir -p "smoke-$t/node_modules"
+            ln -s "$PWD" "smoke-$t/node_modules/dotframe"
+            (cd "smoke-$t" && bun ../cli/main.ts sim --mash 3 --frames 1200 --json && bun ../cli/main.ts replay record replays/a.json --mash 3 --json && bun ../cli/main.ts replay verify replays/a.json --json)
+          done
+          (cd smoke-fighter && bun ../cli/main.ts desync --latency 150ms --jitter 30ms --json)
+          bun cli/main.ts skills list --json

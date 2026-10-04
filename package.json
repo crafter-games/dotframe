@@ -1,7 +1,6 @@
 {
   "name": "dotframe",
   "version": "0.1.0",
-  "private": true,
   "description": "TS-first game engine and agent-first CLI: one codebase for web, Discord, iOS and native binaries",
   "license": "MIT",
   "type": "module",
@@ -20,8 +19,29 @@
     "skills",
     "templates",
     "assets",
-    "tools",
+    "tools/*.ts",
     "native",
-    "scripts"
-  ]
+    "scripts",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/crafter-games/dotframe"
+  },
+  "homepage": "https://github.com/crafter-games/dotframe#readme",
+  "keywords": [
+    "game-engine",
+    "webgpu",
+    "typescript",
+    "scriptc",
+    "rollback",
+    "netplay",
+    "agent",
+    "cli"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
 }
