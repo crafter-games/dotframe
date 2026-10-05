@@ -29,6 +29,7 @@ dotframe config set targets.web.deploy.compose '"<compose id>"'   # vps compose 
 dotframe deploy web --dry-run && dotframe deploy web --yes
 ```
 
+- Images are pinned: bun from `packageManager` (game or repo root, else the local bun) and the relay's dotframe from the version installed in the game. Rerun `deploy init --yes` after bumping either.
 - The web image installs the tools in `requires` (dotframe.json, for example `["ffmpeg"]`) and builds with dotframe; the relay image runs `dotframe relay serve`. The build context is the repo root, so monorepo ports see workspace code.
 - In Dokploy, route the domain's `/` to service `web` (port 80) and `/relay` to service `relay` (port 8787). For Discord, map `/` and `/relay` to that host.
 - Dokploy builds the pushed branch, not your working tree: deploy warns about unpushed or uncommitted work. On failure it returns the build log (through `vps compose logs`).

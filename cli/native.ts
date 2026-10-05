@@ -46,7 +46,7 @@ export function sdlLibrary(platform: NativePlatform): string {
 }
 
 export function vendorFix(platform: NativePlatform): string {
-  return `dotframe vendor ${platform}`;
+  return `dotframe vendor ${platform} (builds into ~/.dotframe/vendor), or point DOTFRAME_VENDOR at an existing vendor dir such as a dotframe checkout's vendor/`;
 }
 
 const SPECIFIER = /(?:from\s+|import\s*\(\s*|import\s+)(["'])([^"']+)\1/g;
