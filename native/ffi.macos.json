@@ -135,6 +135,14 @@
       "returns": "i32"
     },
     {
+      "name": "dfTextureDestroy",
+      "symbol": "df_texture_destroy",
+      "params": [
+        "i32"
+      ],
+      "returns": "void"
+    },
+    {
       "name": "dfTextureSize",
       "symbol": "df_texture_size",
       "params": [

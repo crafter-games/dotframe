@@ -14,6 +14,7 @@ export declare function dfPipeline(wgsl: string, stride: number, attributes: Uin
 export declare function dfBind(pipeline: number, buffer: number, texture: number): number;
 export declare function dfTexture(width: number, height: number, rgba: Uint8Array, smooth: boolean): number;
 export declare function dfImage(png: Uint8Array, smooth: boolean): number;
+export declare function dfTextureDestroy(texture: number): void;
 export declare function dfTextureSize(texture: number, axis: number): number;
 export declare function dfPoll(): boolean;
 export declare function dfTouchCount(): number;

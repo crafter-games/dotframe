@@ -2,6 +2,7 @@
 #include <SDL3/SDL.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <webgpu/webgpu.h>
 #include <webgpu/wgpu.h>
@@ -17,8 +18,6 @@
 
 #define DF_MAX_PIPELINES 64
 #define DF_MAX_BUFFERS 1024
-#define DF_MAX_BIND_GROUPS 1024
-#define DF_MAX_TEXTURES 256
 
 enum { DF_USAGE_VERTEX = 1, DF_USAGE_INDEX = 2, DF_USAGE_UNIFORM = 4 };
 enum { DF_PIPELINE_DEPTH = 1, DF_PIPELINE_BLEND = 4 };
@@ -35,13 +34,29 @@ static WGPURenderPipeline g_pipelines[DF_MAX_PIPELINES];
 static int32_t g_pipeline_count;
 static WGPUBuffer g_buffers[DF_MAX_BUFFERS];
 static int32_t g_buffer_count;
-static WGPUBindGroup g_bind_groups[DF_MAX_BIND_GROUPS];
+// Bind groups and textures grow as needed; ids are never reused, so a destroyed id never aliases a new resource.
+static WGPUBindGroup *g_bind_groups;
+// The texture a bind group samples, or -1, so destroying a texture also releases the groups that hold it.
+static int32_t *g_bind_group_textures;
 static int32_t g_bind_group_count;
-static WGPUTexture g_textures[DF_MAX_TEXTURES];
-static WGPUTextureView g_texture_views[DF_MAX_TEXTURES];
-static int32_t g_texture_sizes[DF_MAX_TEXTURES][2];
-static uint8_t g_texture_smooth[DF_MAX_TEXTURES];
+static int32_t g_bind_group_capacity;
+static WGPUTexture *g_textures;
+static WGPUTextureView *g_texture_views;
+static int32_t (*g_texture_sizes)[2];
+static uint8_t *g_texture_smooth;
 static int32_t g_texture_count;
+static int32_t g_texture_capacity;
+
+// Grows a parallel array to hold at least `need` elements; returns 0 when memory runs out.
+static int grow(void **array, int32_t *capacity, int32_t need, size_t size) {
+  if (need <= *capacity) return 1;
+  int32_t next = *capacity > 0 ? *capacity : 64;
+  while (next < need) next *= 2;
+  void *grown = realloc(*array, (size_t)next * size);
+  if (!grown) return 0;
+  *array = grown;
+  return 1;
+}
 static WGPUSampler g_sampler;
 static WGPUSampler g_sampler_linear;
 static WGPUTexture g_depth_texture;
@@ -292,7 +307,17 @@ void df_buffer_write(int32_t buffer, const uint8_t *data, size_t len) {
 
 // smooth selects linear filtering (fonts, photos) instead of nearest (pixel art).
 int32_t df_texture(int32_t width, int32_t height, const uint8_t *rgba, size_t len, uint8_t smooth) {
-  if (g_texture_count >= DF_MAX_TEXTURES || width <= 0 || height <= 0) return -1;
+  if (width <= 0 || height <= 0) return -1;
+  int32_t capacity = g_texture_capacity;
+  int32_t need = g_texture_count + 1;
+  if (!grow((void **)&g_textures, &capacity, need, sizeof *g_textures)) return -4;
+  capacity = g_texture_capacity;
+  if (!grow((void **)&g_texture_views, &capacity, need, sizeof *g_texture_views)) return -4;
+  capacity = g_texture_capacity;
+  if (!grow((void **)&g_texture_sizes, &capacity, need, sizeof *g_texture_sizes)) return -4;
+  capacity = g_texture_capacity;
+  if (!grow((void **)&g_texture_smooth, &capacity, need, sizeof *g_texture_smooth)) return -4;
+  g_texture_capacity = capacity;
   if (len < (size_t)width * (size_t)height * 4) return -2;
   WGPUTextureDescriptor desc = WGPU_TEXTURE_DESCRIPTOR_INIT;
   desc.usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst;
@@ -322,6 +347,21 @@ int32_t df_image(const uint8_t *png, size_t len, uint8_t smooth) {
   int32_t id = df_texture(width, height, pixels, (size_t)width * (size_t)height * 4, smooth);
   stbi_image_free(pixels);
   return id;
+}
+
+// Releases a texture and every bind group that samples it. The id stays retired.
+void df_texture_destroy(int32_t texture) {
+  if (texture < 0 || texture >= g_texture_count || !g_textures[texture]) return;
+  for (int32_t i = 0; i < g_bind_group_count; i++) {
+    if (g_bind_group_textures[i] == texture && g_bind_groups[i]) {
+      wgpuBindGroupRelease(g_bind_groups[i]);
+      g_bind_groups[i] = NULL;
+    }
+  }
+  wgpuTextureViewRelease(g_texture_views[texture]);
+  wgpuTextureRelease(g_textures[texture]);
+  g_texture_views[texture] = NULL;
+  g_textures[texture] = NULL;
 }
 
 // axis 0 width, 1 height.
@@ -397,7 +437,13 @@ int32_t df_pipeline(const uint8_t *wgsl, size_t wgsl_len, uint32_t stride, const
 // Pass -1 for a resource the shader does not declare.
 int32_t df_bind(int32_t pipeline, int32_t buffer, int32_t texture) {
   if (pipeline < 0 || pipeline >= g_pipeline_count) return -1;
-  if (g_bind_group_count >= DF_MAX_BIND_GROUPS) return -2;
+  int32_t capacity = g_bind_group_capacity;
+  if (!grow((void **)&g_bind_groups, &capacity, g_bind_group_count + 1, sizeof *g_bind_groups)) return -2;
+  capacity = g_bind_group_capacity;
+  if (!grow((void **)&g_bind_group_textures, &capacity, g_bind_group_count + 1, sizeof *g_bind_group_textures)) return -2;
+  g_bind_group_capacity = capacity;
+  // A destroyed texture cannot be bound again.
+  if (texture >= 0 && texture < g_texture_count && !g_textures[texture]) return -3;
   WGPUBindGroupEntry entries[3];
   size_t count = 0;
   if (buffer >= 0 && buffer < g_buffer_count) {
@@ -424,6 +470,7 @@ int32_t df_bind(int32_t pipeline, int32_t buffer, int32_t texture) {
   WGPUBindGroup group = wgpuDeviceCreateBindGroup(g_device, &desc);
   wgpuBindGroupLayoutRelease(desc.layout);
   g_bind_groups[g_bind_group_count] = group;
+  g_bind_group_textures[g_bind_group_count] = texture >= 0 && texture < g_texture_count ? texture : -1;
   return g_bind_group_count++;
 }
 
@@ -554,6 +601,8 @@ int32_t df_begin(double r, double g, double b, uint8_t use_depth) {
 void df_draw(int32_t pipeline, int32_t bind_group, int32_t vertex_buffer, int32_t index_buffer, uint32_t first,
              uint32_t count) {
   if (!g_frame_pass || pipeline < 0 || pipeline >= g_pipeline_count) return;
+  // A group released with its texture draws nothing rather than sampling freed memory.
+  if (bind_group >= 0 && bind_group < g_bind_group_count && !g_bind_groups[bind_group]) return;
   wgpuRenderPassEncoderSetPipeline(g_frame_pass, g_pipelines[pipeline]);
   if (bind_group >= 0 && bind_group < g_bind_group_count)
     wgpuRenderPassEncoderSetBindGroup(g_frame_pass, 0, g_bind_groups[bind_group], 0, NULL);
@@ -586,13 +635,21 @@ void df_audio_close(void);
 
 void df_close(void) {
   df_audio_close();
-  for (int32_t i = 0; i < g_bind_group_count; i++) wgpuBindGroupRelease(g_bind_groups[i]);
+  for (int32_t i = 0; i < g_bind_group_count; i++)
+    if (g_bind_groups[i]) wgpuBindGroupRelease(g_bind_groups[i]);
+  free(g_bind_groups);
+  free(g_bind_group_textures);
   for (int32_t i = 0; i < g_buffer_count; i++)
     if (g_buffers[i]) wgpuBufferRelease(g_buffers[i]);
   for (int32_t i = 0; i < g_texture_count; i++) {
+    if (!g_textures[i]) continue;
     wgpuTextureViewRelease(g_texture_views[i]);
     wgpuTextureRelease(g_textures[i]);
   }
+  free(g_textures);
+  free(g_texture_views);
+  free(g_texture_sizes);
+  free(g_texture_smooth);
   if (g_sampler) wgpuSamplerRelease(g_sampler);
   if (g_sampler_linear) wgpuSamplerRelease(g_sampler_linear);
   for (int32_t i = 0; i < g_pipeline_count; i++) wgpuRenderPipelineRelease(g_pipelines[i]);

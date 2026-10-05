@@ -27,6 +27,7 @@ import {
   dfPlay,
   dfSound,
   dfTexture,
+  dfTextureDestroy,
   dfTextureSize,
   dfTone,
   dfTouch,
@@ -73,6 +74,7 @@ export function createNativeRenderGpu(): RenderGpu {
       if (id < 0) throw new Error(`dfTexture failed: ${id}`);
       return { id, width, height };
     },
+    destroyTexture: (texture: Texture): void => dfTextureDestroy(texture.id),
     frame: (clear: Color, draws: Draw[]): void => {
       // Pipelines without depth cannot run in a pass with a depth attachment.
       let usesDepth = false;

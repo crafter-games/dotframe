@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { parseArgs } from "node:util";
 import pkg from "../package.json" with { type: "json" };
-import { build, deploy, device, relay, vendor } from "./commands/ship";
+import { build, deploy, device, deviceLogs, relay, vendor } from "./commands/ship";
 import { doctor } from "./commands/doctor";
 import { deployInit } from "./commands/docker";
 import { configCmd } from "./commands/config";
@@ -31,6 +31,7 @@ Build and ship
   relay    serve [--port 8787]          local netplay relay (same protocol as production)
   relay    deploy [--region eze]        gated
   device   install <target>             gated
+  device   logs <target>                newest crash report from the device, summarized
   vendor   <macos|windows>              SDL3 + wgpu-native for native builds (~/.dotframe/vendor)
   doctor   [--fix] [--docker]           toolchain, vendor, links, config, sim render and math
   config   get [key] | set <key> <json>
@@ -108,8 +109,11 @@ serve runs the netplay relay locally (PORT env or --port): it pairs two clients 
 messages, the protocol connectRelay in dotframe/src/netplay speaks. deploy redeploys the production relay
 (dokploy) or deploys it to a region (fly), gated like deploy.`,
   device: `dotframe device install <target> [--dry-run] [--yes]
+dotframe device logs <target> [--json]
 
-Installs targets.<target>.app on targets.<target>.device with devicectl. Gated like deploy.`,
+install puts the built app on targets.<target>.device with devicectl (gated like deploy). logs copies the newest
+crash report of the app's process from the device into .dotframe/logs and prints the exception, termination and
+the crashed thread's frames (read-only on the device).`,
   vendor: `dotframe vendor <macos|windows> [--dry-run]
 
 Downloads wgpu-native and builds SDL3 for native targets into DOTFRAME_VENDOR (default ~/.dotframe/vendor), which
@@ -201,6 +205,7 @@ try {
     await new Promise((): void => {});
   }
   else if (command === "device" && rest[0] === "install") await device(ctx, rest[1] ?? "ios");
+  else if (command === "device" && rest[0] === "logs") await deviceLogs(ctx, rest[1] ?? "ios");
   else if (command === "vendor") await vendor(ctx, rest[0]);
   else if (command === "doctor") await doctor(ctx, values.fix === true, values.docker === true);
   else if (command === "config") await configCmd(ctx, rest);

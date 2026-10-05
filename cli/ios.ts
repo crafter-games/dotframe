@@ -218,9 +218,41 @@ export async function buildIos(ctx: Ctx, root: string, gameName: string, targetN
   const engineStage = join(stage, "dotframe");
   cpSync(join(ENGINE, "src"), join(engineStage, "src"), { recursive: true });
   const gameStage = stageGame(root, t.entry, join(stage, "tree"), engineStage);
+  // A throw in library mode becomes a trap that aborts with no message (SIGABRT in SDL_AppInit). The wrapper prints
+  // the error and its stack to stderr, which the device log keeps, before rethrowing.
+  const wrapper = join(gameStage, "dotframe-entry.ts");
+  const gameEntry = `./${t.entry.replace(/\.ts$/, "")}`;
+  writeFileSync(
+    wrapper,
+    `import { frame as gameFrame, init as gameInit } from ${JSON.stringify(gameEntry)};
+
+function report(where: string, error: unknown): void {
+  const detail = error instanceof Error ? \`\${error.message}\\n\${error.stack ?? ""}\` : String(error);
+  console.error(\`dotframe: \${where} threw: \${detail}\`);
+}
+
+export function init(base: string): void {
+  try {
+    gameInit(base);
+  } catch (error) {
+    report("init", error);
+    throw error;
+  }
+}
+
+export function frame(time: number): boolean {
+  try {
+    return gameFrame(time);
+  } catch (error) {
+    report("frame", error);
+    throw error;
+  }
+}
+`,
+  );
   writeFileSync(
     join(stage, "app.json"),
-    JSON.stringify({ name: id, entry: relative(stage, join(gameStage, t.entry)), exports: [{ export: "init", params: ["string"], returns: "void" }, { export: "frame", params: ["f64"], returns: "bool" }] }, null, 2),
+    JSON.stringify({ name: id, entry: relative(stage, wrapper), exports: [{ export: "init", params: ["string"], returns: "void" }, { export: "frame", params: ["f64"], returns: "bool" }] }, null, 2),
   );
   writeFileSync(join(stage, "host", "main.c"), hostC(id, display));
   writeFileSync(join(stage, "host", "Info.plist"), infoPlist(display, t.orientation ?? "landscape"));

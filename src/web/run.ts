@@ -51,6 +51,7 @@ export async function run(options: WindowOptions, setup: Setup): Promise<void> {
   const buffers: GPUBuffer[] = [];
   const bindGroups: GPUBindGroup[] = [];
   const textureViews: GPUTextureView[] = [];
+  const textures: (GPUTexture | null)[] = [];
   const textureSmooth: boolean[] = [];
   // Nearest keeps pixel art crisp; linear suits fonts and photos.
   const nearest = device.createSampler({ magFilter: "nearest", minFilter: "nearest" });
@@ -67,6 +68,7 @@ export async function run(options: WindowOptions, setup: Setup): Promise<void> {
       usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
     });
     write(texture);
+    textures.push(texture);
     textureViews.push(texture.createView());
     textureSmooth.push(smooth);
     return { id: textureViews.length - 1, width, height };
@@ -143,6 +145,10 @@ export async function run(options: WindowOptions, setup: Setup): Promise<void> {
       }
       bindGroups.push(device.createBindGroup({ layout: pipelines[pipeline].getBindGroupLayout(0), entries }));
       return bindGroups.length - 1;
+    },
+    destroyTexture: (texture: Texture): void => {
+      textures[texture.id]?.destroy();
+      textures[texture.id] = null;
     },
     createTexture: (width: number, height: number, rgba: Uint8Array, smooth: boolean): Texture =>
       uploadTexture(width, height, smooth, (texture) =>

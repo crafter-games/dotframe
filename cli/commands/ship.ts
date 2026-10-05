@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { buildIos } from "../ios";
 import { deployDokploy } from "./docker";
@@ -141,4 +141,60 @@ export async function vendor(ctx: Ctx, platform: string | undefined): Promise<vo
   const after = vendorStatus(p);
   if (after.missing.length > 0) throw new CliError("VENDOR_MISSING", `vendor.sh finished but ${after.missing.join(", ")} is still missing`, "", "macos");
   print(ctx, { platform: p, dir, ready: true }, (): string => `vendor for ${p} ready in ${dir}`);
+}
+
+interface CrashFile {
+  name: string;
+  metadata: { lastModDate: string };
+}
+
+// The newest crash report of a target's app on the device, summarized: exception, termination, and the crashed
+// thread's frames. iOS keeps reports as <Process>-<date>.ips under systemCrashLogs. Read-only on the device.
+export async function deviceLogs(ctx: Ctx, name: string): Promise<void> {
+  const config = loadConfig();
+  const t = target(config, name);
+  if (!t.device) throw new CliError("NO_DEVICE", `target "${name}" needs "device" in dotframe.json`, "xcrun devicectl list devices", "ios");
+  const builtApp = existsSync(join(config.root, "dist", name)) ? readdirSync(join(config.root, "dist", name)).find((f: string): boolean => f.endsWith(".app")) : undefined;
+  const processName = (t.app ? t.app.split("/").pop() : builtApp)?.replace(/\.app$/, "");
+  if (!processName) throw new CliError("NOT_BUILT", "no built app to name the process", `dotframe build ${name}`, "ios");
+  const logDir = join(config.root, ".dotframe", "logs");
+  mkdirSync(logDir, { recursive: true });
+  const listing = join(logDir, "device-crashes.json");
+  const list = await exec({ ...ctx, json: true }, config.root, { label: "devicectl files", argv: ["xcrun", "devicectl", "device", "info", "files", "--device", t.device, "--domain-type", "systemCrashLogs", "--json-output", listing] });
+  if (list.code !== 0) throw new CliError("DEVICE_UNAVAILABLE", list.tail, "connect and unlock the device; xcrun devicectl list devices", "ios");
+  const files = (JSON.parse(readFileSync(listing, "utf8")) as { result: { files: CrashFile[] } }).result.files;
+  const reports = files
+    .filter((f: CrashFile): boolean => f.name.startsWith(`${processName}-`) && f.name.endsWith(".ips"))
+    .sort((a: CrashFile, b: CrashFile): number => b.metadata.lastModDate.localeCompare(a.metadata.lastModDate));
+  if (reports.length === 0) {
+    print(ctx, { process: processName, crashes: 0 }, (): string => `no crash reports for ${processName} on the device`);
+    return;
+  }
+  const newest = reports[0];
+  const local = join(logDir, newest.name);
+  const copy = await exec({ ...ctx, json: true }, config.root, { label: "devicectl copy", argv: ["xcrun", "devicectl", "device", "copy", "from", "--device", t.device, "--domain-type", "systemCrashLogs", "--source", newest.name, "--destination", local] });
+  if (copy.code !== 0) throw new CliError("DEVICE_UNAVAILABLE", copy.tail, "", "ios");
+  const [, body] = readFileSync(local, "utf8").split(/\n(.*)/s);
+  const report = JSON.parse(body) as {
+    exception?: { type?: string; signal?: string };
+    termination?: { indicator?: string };
+    faultingThread?: number;
+    threads?: { frames: { symbol?: string; imageIndex: number }[] }[];
+    usedImages?: { name?: string }[];
+  };
+  const frames = (report.threads?.[report.faultingThread ?? 0]?.frames ?? [])
+    .slice(0, 12)
+    .map((f) => `${report.usedImages?.[f.imageIndex]?.name ?? "?"}  ${f.symbol ?? "?"}`);
+  const summary = {
+    process: processName,
+    report: local,
+    when: newest.metadata.lastModDate,
+    crashes: reports.length,
+    exception: `${report.exception?.type ?? "?"} ${report.exception?.signal ?? ""}`.trim(),
+    termination: report.termination?.indicator ?? null,
+    frames,
+  };
+  print(ctx, summary, (): string =>
+    [`${processName} crashed ${newest.metadata.lastModDate} (${reports.length} reports on the device)`, `${summary.exception}${summary.termination ? `, ${summary.termination}` : ""}`, ...frames.map((f) => `  ${f}`), `full report: ${local}`, "a dotframe: ... threw line in the device log names a TypeScript error (build ios wraps init and frame)"].join("\n"),
+  );
 }

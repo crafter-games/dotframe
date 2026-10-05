@@ -62,6 +62,9 @@ export interface RenderGpu {
   bind: (pipeline: number, buffer: number, texture: number) => number;
   // smooth: linear filtering (fonts, photos); otherwise nearest (pixel art).
   createTexture: (width: number, height: number, rgba: Uint8Array, smooth: boolean) => Texture;
+  // Frees a texture (and, natively, the bind groups sampling it). Its id is never reused; do not draw it again.
+  // Optional so stub GPUs in tests need not implement it.
+  destroyTexture?: (texture: Texture) => void;
   frame: (clear: Color, draws: Draw[]) => void;
   aspect: () => number;
 }
