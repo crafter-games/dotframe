@@ -6,6 +6,7 @@ description: Build and install the iOS target of a dotframe game. Use when build
 
 ```sh
 dotframe vendor ios                  # once per machine: SDL3 (Xcode generator) and wgpu-native for iOS
+# or reuse an existing vendor (a dotframe checkout's vendor/): export DOTFRAME_VENDOR=<path>
 dotframe doctor                      # vendor:ios, ios-runtime (scriptc pack matching the compiler), team placeholder
 dotframe build ios --json            # dist/ios/<Scheme>.app
 dotframe device install ios --dry-run

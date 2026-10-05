@@ -147,8 +147,9 @@ async function renderCheck(sim: Sim, root: string): Promise<Check> {
 }
 
 // Math.sin and friends differ in the last bits between engines and OSes, so simulation code that calls them drifts
-// between netplay peers and breaks replays on another machine. Render code may use them; mark a line with
-// `dotframe-allow-math` to silence it.
+// between netplay peers and breaks replays on another machine. Render code may use them: mark a line with
+// `dotframe-allow-math`, or a whole render-only file with `// dotframe-allow-math-file`. (The sim module builds the
+// renderer for desync's purity check, so render files are reachable and a static scan cannot tell them apart.)
 const NONDETERMINISTIC = /\bMath\.(sin|cos|tan|asin|acos|atan|atan2|sinh|cosh|tanh|asinh|acosh|atanh|exp|expm1|log|log1p|log2|log10|pow|cbrt|hypot)\b|[\w)\]]\s*\*\*\s*[\w(]/;
 
 // The engine's own files (draw2d's arcs, raster2d) are render code, however the game imports them: a vendored
@@ -173,7 +174,9 @@ function mathCheck(simFile: string): Check {
   const engine = new Map<string, boolean>();
   for (const file of importGraph(simFile).files) {
     if (!/\.tsx?$/.test(file) || file.includes(`${sep}node_modules${sep}`) || engineFile(file, engine)) continue;
-    readFileSync(file, "utf8")
+    const text = readFileSync(file, "utf8");
+    if (text.includes("dotframe-allow-math-file")) continue;
+    text
       .split("\n")
       .forEach((line: string, i: number): void => {
         const code = line.replace(/\/\/.*$/, "");
@@ -187,6 +190,6 @@ function mathCheck(simFile: string): Check {
     ok: false,
     warn: true,
     detail: `${hits.length} platform-dependent math call(s) in code the sim reaches: ${shown}`,
-    fix: "use dotframe/src/detmath (dsin, dcos, datan2, dexp, dpow, ...) in simulation code; mark render-only lines with // dotframe-allow-math",
+    fix: "use dotframe/src/detmath (dsin, dcos, datan2, dexp, dpow, ...) in simulation code; mark render-only lines with // dotframe-allow-math, or a render-only file with // dotframe-allow-math-file",
   };
 }

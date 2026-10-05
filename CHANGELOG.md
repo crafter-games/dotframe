@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.8
+
+From dogfood round 7 (Craft Ones on 0.1.7).
+
+- `doctor` sim:math skips files marked `// dotframe-allow-math-file`, for render-only files the sim reaches because it builds the renderer.
+- `deploy init` pins images: bun from `packageManager` (game or repo root, else the local bun) and the relay's dotframe from the version installed in the game.
+- The vendor fix (doctor and native builds) names `DOTFRAME_VENDOR` for reusing an existing vendor dir.
+
 ## 0.1.7
 
 From dogfood rounds 5 and 6 (Craft Ones on iOS, online, and on the VPS).

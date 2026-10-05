@@ -43,7 +43,7 @@ Run several seeds and a high latency (474 ms is what a transatlantic relay measu
 
 ## Rules
 
-- Simulation code uses `dotframe/src/detmath` (dsin, dcos, datan2, dexp, dlog, dpow, ...), never `Math.sin` and friends or `**`: those differ in the last bits between engines and operating systems, so peers and replays drift (Craft Ones' replays diverged between macOS and Linux at frame 120). `dotframe doctor` warns about them (`sim:math`); mark render-only lines with `// dotframe-allow-math`. A replay passing on one machine proves nothing about another: run CI on a second OS.
+- Simulation code uses `dotframe/src/detmath` (dsin, dcos, datan2, dexp, dlog, dpow, ...), never `Math.sin` and friends or `**`: those differ in the last bits between engines and operating systems, so peers and replays drift (Craft Ones' replays diverged between macOS and Linux at frame 120). `dotframe doctor` warns about them (`sim:math`); mark render-only lines with `// dotframe-allow-math`, or a whole render-only file with `// dotframe-allow-math-file` (the sim builds the renderer for desync, so render files count as reachable). A replay passing on one machine proves nothing about another: run CI on a second OS.
 - `desync` reports `restoreMs` early vs late; it warns when late restores cost more than twice the early ones (a heuristic for restore that replays from an earlier frame, which passes desync but stalls real rollbacks late in a match).
 - Build checksums from numbers in a fixed order, never from `JSON.stringify`: native builds can order keys differently from JavaScript, so a web peer and a native peer would report false desyncs.
 
