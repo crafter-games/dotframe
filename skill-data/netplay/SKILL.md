@@ -15,7 +15,7 @@ dotframe relay serve                  # local relay on :8787, same protocol as p
 dotframe play --online --frames 900   # two browsers, scripted match, checksums compared, screenshots saved
 ```
 
-`play --online` needs the web entry to honor `?room=`, `?relay=` and `?mash=<seed>` and to publish `globalThis.__dotframe = { frame, confirmed, status, sums }` (sums: checksum per 30th confirmed frame). The templates show it.
+`play --online` needs the web entry to honor `?room=`, `?relay=` and `?mash=<seed>` and to publish `globalThis.__dotframe = { frame, confirmed, status, sums }` (sums: checksum per 30th confirmed frame). `dotframe/src/probe` does both: `createProbe()` publishes it (call `probe.update(rollback, link.status())` each step, or `probe.update(null, "local", frame)` offline), and `createMasher(seed, randomInput)` returns a function giving the scripted input for each step. `--seeds 7,42` picks each peer's seed. The templates show the wiring.
 
 dotframe online play is rollback netcode: each peer predicts the remote input (repeat the last one), simulates ahead, and when the real input arrives and differs, restores a snapshot and resimulates. It only works if every peer computes bit-identical state from the same inputs.
 

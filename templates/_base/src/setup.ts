@@ -6,6 +6,7 @@ import type { Frame, RenderGpu } from "dotframe/src/gpu";
 import type { Input } from "dotframe/src/input";
 import { Key, MouseButton } from "dotframe/src/input";
 import { createRollback, type RelayLink, type Rollback } from "dotframe/src/netplay";
+import { createMasher, createProbe } from "dotframe/src/probe";
 import { checksum, createGame, type Game, keyInput, PLAYERS, POINTER_BIT, randomInput, render, restore, snapshot, step, WINDOW } from "./game";
 
 export interface SetupOptions {
@@ -15,13 +16,6 @@ export interface SetupOptions {
   mash: number | null;
 }
 
-// What `dotframe play --online` reads from each browser.
-interface Probe {
-  frame: number;
-  confirmed: number;
-  status: string;
-  sums: Record<number, number>;
-}
 
 const STEP = 1 / 60;
 // A full charge takes one second of holding.
@@ -47,15 +41,10 @@ export function createSetup(options: SetupOptions): (platform: SetupPlatform) =>
     // Online peers must start from the same state, so the seed is fixed there.
     const game: Game = createGame(options.link ? 1 : Math.floor(Math.random() * 1e9));
     let rollback: Rollback | null = null;
-    let mashState = options.mash ?? 0;
-    const nextRandom = (): number => {
-      mashState = (Math.imul(mashState, 1103515245) + 12345) >>> 0;
-      return mashState / 4294967296;
-    };
-    let mashed = 0;
-    let mashInput = 0;
-    const probe: Probe = { frame: 0, confirmed: 0, status: options.link ? "connecting" : "local", sums: {} };
-    (globalThis as { __dotframe?: Probe }).__dotframe = probe;
+    const mash = options.mash === null ? null : createMasher(options.mash, randomInput);
+    // What dotframe play --online reads from each browser.
+    const probe = createProbe();
+    let localFrame = 0;
     let simulated = -1;
     // Hold to charge, release to act: the pattern most mouse and touch games need.
     let charge = 0;
@@ -77,15 +66,9 @@ export function createSetup(options: SetupOptions): (platform: SetupPlatform) =>
         wasDown = down;
         const keys = [keyInput(input, [Key.A, Key.D, Key.W, Key.J]), keyInput(input, [Key.Left, Key.Right, Key.Up, Key.L])];
         if (released) keys[0] = keys[0] | POINTER_BIT;
-        if (options.mash !== null) {
-          // A new random input every 6 frames, like a mashing player.
-          if (mashed % 6 === 0) mashInput = randomInput(nextRandom);
-          keys[0] = mashInput;
-          mashed += 1;
-        }
+        if (mash) keys[0] = mash();
         const link = options.link;
         if (link) {
-          probe.status = link.status();
           if (!rollback && link.status() === "paired") {
             rollback = createRollback({
               sim: {
@@ -102,15 +85,12 @@ export function createSetup(options: SetupOptions): (platform: SetupPlatform) =>
             });
           }
           // Online, each browser controls its own player with player 1's keys.
-          if (rollback) {
-            rollback.tick(keys[0]);
-            probe.frame = rollback.stats().frame;
-            probe.confirmed = rollback.confirmedFrame();
-            for (let f = 30; f < probe.confirmed; f += 30) if (probe.sums[f] === undefined) probe.sums[f] = rollback.sumAt(f) ?? 0;
-          }
+          if (rollback) rollback.tick(keys[0]);
+          probe.update(rollback, link.status());
         } else {
           step(game, keys.slice(0, PLAYERS));
-          probe.frame += 1;
+          localFrame += 1;
+          probe.update(null, "local", localFrame);
         }
         simulated += STEP;
       }
