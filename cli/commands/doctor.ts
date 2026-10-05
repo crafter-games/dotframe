@@ -1,14 +1,16 @@
-import { existsSync, lstatSync, mkdirSync, readlinkSync, symlinkSync, unlinkSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, symlinkSync, unlinkSync } from "node:fs";
+import { dirname, relative, resolve, sep } from "node:path";
 import { type Config, type Ctx, findRoot, home, loadConfig, print, which } from "../lib";
 import type { Draw2D } from "../../src/draw2d";
 import type { Sim } from "../../src/sim";
-import { vendorFix, vendorStatus } from "../native";
+import { importGraph, vendorFix, vendorStatus } from "../native";
 import { firstDifference, flatten, headlessRun, loadSim } from "../simkit";
 
 interface Check {
   check: string;
   ok: boolean;
+  // A finding worth reading that does not fail doctor.
+  warn?: boolean;
   detail: string;
   fix: string;
   skill: string;
@@ -37,6 +39,7 @@ export async function doctor(ctx: Ctx, fix: boolean): Promise<void> {
         const sim = await loadSim(config);
         checks.push({ check: "sim", ok: true, detail: `${config.sim} (${sim.players} players)`, fix: "", skill: "core" });
         checks.push(await renderCheck(sim, config.root));
+        checks.push(mathCheck(resolve(config.root, config.sim as string)));
       } catch (error) {
         checks.push({ check: "sim", ok: false, detail: error instanceof Error ? error.message : "failed to load", fix: "dotframe skills get core (Sim contract)", skill: "core" });
       }
@@ -79,9 +82,9 @@ export async function doctor(ctx: Ctx, fix: boolean): Promise<void> {
       checks.push({ check: `link:${link.path}`, ok, detail, fix: ok ? "" : existsSync(want) ? "dotframe doctor --fix" : `${want} does not exist: run dotframe's scripts/vendor.sh first`, skill: "ios" });
     }
   }
-  const failed = checks.filter((c: Check): boolean => !c.ok);
+  const failed = checks.filter((c: Check): boolean => !c.ok && !c.warn);
   print(ctx, { ok: failed.length === 0, checks }, (): string =>
-    checks.map((c: Check): string => `${c.ok ? "ok  " : "FAIL"} ${c.check}: ${c.detail}${c.fix ? `\n     fix: ${c.fix}` : ""}`).join("\n"),
+    checks.map((c: Check): string => `${c.ok ? "ok  " : c.warn ? "WARN" : "FAIL"} ${c.check}: ${c.detail}${c.fix ? `\n     fix: ${c.fix}` : ""}`).join("\n"),
   );
   if (failed.length > 0) process.exit(1);
 }
@@ -126,4 +129,32 @@ async function renderCheck(sim: Sim, root: string): Promise<Check> {
   if (calls === 0) return { ...base, ok: false, detail: "render() made no draw calls with a stub Draw2D, so desync never exercises it", fix: "render with whatever Draw2D it is given; do not skip when platform.draw is missing" };
   if (impure) return { ...base, ok: false, detail: `render() changed simulation state at ${impure}`, fix: "move that write into step(); render must only read", skill: "netplay" };
   return { ...base, ok: true, detail: `render() drew ${calls} calls with a stub Draw2D and left state unchanged${run.inspect ? "" : " (checksum only; add inspect() for every field)"}`, fix: "" };
+}
+
+// Math.sin and friends differ in the last bits between engines and OSes, so simulation code that calls them drifts
+// between netplay peers and breaks replays on another machine. Render code may use them; mark a line with
+// `dotframe-allow-math` to silence it.
+const NONDETERMINISTIC = /\bMath\.(sin|cos|tan|asin|acos|atan|atan2|sinh|cosh|tanh|asinh|acosh|atanh|exp|expm1|log|log1p|log2|log10|pow|cbrt|hypot)\b|[\w)\]]\s*\*\*\s*[\w(]/;
+
+function mathCheck(simFile: string): Check {
+  const base = { check: "sim:math", skill: "netplay" };
+  const hits: string[] = [];
+  for (const file of importGraph(simFile).files) {
+    if (!/\.tsx?$/.test(file) || file.includes(`${sep}node_modules${sep}`)) continue;
+    readFileSync(file, "utf8")
+      .split("\n")
+      .forEach((line: string, i: number): void => {
+        const code = line.replace(/\/\/.*$/, "");
+        if (NONDETERMINISTIC.test(code) && !line.includes("dotframe-allow-math")) hits.push(`${relative(process.cwd(), file)}:${i + 1}`);
+      });
+  }
+  if (hits.length === 0) return { ...base, ok: true, detail: "no Math.sin/cos/exp/pow or ** in code the sim reaches", fix: "" };
+  const shown = hits.slice(0, 8).join(", ") + (hits.length > 8 ? `, and ${hits.length - 8} more` : "");
+  return {
+    ...base,
+    ok: false,
+    warn: true,
+    detail: `${hits.length} platform-dependent math call(s) in code the sim reaches: ${shown}`,
+    fix: "use dotframe/src/detmath (dsin, dcos, datan2, dexp, dpow, ...) in simulation code; mark render-only lines with // dotframe-allow-math",
+  };
 }

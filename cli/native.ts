@@ -83,7 +83,7 @@ interface Graph {
 
 // Every source file the entry reaches: relative imports (including ones that leave the game root) and workspace
 // packages. "dotframe/..." is the engine, staged separately.
-function importGraph(entry: string): Graph {
+export function importGraph(entry: string): Graph {
   const files: string[] = [];
   const links = new Map<string, Map<string, string>>();
   const queue = [realpathSync(entry)];
