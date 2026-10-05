@@ -114,8 +114,20 @@ export function state(game: Game): unknown {
   return { frame: game.frame, winner: game.winner, fighters: game.fighters.map(({ x, y, damage, stocks }) => ({ x: Math.round(x), y: Math.round(y), damage, stocks })) };
 }
 
+// Field by field (scriptc compiles neither structuredClone nor Object.assign): netplay saves every frame.
+function copyFighter(f: Fighter): Fighter {
+  return { x: f.x, y: f.y, vx: f.vx, vy: f.vy, facing: f.facing, damage: f.damage, stocks: f.stocks, cooldown: f.cooldown, stun: f.stun, held: f.held };
+}
+
 export function snapshot(game: Game): Game {
-  return structuredClone(game);
+  return { frame: game.frame, seed: game.seed, fighters: game.fighters.map(copyFighter), winner: game.winner };
+}
+
+export function restore(game: Game, saved: Game): void {
+  game.frame = saved.frame;
+  game.seed = saved.seed;
+  game.fighters = saved.fighters.map(copyFighter);
+  game.winner = saved.winner;
 }
 
 const COLORS = ["#ff5a5f", "#3fa7ff"];

@@ -73,6 +73,8 @@ export interface Rollback {
   settle: () => void;
   // Highest frame below which both peers' inputs are known (the state there is final).
   confirmedFrame: () => number;
+  // This peer's checksum after simulating `frame`, final once frame < confirmedFrame().
+  sumAt: (frame: number) => number | undefined;
   stats: () => RollbackStats;
 }
 
@@ -206,6 +208,7 @@ export function createRollback<S>(options: RollbackOptions<S>): Rollback {
     },
     settle,
     confirmedFrame: (): number => Math.min(confirmed, frame),
+    sumAt: (f: number): number | undefined => sums[f],
     stats: (): RollbackStats => stats,
   };
 }

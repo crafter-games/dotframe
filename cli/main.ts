@@ -7,6 +7,7 @@ import { deployInit } from "./commands/docker";
 import { configCmd } from "./commands/config";
 import { desync, record, sim, verify } from "./commands/play";
 import { snap } from "./commands/snap";
+import { playOnline } from "./commands/online";
 import { skills } from "./commands/skills";
 import { create, dev } from "./commands/new";
 import { CliError, type Ctx, fail, num, print } from "./lib";
@@ -20,6 +21,7 @@ Play (headless, deterministic)
   sim      [--inputs f.jsonl | --mash <seed>] [--frames 600] [--seed 1] [--options json] [--every n]
   snap     --frame <n> [--out frame.png] [--inputs f | --mash <seed>] [--seed 1] [--options json]
   replay   record <file> | verify <file...>
+  play     --online [room] [--frames 600]   two browsers, local relay, scripted match
   desync   [--latency 100ms] [--jitter 0ms] [--delay 2] [--frames 1800] [--renders 3]
 
 Build and ship
@@ -72,6 +74,11 @@ Compares checksums every frame and the full inspect() state every --every frames
 Warns when rollbacks exceed the sim's rollbackWindow.
 
   dotframe desync --latency 474ms --jitter 40ms --mash 42 --json`,
+  play: `dotframe play --online [room] [--frames 600] [--out .dotframe/play] [--json]
+
+Builds the web target, starts a local relay, and opens two agent-browser sessions on ?room=<room>&relay=...&mash=1|2.
+Waits until both confirm --frames frames, compares their checksums every 30 frames, and saves a screenshot of each.
+The web entry must honor ?room=, ?relay=, ?mash= and publish globalThis.__dotframe (templates do).`,
   build: `dotframe build <target> [--release] [--dry-run] [--json]
 
 Runs targets.<target>.steps from dotframe.json, or for a native target ({"native": {"platform": "macos",
@@ -160,6 +167,7 @@ const { values, positionals } = parseArgs({
     "no-install": { type: "boolean" },
     "through-over": { type: "boolean" },
     docker: { type: "boolean" },
+    online: { type: "boolean" },
     provider: { type: "string" },
     compose: { type: "string" },
   },
@@ -173,6 +181,7 @@ try {
   if (values.version) console.log(pkg.version);
   else if (command && values.help && COMMAND_HELP[command]) console.log(COMMAND_HELP[command]);
   else if (!command || values.help) console.log(HELP);
+  else if (command === "play" && values.online === true) await playOnline(ctx, rest[0], { frames: v.frames, out: v.out });
   else if (command === "sim") await sim(ctx, v);
   else if (command === "snap") await snap(ctx, v);
   else if (command === "replay" && rest[0] === "record") await record(ctx, rest[1], v);

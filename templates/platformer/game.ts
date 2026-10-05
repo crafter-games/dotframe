@@ -102,8 +102,32 @@ export function state(game: Game): unknown {
   return { frame: game.frame, x: Math.round(game.x), y: Math.round(game.y), coins: game.coins.filter((c) => c.taken).length, of: game.coins.length, won: game.winner === 0 };
 }
 
+// Field by field (scriptc compiles neither structuredClone nor Object.assign): netplay saves every frame.
 export function snapshot(game: Game): Game {
-  return structuredClone(game);
+  return {
+    frame: game.frame,
+    x: game.x,
+    y: game.y,
+    vx: game.vx,
+    vy: game.vy,
+    onGround: game.onGround,
+    held: game.held,
+    coins: game.coins.map((c) => ({ x: c.x, y: c.y, taken: c.taken })),
+    winner: game.winner,
+  };
+}
+
+export function restore(game: Game, saved: Game): void {
+  const s = snapshot(saved);
+  game.frame = s.frame;
+  game.x = s.x;
+  game.y = s.y;
+  game.vx = s.vx;
+  game.vy = s.vy;
+  game.onGround = s.onGround;
+  game.held = s.held;
+  game.coins = s.coins;
+  game.winner = s.winner;
 }
 
 export function render(game: Game, draw: Draw2D): void {
