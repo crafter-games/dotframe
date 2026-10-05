@@ -6,10 +6,10 @@ import { CliError, type Ctx, exec, home, print, type RunResult, which } from "./
 // The engine this CLI belongs to: a git checkout or node_modules/dotframe.
 export const ENGINE = resolve(import.meta.dir, "..");
 
-export type NativePlatform = "macos" | "windows";
+export type NativePlatform = "macos" | "windows" | "ios";
 
 export interface NativeTarget {
-  platform: NativePlatform;
+  platform: "macos" | "windows";
   // Entry module, relative to the game root.
   entry: string;
   // Binary name; defaults to the game name.
@@ -34,10 +34,15 @@ export interface VendorStatus {
 export function vendorStatus(platform: NativePlatform): VendorStatus {
   const dir = vendorDir(platform);
   const sdl = existsSync(dir) ? (readdirSync(dir).find((d: string): boolean => d.startsWith("SDL3-")) ?? null) : null;
-  const need = [`wgpu/${platform}/lib/libwgpu_native.a`, `build/sdl-${platform}/libSDL3.a`];
+  const need = [`wgpu/${platform}/lib/libwgpu_native.a`, sdlLibrary(platform)];
   const missing = need.filter((p: string): boolean => !existsSync(join(dir, p)));
   if (!sdl) missing.push("SDL3-<version> (headers)");
   return { dir, missing, sdl };
+}
+
+// Relative to the vendor dir; iOS builds with the Xcode generator.
+export function sdlLibrary(platform: NativePlatform): string {
+  return platform === "ios" ? "build/sdl-ios/Release-iphoneos/libSDL3.a" : `build/sdl-${platform}/libSDL3.a`;
 }
 
 export function vendorFix(platform: NativePlatform): string {
@@ -83,7 +88,7 @@ interface Graph {
 
 // Every source file the entry reaches: relative imports (including ones that leave the game root) and workspace
 // packages. "dotframe/..." is the engine, staged separately.
-function importGraph(entry: string): Graph {
+export function importGraph(entry: string): Graph {
   const files: string[] = [];
   const links = new Map<string, Map<string, string>>();
   const queue = [realpathSync(entry)];
@@ -123,7 +128,7 @@ function rel(fromFile: string, to: string): string {
 // scriptc's static build takes relative imports only, and treats anything under node_modules as package code for
 // its dynamic engine. Staging copies the engine and every reached game file side by side, keeping their relative
 // layout, and rewrites "dotframe/..." and workspace imports to relative paths.
-function stageGame(root: string, entry: string, tree: string, engineStage: string): string {
+export function stageGame(root: string, entry: string, tree: string, engineStage: string): string {
   const graph = importGraph(join(root, entry));
   const base = commonDir([realpathSync(root) + sep + "x", ...graph.files]);
   const staged = (file: string): string => join(tree, relative(base, file));

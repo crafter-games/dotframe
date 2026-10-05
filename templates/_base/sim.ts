@@ -1,6 +1,6 @@
 // The dotframe CLI contract: dotframe sim, snap, replay, and desync drive the game through this module.
 import { defineSim, type SimPlatform, type SimRun } from "dotframe/src/sim";
-import { checksum, createGame, PLAYERS, encode, type Game, randomInput, render, snapshot, state, step, WINDOW } from "./src/game";
+import { checksum, createGame, encode, type Game, PLAYERS, randomInput, render, restore, snapshot, state, step, WINDOW } from "./src/game";
 
 export default defineSim({
   players: PLAYERS,
@@ -23,9 +23,7 @@ export default defineSim({
       state: (): unknown => state(game),
       over: (): boolean => game.winner >= 0,
       save: (): unknown => snapshot(game),
-      restore: (saved: unknown): void => {
-        Object.assign(game, snapshot(saved as Game));
-      },
+      restore: (saved: unknown): void => restore(game, saved as Game),
       inspect: (): unknown => game,
       render: (draw) => render(game, draw),
     };

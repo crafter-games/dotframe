@@ -3,12 +3,15 @@ import { parseArgs } from "node:util";
 import pkg from "../package.json" with { type: "json" };
 import { build, deploy, device, relay, vendor } from "./commands/ship";
 import { doctor } from "./commands/doctor";
+import { deployInit } from "./commands/docker";
 import { configCmd } from "./commands/config";
 import { desync, record, sim, verify } from "./commands/play";
 import { snap } from "./commands/snap";
+import { playOnline } from "./commands/online";
 import { skills } from "./commands/skills";
 import { create, dev } from "./commands/new";
-import { CliError, type Ctx, fail, num } from "./lib";
+import { CliError, type Ctx, fail, num, print } from "./lib";
+import { startRelay } from "./relay";
 
 const HELP = `dotframe ${pkg.version}: build, test, and export dotframe games
 
@@ -18,15 +21,18 @@ Play (headless, deterministic)
   sim      [--inputs f.jsonl | --mash <seed>] [--frames 600] [--seed 1] [--options json] [--every n]
   snap     --frame <n> [--out frame.png] [--inputs f | --mash <seed>] [--seed 1] [--options json]
   replay   record <file> | verify <file...>
+  play     --online [room] [--frames 600]   two browsers, local relay, scripted match
   desync   [--latency 100ms] [--jitter 0ms] [--delay 2] [--frames 1800] [--renders 3]
 
 Build and ship
   build    <target> [--release]         targets come from dotframe.json
   deploy   <target> [--prod]            gated: --yes, preview with --dry-run
+  deploy   init <target> --provider dokploy [--compose id]   Dockerfiles, nginx, compose
+  relay    serve [--port 8787]          local netplay relay (same protocol as production)
   relay    deploy [--region eze]        gated
   device   install <target>             gated
   vendor   <macos|windows>              SDL3 + wgpu-native for native builds (~/.dotframe/vendor)
-  doctor   [--fix]                      toolchain, vendor, links, config, sim render
+  doctor   [--fix] [--docker]           toolchain, vendor, links, config, sim render and math
   config   get [key] | set <key> <json>
 
 Project
@@ -68,6 +74,11 @@ Compares checksums every frame and the full inspect() state every --every frames
 Warns when rollbacks exceed the sim's rollbackWindow.
 
   dotframe desync --latency 474ms --jitter 40ms --mash 42 --json`,
+  play: `dotframe play --online [room] [--frames 600] [--out .dotframe/play] [--json]
+
+Builds the web target, starts a local relay, and opens two agent-browser sessions on ?room=<room>&relay=...&mash=1|2.
+Waits until both confirm --frames frames, compares their checksums every 30 frames, and saves a screenshot of each.
+The web entry must honor ?room=, ?relay=, ?mash= and publish globalThis.__dotframe (templates do).`,
   build: `dotframe build <target> [--release] [--dry-run] [--json]
 
 Runs targets.<target>.steps from dotframe.json, or for a native target ({"native": {"platform": "macos",
@@ -77,14 +88,23 @@ Failures keep the full output in .dotframe/logs and return its path. --release r
   dotframe build web
   dotframe build ios --release`,
   deploy: `dotframe deploy <target> [--prod] [--dry-run] [--yes] [--json]
+dotframe deploy init <target> --provider dokploy [--compose <id>] [--yes]
 
-Deploys targets.<target>.out with its deploy provider. Without --yes it stops with APPROVAL_REQUIRED (exit 2).
-Show the --dry-run plan to a human first.
+provider vercel: uploads targets.<target>.out. provider dokploy: redeploys the compose stack (it builds from the
+pushed branch), waits for the result, and on failure returns the build log. Without --yes it stops with
+APPROVAL_REQUIRED (exit 2); show the --dry-run plan to a human first.
 
-  dotframe deploy web --prod --dry-run`,
-  relay: `dotframe relay deploy [--region eze] [--dry-run] [--yes]
+init writes deploy/Dockerfile.web (installs "requires" tools, builds with dotframe), deploy/Dockerfile.relay
+(dotframe relay serve), deploy/nginx.conf (no-cache index.html) and deploy/compose.yaml (web at /, relay at /relay).
 
-Redeploys the netplay relay (dokploy) or deploys it to a region (fly). Gated like deploy.`,
+  dotframe deploy web --prod --dry-run
+  dotframe deploy init web --provider dokploy`,
+  relay: `dotframe relay serve [--port 8787]
+dotframe relay deploy [--region eze] [--dry-run] [--yes]
+
+serve runs the netplay relay locally (PORT env or --port): it pairs two clients per ?room= and forwards their
+messages, the protocol connectRelay in dotframe/src/netplay speaks. deploy redeploys the production relay
+(dokploy) or deploys it to a region (fly), gated like deploy.`,
   device: `dotframe device install <target> [--dry-run] [--yes]
 
 Installs targets.<target>.app on targets.<target>.device with devicectl. Gated like deploy.`,
@@ -92,10 +112,11 @@ Installs targets.<target>.app on targets.<target>.device with devicectl. Gated l
 
 Downloads wgpu-native and builds SDL3 for native targets into DOTFRAME_VENDOR (default ~/.dotframe/vendor), which
 survives reinstalling dotframe and is shared by every game.`,
-  doctor: `dotframe doctor [--fix] [--json]
+  doctor: `dotframe doctor [--fix] [--docker] [--json]
 
-Checks tools, dotframe.json, the sim (loads, renders with a stub Draw2D), placeholders, and vendor links.
---fix creates missing vendor symlinks.`,
+Checks tools (including "requires" in dotframe.json), vendor, links, placeholders, the sim (render with a stub
+Draw2D leaves state alone) and platform-dependent math in code the sim reaches. --fix creates missing vendor
+symlinks; --docker builds the dokploy web image locally, as the server would.`,
   config: `dotframe config get [key]
 dotframe config set <key> <json> [--dry-run]
 
@@ -145,6 +166,10 @@ const { values, positionals } = parseArgs({
     port: { type: "string" },
     "no-install": { type: "boolean" },
     "through-over": { type: "boolean" },
+    docker: { type: "boolean" },
+    online: { type: "boolean" },
+    provider: { type: "string" },
+    compose: { type: "string" },
   },
 });
 
@@ -156,17 +181,25 @@ try {
   if (values.version) console.log(pkg.version);
   else if (command && values.help && COMMAND_HELP[command]) console.log(COMMAND_HELP[command]);
   else if (!command || values.help) console.log(HELP);
+  else if (command === "play" && values.online === true) await playOnline(ctx, rest[0], { frames: v.frames, out: v.out });
   else if (command === "sim") await sim(ctx, v);
   else if (command === "snap") await snap(ctx, v);
   else if (command === "replay" && rest[0] === "record") await record(ctx, rest[1], v);
   else if (command === "replay" && rest[0] === "verify") await verify(ctx, rest.slice(1));
   else if (command === "desync") await desync(ctx, v);
   else if (command === "build") await build(ctx, rest[0], values.release === true);
+  else if (command === "deploy" && rest[0] === "init") await deployInit(ctx, rest[1], v.provider, v.compose);
   else if (command === "deploy") await deploy(ctx, rest[0], values.prod === true);
   else if (command === "relay" && rest[0] === "deploy") await relay(ctx, v.region);
+  else if (command === "relay" && rest[0] === "serve") {
+    const port = num("port", v.port, Number(process.env.PORT ?? "8787"), 1);
+    const server = startRelay(port, (line: string): void => console.error(line));
+    print(ctx, { relay: `ws://localhost:${server.port}`, port: server.port }, (): string => `relay listening on ws://localhost:${server.port} (Ctrl+C to stop)`);
+    await new Promise((): void => {});
+  }
   else if (command === "device" && rest[0] === "install") await device(ctx, rest[1] ?? "ios");
   else if (command === "vendor") await vendor(ctx, rest[0]);
-  else if (command === "doctor") await doctor(ctx, values.fix === true);
+  else if (command === "doctor") await doctor(ctx, values.fix === true, values.docker === true);
   else if (command === "config") await configCmd(ctx, rest);
   else if (command === "skills") await skills(ctx, rest, values.full === true, values.all === true);
   else if (command === "new") await create(ctx, rest[0], v.template ?? "blank", values["no-install"] !== true);

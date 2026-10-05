@@ -52,8 +52,15 @@ export function state(game: Game): unknown {
   return game;
 }
 
+// Field by field (scriptc compiles neither structuredClone nor Object.assign): netplay saves every frame.
 export function snapshot(game: Game): Game {
-  return structuredClone(game);
+  return { frame: game.frame, players: game.players.map((p) => ({ x: p.x, y: p.y })), winner: game.winner };
+}
+
+export function restore(game: Game, saved: Game): void {
+  game.frame = saved.frame;
+  game.players = saved.players.map((p) => ({ x: p.x, y: p.y }));
+  game.winner = saved.winner;
 }
 
 export function render(game: Game, draw: Draw2D): void {

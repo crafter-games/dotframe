@@ -1,5 +1,5 @@
 #!/bin/sh
-# Downloads wgpu-native prebuilts and builds SDL3 static for a target. Usage: scripts/vendor.sh <macos|windows>
+# Downloads wgpu-native prebuilts and builds SDL3 static for a target. Usage: scripts/vendor.sh <macos|windows|ios>
 # DOTFRAME_VENDOR picks the directory (the dotframe CLI uses ~/.dotframe/vendor); default is this checkout's vendor/.
 set -e
 target=$1
@@ -13,7 +13,8 @@ mkdir -p "$vendor/build"
 case $target in
   macos) wgpu_asset=wgpu-macos-aarch64-release ;;
   windows) wgpu_asset=wgpu-windows-x86_64-gnu-release ;;
-  *) echo "usage: $0 <macos|windows>" >&2; exit 2 ;;
+  ios) wgpu_asset=wgpu-ios-aarch64-release ;;
+  *) echo "usage: $0 <macos|windows|ios>" >&2; exit 2 ;;
 esac
 
 if [ ! -f "$vendor/wgpu/$target/lib/libwgpu_native.a" ]; then
@@ -27,12 +28,17 @@ if [ ! -d "$vendor/SDL3-$sdl_version" ]; then
   curl -fsSL "https://github.com/libsdl-org/SDL/releases/download/release-$sdl_version/SDL3-$sdl_version.tar.gz" | tar xz -C "$vendor"
 fi
 
-if [ ! -f "$vendor/build/sdl-$target/libSDL3.a" ]; then
+# iOS builds through the Xcode generator, which puts the archive under Release-iphoneos/.
+sdl_lib="$vendor/build/sdl-$target/libSDL3.a"
+[ "$target" = ios ] && sdl_lib="$vendor/build/sdl-ios/Release-iphoneos/libSDL3.a"
+if [ ! -f "$sdl_lib" ]; then
+  generator=""
   case $target in
     macos) extra="-DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0" ;;
     windows) extra="-DCMAKE_TOOLCHAIN_FILE=$toolchain/zig-windows.cmake" ;;
+    ios) extra="-DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0"; generator="-G Xcode" ;;
   esac
-  cmake -S "$vendor/SDL3-$sdl_version" -B "$vendor/build/sdl-$target" -DCMAKE_BUILD_TYPE=Release \
+  cmake -S "$vendor/SDL3-$sdl_version" -B "$vendor/build/sdl-$target" $generator -DCMAKE_BUILD_TYPE=Release \
     -DSDL_SHARED=OFF -DSDL_STATIC=ON -DSDL_TEST_LIBRARY=OFF $extra
-  cmake --build "$vendor/build/sdl-$target" -j 4
+  cmake --build "$vendor/build/sdl-$target" --config Release -j 4
 fi

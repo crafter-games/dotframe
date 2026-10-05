@@ -117,6 +117,9 @@ int32_t df_open(int32_t width, int32_t height, const uint8_t *title, size_t titl
   memcpy(title_buf, title, n);
   title_buf[n] = 0;
 
+  // Touches stay touches: games read input.touches() for them, and a synthesized mouse would also put a phantom
+  // pointer under the finger (on iOS, at the release point), which breaks games that read both.
+  SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
   if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) return -1;
   SDL_WindowFlags flags = SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_RESIZABLE;
 #if defined(__APPLE__)

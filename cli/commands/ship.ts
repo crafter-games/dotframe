@@ -1,5 +1,7 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { buildIos } from "../ios";
+import { deployDokploy } from "./docker";
 import { buildNative, ENGINE, type NativePlatform, vendorDir, vendorStatus } from "../native";
 import { CliError, type Command, type Ctx, exec, gate, loadConfig, print, runSteps, target, which } from "../lib";
 
@@ -25,6 +27,12 @@ export async function build(ctx: Ctx, name: string | undefined, release: boolean
     const blocked = licenseBlockers(config.root, config.assets?.localOnly ?? []);
     if (blocked.length > 0) throw new CliError("ASSETS_LOCAL_ONLY", `release build would ship assets marked local-only: ${blocked.join(", ")}`, "replace them with licensed assets, then remove them from assets.localOnly", "assets");
   }
+  if (t.native?.platform === "ios") {
+    const r = await buildIos(ctx, config.root, config.name, name, t.native);
+    if (ctx.dryRun) return;
+    print(ctx, { target: name, steps: r.steps.map(({ output: _o, ...s }) => s), artifact: r.app, log: r.log }, (): string => `artifact: ${r.app}\nlog: ${r.log}`);
+    return;
+  }
   if (t.native) {
     const r = await buildNative(ctx, config.root, config.name, name, t.native);
     if (ctx.dryRun) return;
@@ -44,16 +52,19 @@ export async function deploy(ctx: Ctx, name: string | undefined, prod: boolean):
   const config = loadConfig();
   const t = target(config, name);
   const skill = skillFor(name);
-  if (!t.deploy || !t.out) throw new CliError("NO_DEPLOY", `target "${name}" has no deploy provider or out dir`, `add "out" and "deploy": {"provider": "vercel", ...} to the target`, skill);
+  if (!t.deploy || !t.out) throw new CliError("NO_DEPLOY", `target "${name}" has no deploy provider or out dir`, `add "out" and "deploy": {"provider": "vercel", ...}, or run dotframe deploy init ${name} --provider dokploy`, skill);
+  // Dokploy builds the image from the repo, so there is no local build folder to check.
+  if (t.deploy.provider === "dokploy") return deployDokploy(ctx, config, name, t.deploy.compose);
+  const vercel = t.deploy;
   const out = resolve(config.root, t.out);
   // The 2026-10-03 incident: deploying the repo root put the wrong game in production.
   if (out === config.root || existsSync(join(out, "dotframe.json")) || existsSync(join(out, ".git"))) {
     throw new CliError("DEPLOY_SOURCE_DIR", `${t.out} looks like source, not a build`, "point out at the built folder (e.g. port/dist/web)", skill);
   }
   if (!existsSync(join(out, "index.html"))) throw new CliError("NOT_BUILT", `${t.out}/index.html is missing`, `dotframe build ${name}`, skill);
-  if (t.deploy.scope === "your-vercel-team") throw new CliError("CONFIG_PLACEHOLDER", `targets.${name}.deploy.scope is still the template placeholder`, `dotframe config set targets.${name}.deploy.scope '"<team>"'`, skill);
-  const argv = ["vercel", "deploy", ...(prod ? ["--prod"] : []), "--yes", "--scope", t.deploy.scope, "--name", t.deploy.project];
-  const plan = { target: name, provider: t.deploy.provider, project: `${t.deploy.scope}/${t.deploy.project}`, dir: out, production: prod, files: countFiles(out), command: argv.join(" ") };
+  if (vercel.scope === "your-vercel-team") throw new CliError("CONFIG_PLACEHOLDER", `targets.${name}.deploy.scope is still the template placeholder`, `dotframe config set targets.${name}.deploy.scope '"<team>"'`, skill);
+  const argv = ["vercel", "deploy", ...(prod ? ["--prod"] : []), "--yes", "--scope", vercel.scope, "--name", vercel.project];
+  const plan = { target: name, provider: vercel.provider, project: `${vercel.scope}/${vercel.project}`, dir: out, production: prod, files: countFiles(out), command: argv.join(" ") };
   if (ctx.dryRun) {
     print(ctx, { dryRun: true, ...plan }, (): string => `would deploy ${out} to ${plan.project}${prod ? " (production)" : " (preview)"}\n  ${plan.command}`);
     return;
@@ -61,7 +72,7 @@ export async function deploy(ctx: Ctx, name: string | undefined, prod: boolean):
   gate(ctx, `deploy ${name}${prod ? " to production" : ""}`, skill);
   if (!which("vercel")) throw new CliError("TOOL_MISSING", "vercel CLI not found", "npm i -g vercel", skill);
   const r = await exec(ctx, config.root, { label: "vercel deploy", argv, cwd: out });
-  if (r.code !== 0) throw new CliError("DEPLOY_FAILED", r.tail, "vercel whoami; vercel switch " + t.deploy.scope, skill);
+  if (r.code !== 0) throw new CliError("DEPLOY_FAILED", r.tail, "vercel whoami; vercel switch " + vercel.scope, skill);
   const url = r.tail.match(/https:\/\/\S+\.vercel\.app/g)?.pop() ?? null;
   print(ctx, { ...plan, url, ms: r.ms }, (): string => `deployed ${url ?? "(url not found in output)"}`);
 }
@@ -91,8 +102,11 @@ export async function relay(ctx: Ctx, region: string | undefined): Promise<void>
 export async function device(ctx: Ctx, name: string): Promise<void> {
   const config = loadConfig();
   const t = target(config, name);
-  if (!t.app || !t.device) throw new CliError("NO_DEVICE", `target "${name}" needs "app" and "device" in dotframe.json`, "xcrun devicectl list devices", "ios");
-  const app = resolve(config.root, t.app);
+  // Native iOS targets build into dist/<target>/<Scheme>.app; others name the app explicitly.
+  const builtApp = t.native?.platform === "ios" && existsSync(join(config.root, "dist", name)) ? readdirSync(join(config.root, "dist", name)).find((f: string): boolean => f.endsWith(".app")) : undefined;
+  const appPath = t.app ?? (builtApp ? join("dist", name, builtApp) : undefined);
+  if (!appPath || !t.device) throw new CliError("NO_DEVICE", `target "${name}" needs "device" in dotframe.json${appPath ? "" : " and a built app (dotframe build ios)"}`, "xcrun devicectl list devices", "ios");
+  const app = resolve(config.root, appPath);
   const argv = ["xcrun", "devicectl", "device", "install", "app", "--device", t.device, app];
   if (ctx.dryRun) {
     print(ctx, { dryRun: true, command: argv.join(" ") }, (): string => `would run: ${argv.join(" ")}`);
@@ -107,7 +121,7 @@ export async function device(ctx: Ctx, name: string): Promise<void> {
 
 // Downloads wgpu-native and builds SDL3 into the vendor dir (default ~/.dotframe/vendor). Local only, slow once.
 export async function vendor(ctx: Ctx, platform: string | undefined): Promise<void> {
-  if (platform !== "macos" && platform !== "windows") throw new CliError("MISSING_ARG", "vendor needs macos or windows", "dotframe vendor macos", "macos");
+  if (platform !== "macos" && platform !== "windows" && platform !== "ios") throw new CliError("MISSING_ARG", "vendor needs macos, windows or ios", "dotframe vendor macos", "macos");
   const p = platform as NativePlatform;
   const dir = vendorDir(p);
   const before = vendorStatus(p);
@@ -120,7 +134,7 @@ export async function vendor(ctx: Ctx, platform: string | undefined): Promise<vo
     print(ctx, { dryRun: true, platform: p, dir, missing: before.missing }, (): string => `would download and build ${before.missing.join(", ")} into ${dir}`);
     return;
   }
-  for (const tool of ["curl", "cmake", "unzip", ...(p === "windows" ? ["zig"] : [])]) {
+  for (const tool of ["curl", "cmake", "unzip", ...(p === "windows" ? ["zig"] : []), ...(p === "ios" ? ["xcodebuild"] : [])]) {
     if (!which(tool)) throw new CliError("TOOL_MISSING", `${tool} not found`, `brew install ${tool}`, "macos");
   }
   await runSteps(ctx, ENGINE, [command], "macos");

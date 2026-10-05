@@ -19,3 +19,17 @@ dotframe deploy web --prod --yes     # only after the human approved the plan
 - Content-hash the bundle (`main.<hash>.js`) and serve `index.html` with `Cache-Control: no-cache`, so browsers and Discord's proxy never run a stale build.
 - `deploy` without `--prod` makes a preview. Prefer it for checks.
 - Verify a deploy by opening the URL with agent-browser and taking a screenshot, not by the exit code.
+
+## Docker and Dokploy (VPS)
+
+```sh
+dotframe deploy init web --provider dokploy     # deploy/Dockerfile.web, Dockerfile.relay, nginx.conf, compose.yaml
+dotframe doctor --docker                        # builds the web image locally, as the server will
+dotframe config set targets.web.deploy.compose '"<compose id>"'   # vps compose list
+dotframe deploy web --dry-run && dotframe deploy web --yes
+```
+
+- The web image installs the tools in `requires` (dotframe.json, for example `["ffmpeg"]`) and builds with dotframe; the relay image runs `dotframe relay serve`. The build context is the repo root, so monorepo ports see workspace code.
+- In Dokploy, route the domain's `/` to service `web` (port 80) and `/relay` to service `relay` (port 8787). For Discord, map `/` and `/relay` to that host.
+- Dokploy builds the pushed branch, not your working tree: deploy warns about unpushed or uncommitted work. On failure it returns the build log (through `vps compose logs`).
+- Hash bundles with a tool that exists in the image: `shasum` is missing on Debian images (use `sha256sum` or Bun's hashing, as `scripts/build-web.ts` does).

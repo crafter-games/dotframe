@@ -8,7 +8,16 @@
       "deploy": { "provider": "vercel", "project": "__NAME__", "scope": "__SCOPE__" }
     },
     "macos": { "native": { "platform": "macos", "entry": "main.native.ts" } },
-    "windows": { "native": { "platform": "windows", "entry": "main.native.ts" } }
+    "windows": { "native": { "platform": "windows", "entry": "main.native.ts" } },
+    "ios": {
+      "native": {
+        "platform": "ios",
+        "entry": "main.ios.ts",
+        "bundleId": "com.example.__NAME__",
+        "team": "YOUR_TEAM_ID",
+        "orientation": "landscape"
+      }
+    }
   },
   "assets": { "localOnly": [] }
 }

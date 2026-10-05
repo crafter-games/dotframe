@@ -1,19 +1,54 @@
 ---
 name: ios
-description: Build and install the iOS target of a dotframe game. Use when building for iPhone, fixing vendor links, signing, or installing on a device.
+description: Build and install the iOS target of a dotframe game. Use when building for iPhone or iPad, writing the iOS entry, setting the bundle id, team, icon or orientation, installing on a device, or debugging touch input on iOS.
 ---
 # ios
 
 ```sh
-dotframe doctor --json               # vendor links, scriptc, xcodegen, xcodebuild
-dotframe doctor --fix                # creates missing vendor symlinks
-dotframe build ios --json            # glue, scriptc library, xcodegen, xcodebuild
+dotframe vendor ios                  # once per machine: SDL3 (Xcode generator) and wgpu-native for iOS
+dotframe doctor                      # vendor:ios, ios-runtime (scriptc pack matching the compiler), team placeholder
+dotframe build ios --json            # dist/ios/<Scheme>.app
 dotframe device install ios --dry-run
-dotframe device install ios --yes    # after approval; phone unlocked and trusted
+dotframe device install ios --yes    # after the human approves; phone unlocked and trusted
 ```
 
-- The iOS build needs SDL3 and wgpu-native iOS builds under `vendor/dotframe/vendor/`. They are local symlinks (`links` in dotframe.json), not in git. `doctor --fix` creates them when the targets exist.
-- Signing uses the team in the Xcode project; `-allowProvisioningUpdates` lets xcodebuild fetch profiles. A locked password manager can fail signing with `failed to fill whole buffer`: ask the human to unlock it and retry.
-- `targets.ios.app` is the built `.app`; `targets.ios.device` comes from `xcrun devicectl list devices`.
-- `build ios --release` refuses assets marked local-only (see `assets`). Debug builds for your own phone are fine.
-- Confirm on the device by asking the human, or with a screenshot if available. A successful install is not a working game.
+## The target
+
+```json
+"ios": { "native": { "platform": "ios", "entry": "main.ios.ts", "bundleId": "run.crafter.mygame", "team": "ABCDE12345",
+                     "icon": "assets/icon.png", "orientation": "landscape", "assets": "assets", "displayName": "My Game" },
+         "device": "<udid from xcrun devicectl list devices>" }
+```
+
+The CLI stages the entry's import graph (like macOS), generates the library glue and profile, builds the scriptc library, generates the SDL3 host (`main.c`), `Info.plist` and `project.yml`, scales `icon` to 1024 px (iOS derives every other size; without `icon` the app has none), copies `assets` to `<app>/game/<assets>` and the engine fonts to `<app>/game/dotframe/assets/fonts`, and runs xcodegen and xcodebuild. Everything generated lives in `.dotframe/native/ios/`; nothing to commit.
+
+## The entry
+
+scriptc library mode: the host calls `init(base)` once with the bundle's game folder and `frame(time)` every refresh. There are no promises, so load assets synchronously with the library platform's `readFile`, `image` and `sound`.
+
+```ts
+import type { Frame } from "dotframe/src/gpu";
+import { openLibraryPlatform } from "dotframe/src/native/library";
+
+let tick: Frame | null = null;
+export function init(base: string): void {
+  const platform = openLibraryPlatform(WINDOW);
+  const png = platform.readFile(`${base}/assets/hero.png`);
+  tick = createSetup(/* ... */)(platform);
+}
+export function frame(time: number): boolean {
+  return tick ? tick(time) : true;
+}
+```
+
+Templates ship this as `main.ios.ts` over the same `src/setup.ts` web and macOS use. A game with async loaders adds a sync variant that takes a `(path) => Uint8Array` reader, or writes one loader against that reader for every target.
+
+## Notes
+
+- The scriptc runtime pack (`@scriptc/runtime-ios-arm64`) must match `scriptc --version`. Right after a scriptc release, bun's minimum release age blocks it; doctor prints the install command with `--minimum-release-age 0`.
+- Touches never synthesize a mouse (SDL_HINT_TOUCH_MOUSE_EVENTS is off), so read `input.touches()` for fingers; `input.pointer()` stays the mouse.
+- Size the logical canvas from `gpu.aspect()` (templates do): a 1280x720 canvas on a 2.16 phone stretches otherwise.
+- Library mode has no `WebSocket`; online play is web only for now (`dotframe/src/relay-client` is web only).
+- Signing is automatic with `team`; a locked password manager can fail signing with `failed to fill whole buffer`: ask the human to unlock it and retry.
+- `build ios --release` refuses assets marked local-only (see `assets`).
+- Confirm on the device by asking the human. A successful install is not a working game.
