@@ -1,6 +1,6 @@
 {
   "name": "dotframe",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "TS-first game engine and agent-first CLI: one codebase for web, Discord, iOS and native binaries",
   "license": "MIT",
   "type": "module",

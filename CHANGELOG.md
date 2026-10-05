@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.7
+
+From dogfood rounds 5 and 6 (Craft Ones on iOS, online, and on the VPS).
+
+- Engine: `src/detmath` (sin, cos, tan, atan, atan2, exp, log, pow, hypot from + - * / and sqrt with fdlibm kernels; the same bits on macOS, Linux arm64 and Linux x64) and `src/checksum` (fixed-order number hash).
+- Engine: `src/netplay`, a game-agnostic rollback engine over the Sim contract's shape, and `src/relay-client` (web) for the relay.
+- `relay serve` runs the netplay relay locally; `play --online` drives a scripted match in two browsers through it and compares checksums.
+- `deploy init <target> --provider dokploy` writes the Docker files (web, relay, nginx, compose); `deploy` redeploys through vps and returns the build log on failure. `requires` in dotframe.json lists build tools; `doctor --docker` builds the image locally.
+- Native iOS target: `{"native": {"platform": "ios", ...}}` generates the host, plist, project, glue and icon and runs xcodegen and xcodebuild. `vendor ios`; doctor checks the scriptc iOS runtime pack.
+- `doctor` warns about platform-dependent math in code the sim reaches (`sim:math`).
+- `desync` reports restore cost and warns when it grows with the frame.
+- Native: touches no longer synthesize a mouse (phantom pointer on iOS).
+- Templates: online play through the relay (`?room=`), `main.ios.ts`, an aspect-filling canvas, and snapshot and restore without structuredClone or Object.assign.
+
 ## 0.1.6
 
 From the Craft Ones native port.
