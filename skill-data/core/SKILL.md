@@ -56,6 +56,12 @@ Prove a check can fail before trusting its green: make render change one field o
 
 Pass `--json` and read `ok`. Errors look like `{"ok": false, "error": {"code", "message", "fix", "skill"}}`. Apply `fix`, and when it is not obvious run `dotframe skills get <skill>`. Exit codes: 0 ok, 1 failure, 2 approval required. Full list: `dotframe skills get core --full`.
 
+## Engine modules agents reach for
+
+- `dotframe/src/detmath`: deterministic sin, cos, tan, atan, atan2, exp, log, pow, hypot for simulation code.
+- `dotframe/src/checksum`: a fixed-order checksum over numbers.
+- `dotframe/src/netplay` and `dotframe/src/relay-client`: rollback netplay and the relay connection (see netplay).
+
 ## Other guides
 
 `dotframe skills list`. Load the one that matches the task: netplay, export-web, discord, ios, macos, relay, game-design, assets.
