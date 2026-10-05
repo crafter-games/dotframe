@@ -11,7 +11,14 @@ const FULL_CHARGE = 60;
 
 export function createSetup(): Setup {
   return ({ gpu, input, audio }: Platform): Frame => {
-    const draw = createDraw2D(gpu, WINDOW.width, WINDOW.height);
+    // The logical canvas keeps the game's aspect and grows to fill the screen: on a 2.16 phone the game area is
+    // centered with extra width around it instead of being stretched.
+    const aspect = gpu.aspect();
+    const logicalWidth = Math.max(WINDOW.width, Math.round(WINDOW.height * aspect));
+    const logicalHeight = Math.max(WINDOW.height, Math.round(WINDOW.width / aspect));
+    const offsetX = (logicalWidth - WINDOW.width) / 2;
+    const offsetY = (logicalHeight - WINDOW.height) / 2;
+    const draw = createDraw2D(gpu, logicalWidth, logicalHeight);
     const game = createGame(Math.floor(Math.random() * 1e9));
     let simulated = -1;
     // Hold to charge, release to act: the pattern most mouse and touch games need.
@@ -38,12 +45,14 @@ export function createSetup(): Setup {
         simulated += STEP;
       }
       draw.begin();
+      draw.translate(offsetX, offsetY);
       render(game, draw);
       if (charge > 0) {
         // Charge meter under the play area.
         draw.setFillStyle("#ffffff");
         draw.fillRect(20, WINDOW.height - 16, (WINDOW.width - 40) * (charge / FULL_CHARGE), 6);
       }
+      draw.resetTransform();
       draw.end({ r: 0, g: 0, b: 0 });
       return true;
     };
