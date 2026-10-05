@@ -1,5 +1,5 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, symlinkSync, unlinkSync } from "node:fs";
-import { dirname, relative, resolve, sep } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { type Config, type Ctx, findRoot, home, loadConfig, print, which } from "../lib";
 import type { Draw2D } from "../../src/draw2d";
 import type { Sim } from "../../src/sim";
@@ -151,11 +151,28 @@ async function renderCheck(sim: Sim, root: string): Promise<Check> {
 // `dotframe-allow-math` to silence it.
 const NONDETERMINISTIC = /\bMath\.(sin|cos|tan|asin|acos|atan|atan2|sinh|cosh|tanh|asinh|acosh|atanh|exp|expm1|log|log1p|log2|log10|pow|cbrt|hypot)\b|[\w)\]]\s*\*\*\s*[\w(]/;
 
+// The engine's own files (draw2d's arcs, raster2d) are render code, however the game imports them: a vendored
+// submodule, node_modules, or a relative path.
+function engineFile(file: string, cache: Map<string, boolean>): boolean {
+  for (let dir = dirname(file); dirname(dir) !== dir; dir = dirname(dir)) {
+    const known = cache.get(dir);
+    if (known !== undefined) return known;
+    const pkg = join(dir, "package.json");
+    if (existsSync(pkg)) {
+      const isEngine = (JSON.parse(readFileSync(pkg, "utf8")) as { name?: string }).name === "dotframe";
+      cache.set(dir, isEngine);
+      return isEngine;
+    }
+  }
+  return false;
+}
+
 function mathCheck(simFile: string): Check {
   const base = { check: "sim:math", skill: "netplay" };
   const hits: string[] = [];
+  const engine = new Map<string, boolean>();
   for (const file of importGraph(simFile).files) {
-    if (!/\.tsx?$/.test(file) || file.includes(`${sep}node_modules${sep}`)) continue;
+    if (!/\.tsx?$/.test(file) || file.includes(`${sep}node_modules${sep}`) || engineFile(file, engine)) continue;
     readFileSync(file, "utf8")
       .split("\n")
       .forEach((line: string, i: number): void => {
