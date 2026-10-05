@@ -127,7 +127,7 @@ symlinks; --docker builds the dokploy web image locally, as the server would.`,
 dotframe config set <key> <json> [--dry-run]
 
 Dotted keys. Values are JSON (strings need inner quotes). set rewrites dotframe.json with 2-space indent and short
-objects and arrays on one line.
+objects and arrays on one line. vendor is per machine: dotframe config set vendor <dir> writes ~/.dotframe/config.json.
 
   dotframe config set targets.web.deploy.scope '"my-team"'`,
   new: `dotframe new <name> [--template fighter|platformer|blank] [--no-install] [--json]

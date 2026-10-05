@@ -1,7 +1,7 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
-import { CliError, type Ctx, exec, home, print, type RunResult, which } from "./lib";
+import { CliError, type Ctx, exec, home, loadUserConfig, print, type RunResult, which } from "./lib";
 
 // The engine this CLI belongs to: a git checkout or node_modules/dotframe.
 export const ENGINE = resolve(import.meta.dir, "..");
@@ -16,10 +16,12 @@ export interface NativeTarget {
   name?: string;
 }
 
-// Vendored SDL3 and wgpu-native: DOTFRAME_VENDOR, else a checkout's own vendor/ when it is populated, else a
-// per-user cache that survives reinstalling the package.
+// Vendored SDL3 and wgpu-native: DOTFRAME_VENDOR, else `dotframe config set vendor <dir>`, else a checkout's own
+// vendor/ when it is populated, else a per-user cache that survives reinstalling the package.
 export function vendorDir(platform: NativePlatform): string {
   if (process.env.DOTFRAME_VENDOR) return resolve(home(process.env.DOTFRAME_VENDOR));
+  const configured = loadUserConfig().vendor;
+  if (configured) return resolve(home(configured));
   const local = join(ENGINE, "vendor");
   if (existsSync(join(local, "wgpu", platform))) return local;
   return join(homedir(), ".dotframe", "vendor");
@@ -46,7 +48,7 @@ export function sdlLibrary(platform: NativePlatform): string {
 }
 
 export function vendorFix(platform: NativePlatform): string {
-  return `dotframe vendor ${platform} (builds into ~/.dotframe/vendor), or point DOTFRAME_VENDOR at an existing vendor dir such as a dotframe checkout's vendor/`;
+  return `dotframe vendor ${platform} (builds into ~/.dotframe/vendor), or reuse an existing vendor dir such as a dotframe checkout's vendor/: dotframe config set vendor <dir> (once per machine) or DOTFRAME_VENDOR=<dir>`;
 }
 
 const SPECIFIER = /(?:from\s+|import\s*\(\s*|import\s+)(["'])([^"']+)\1/g;
