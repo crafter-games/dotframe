@@ -47,6 +47,9 @@ export async function doctor(ctx: Ctx, fix: boolean, docker = false): Promise<vo
       }
     }
     for (const [name, t] of Object.entries(config.targets)) {
+      if (t.native?.platform === "ios" && t.native.bundleId.startsWith("com.example.")) {
+        checks.push({ check: `ios:${name}:bundleId`, ok: false, detail: `bundle id ${t.native.bundleId} is the template placeholder; Apple will not register it`, fix: `dotframe config set targets.${name}.native.bundleId '"<reverse domain you own>.<game>"'`, skill: "ios" });
+      }
       if (t.native?.platform === "ios" && t.native.team === "YOUR_TEAM_ID") {
         checks.push({ check: `ios:${name}`, ok: false, detail: "the iOS team is still the template placeholder", fix: `dotframe config set targets.${name}.native.team '"<Apple team id>"'`, skill: "ios" });
       }

@@ -13,13 +13,17 @@ interface Probe {
 // Two browsers play one online match through a local relay, each with a scripted masher, and their checksums at
 // every 30th confirmed frame must agree. The game's web entry honors ?room=, ?relay= and ?mash=, and publishes
 // globalThis.__dotframe = { frame, confirmed, status, sums } (the templates do; see the netplay skill).
-export async function playOnline(ctx: Ctx, room: string | undefined, args: { frames?: string; out?: string }): Promise<void> {
+export async function playOnline(ctx: Ctx, room: string | undefined, args: { frames?: string; out?: string; seeds?: string }): Promise<void> {
   const skill = "netplay";
   const config = loadConfig();
   const t = target(config, "web");
   if (!t.out) throw new CliError("NO_OUT", "the web target needs an out dir", "", "export-web");
   if (!which("agent-browser")) throw new CliError("TOOL_MISSING", "agent-browser not found (play drives two browsers)", "npm i -g agent-browser && agent-browser install", skill);
   const frames = num("frames", args.frames, 600, 60);
+  // One mash seed per peer; different seeds make the peers press different inputs, which is what exercises rollback.
+  const seedParts = (args.seeds ?? "1,2").split(",");
+  if (seedParts.length !== 2) throw new CliError("BAD_ARG", `--seeds needs two comma-separated seeds, got "${args.seeds}"`, "--seeds 7,42", skill);
+  const seeds = seedParts.map((part: string): number => num("seeds", part.trim(), 1));
   const name = room ?? `play-${Date.now().toString(36)}`;
   const outDir = resolve(process.cwd(), args.out ?? ".dotframe/play");
   await runSteps({ ...ctx, json: true }, config.root, t.steps ?? [], "export-web");
@@ -46,7 +50,7 @@ export async function playOnline(ctx: Ctx, room: string | undefined, args: { fra
   };
   try {
     for (const [i, session] of sessions.entries()) {
-      const url = `http://localhost:${server.port}/?room=${encodeURIComponent(name)}&relay=${encodeURIComponent(`ws://localhost:${relay.port}`)}&mash=${i + 1}`;
+      const url = `http://localhost:${server.port}/?room=${encodeURIComponent(name)}&relay=${encodeURIComponent(`ws://localhost:${relay.port}`)}&mash=${seeds[i]}`;
       const opened = await ab(session, "open", url);
       if (opened.code !== 0) throw new CliError("BROWSER_FAILED", opened.tail, "agent-browser install", skill);
     }
@@ -78,7 +82,7 @@ export async function playOnline(ctx: Ctx, room: string | undefined, args: { fra
       if (shot.code !== 0 || !existsSync(shots[i])) throw new CliError("BROWSER_FAILED", `screenshot of peer ${i} failed: ${shot.tail}`, "", skill);
     }
     const ok = mismatch === undefined && compared.length > 0;
-    print(ctx, { ok, room: name, frames: Math.min(a.confirmed, b.confirmed), compared: compared.length, firstMismatch: mismatch ?? null, seconds: Math.round((Date.now() - started) / 1000), screenshots: shots }, (): string =>
+    print(ctx, { ok, room: name, seeds, frames: Math.min(a.confirmed, b.confirmed), compared: compared.length, firstMismatch: mismatch ?? null, seconds: Math.round((Date.now() - started) / 1000), screenshots: shots }, (): string =>
       [
         ok ? `in sync: ${compared.length} checksums compared over ${Math.min(a.confirmed, b.confirmed)} confirmed frames` : mismatch !== undefined ? `DESYNC at frame ${mismatch}` : "no checksums to compare",
         `screenshots: ${shots.join(", ")} (open them and look)`,
