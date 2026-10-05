@@ -91,14 +91,15 @@ Failures keep the full output in .dotframe/logs and return its path. --release r
   dotframe build web
   dotframe build ios --release`,
   deploy: `dotframe deploy <target> [--prod] [--dry-run] [--yes] [--json]
-dotframe deploy init <target> --provider dokploy [--compose <id>] [--yes]
+dotframe deploy init <target> --provider dokploy [--compose <id>] [--site <dir>] [--path /play/] [--yes]
 
 provider vercel: uploads targets.<target>.out. provider dokploy: redeploys the compose stack (it builds from the
 pushed branch), waits for the result, and on failure returns the build log. Without --yes it stops with
 APPROVAL_REQUIRED (exit 2); show the --dry-run plan to a human first.
 
 init writes deploy/Dockerfile.web (installs "requires" tools, builds with dotframe), deploy/Dockerfile.relay
-(dotframe relay serve), deploy/nginx.conf (no-cache index.html) and deploy/compose.yaml (web at /, relay at /relay).
+(dotframe relay serve), deploy/nginx.conf (no-cache HTML) and deploy/compose.yaml (web at /, relay at /relay).
+--site serves a static folder (a landing page) at / with the game at --path (default /play/ with a site).
 
   dotframe deploy web --prod --dry-run
   dotframe deploy init web --provider dokploy`,
@@ -175,6 +176,8 @@ const { values, positionals } = parseArgs({
     docker: { type: "boolean" },
     online: { type: "boolean" },
     seeds: { type: "string" },
+    site: { type: "string" },
+    path: { type: "string" },
     provider: { type: "string" },
     compose: { type: "string" },
   },
@@ -195,7 +198,7 @@ try {
   else if (command === "replay" && rest[0] === "verify") await verify(ctx, rest.slice(1));
   else if (command === "desync") await desync(ctx, v);
   else if (command === "build") await build(ctx, rest[0], values.release === true);
-  else if (command === "deploy" && rest[0] === "init") await deployInit(ctx, rest[1], v.provider, v.compose);
+  else if (command === "deploy" && rest[0] === "init") await deployInit(ctx, rest[1], v.provider, v.compose, v.site, v.path);
   else if (command === "deploy") await deploy(ctx, rest[0], values.prod === true);
   else if (command === "relay" && rest[0] === "deploy") await relay(ctx, v.region);
   else if (command === "relay" && rest[0] === "serve") {

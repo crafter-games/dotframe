@@ -57,7 +57,7 @@ export interface Target {
   out?: string;
   app?: string;
   device?: string;
-  deploy?: { provider: "vercel"; project: string; scope: string } | { provider: "dokploy"; compose: string; dir?: string };
+  deploy?: { provider: "vercel"; project: string; scope: string } | { provider: "dokploy"; compose: string; dir?: string; site?: string; path?: string };
 }
 
 export interface Config {
