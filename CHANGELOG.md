@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.9
+
+The rest of round 7, which missed the 0.1.8 merge.
+
+- `dotframe/src/probe`: `createProbe()` publishes `globalThis.__dotframe` for `play --online`, and `createMasher(seed, random)` gives scripted inputs, so games do not write either by hand. Templates use them.
+- `play --online --seeds a,b` picks each peer's mash seed.
+- `doctor` fails on the template's placeholder iOS bundle id (`com.example.*`), which Apple will not register.
+
 ## 0.1.8
 
 From dogfood round 7 (Craft Ones on 0.1.7).
