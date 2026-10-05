@@ -160,7 +160,7 @@ export async function desync(ctx: Ctx, args: DesyncArgs): Promise<void> {
     if (reference.inspect && f % every === 0) truthState.set(f, flatten(reference.inspect()));
   }
 
-  const peer = async (self: number): Promise<{ checksums: number[]; states: Map<number, string>; rollbacks: number; maxDepth: number }> => {
+  const peer = async (self: number): Promise<{ checksums: number[]; states: Map<number, string>; rollbacks: number; maxDepth: number; restores: { frame: number; ms: number }[] }> => {
     const other = 1 - self;
     const noise = lcg(seed * 31 + other);
     // Arrival tick of the remote input for each frame, in order, as the link test does.
@@ -181,6 +181,8 @@ export async function desync(ctx: Ctx, args: DesyncArgs): Promise<void> {
     const states = new Map<number, string>();
     let rollbacks = 0;
     let maxDepth = 0;
+    // Time per restore by the frame it restores to: a restore that replays from frame 0 grows with the match.
+    const restores: { frame: number; ms: number }[] = [];
     let next = 0;
     let lastKnown = sim.neutral;
     const stepFrame = (f: number): void => {
@@ -209,12 +211,14 @@ export async function desync(ctx: Ctx, args: DesyncArgs): Promise<void> {
       if (rollbackFrom >= 0) {
         rollbacks += 1;
         maxDepth = Math.max(maxDepth, simulated - rollbackFrom);
+        const t0 = performance.now();
         run.restore(snaps[rollbackFrom]);
+        restores.push({ frame: rollbackFrom, ms: performance.now() - t0 });
         for (let f = rollbackFrom; f < simulated; f++) stepFrame(f);
       }
       if (t < frames) stepFrame(t);
     }
-    return { checksums, states, rollbacks, maxDepth };
+    return { checksums, states, rollbacks, maxDepth, restores };
   };
 
   const peers = [await peer(0), await peer(1)];
@@ -239,7 +243,17 @@ export async function desync(ctx: Ctx, args: DesyncArgs): Promise<void> {
     warnings.push(`this link needed ${deepest}-frame rollbacks but the game's window is ${sim.rollbackWindow}: real play would stall`);
   }
   if (!sim.rollbackWindow) warnings.push("the sim declares no rollbackWindow, so rollback depth is not checked against the game");
-  print(ctx, { ok, warnings, frames, latencyFrames: latency, jitterFrames: jitter, delay, inputs: source.describe, peers: report }, (): string =>
+  // Restore cost early vs late in the run (first and last tenth of the rollbacks). Heuristic: when late restores cost
+  // more than twice the early ones, restore probably replays from an earlier point, and real rollbacks will stall
+  // late in a match even though desync passes.
+  const restores = peers[0].restores;
+  const tenth = Math.max(1, Math.floor(restores.length / 10));
+  const mean = (xs: { ms: number }[]): number => xs.reduce((a, r) => a + r.ms, 0) / Math.max(1, xs.length);
+  const restoreMs = { early: mean(restores.slice(0, tenth)), late: mean(restores.slice(-tenth)) };
+  if (restores.length >= 20 && restoreMs.late > 2 * restoreMs.early) {
+    warnings.push(`restore cost grows with the frame: ${restoreMs.early.toFixed(3)} ms early vs ${restoreMs.late.toFixed(3)} ms late; restore should copy a snapshot, not replay`);
+  }
+  print(ctx, { ok, warnings, restoreMs, frames, latencyFrames: latency, jitterFrames: jitter, delay, inputs: source.describe, peers: report }, (): string =>
     [
       `${frames} frames, latency ${latency}f, jitter ${jitter}f, delay ${delay}f (${source.describe})`,
       ...report.map((r): string => {
