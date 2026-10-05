@@ -22,7 +22,13 @@ export async function loadBytes(path: string): Promise<Uint8Array> {
   return new Uint8Array(await response.arrayBuffer());
 }
 
-export async function run(options: WindowOptions, setup: Setup): Promise<void> {
+export interface RunOptions {
+  // "fixed" (default): a canvas of the window options' size. "window": the canvas fills the browser window and
+  // follows its size; gpu.aspect() reports the current shape.
+  fit?: "fixed" | "window";
+}
+
+export async function run(options: WindowOptions, setup: Setup, runOptions: RunOptions = {}): Promise<void> {
   if (!navigator.gpu) throw new Error("WebGPU is not available in this browser");
   const adapter = await navigator.gpu.requestAdapter();
   if (!adapter) throw new Error("No WebGPU adapter");
@@ -31,21 +37,37 @@ export async function run(options: WindowOptions, setup: Setup): Promise<void> {
   document.title = options.title;
   const canvas = document.createElement("canvas");
   const dpr = globalThis.devicePixelRatio ?? 1;
-  canvas.style.width = `${options.width}px`;
-  canvas.style.height = `${options.height}px`;
-  canvas.width = Math.round(options.width * dpr);
-  canvas.height = Math.round(options.height * dpr);
+  const fill = runOptions.fit === "window";
+  const cssSize = (): [number, number] => (fill ? [window.innerWidth, window.innerHeight] : [options.width, options.height]);
+  const sizeCanvas = (): void => {
+    const [w, h] = cssSize();
+    canvas.style.width = `${w}px`;
+    canvas.style.height = `${h}px`;
+    canvas.width = Math.max(1, Math.round(w * dpr));
+    canvas.height = Math.max(1, Math.round(h * dpr));
+  };
+  if (fill) {
+    document.body.style.margin = "0";
+    document.body.style.overflow = "hidden";
+    canvas.style.display = "block";
+  }
+  sizeCanvas();
   document.body.appendChild(canvas);
 
   const context = canvas.getContext("webgpu");
   if (!context) throw new Error("Could not create a WebGPU canvas context");
   const format = navigator.gpu.getPreferredCanvasFormat();
   context.configure({ device, format, alphaMode: "opaque" });
-  const depthTexture = device.createTexture({
-    size: [canvas.width, canvas.height],
-    format: "depth24plus",
-    usage: GPUTextureUsage.RENDER_ATTACHMENT,
-  });
+  const createDepth = (): GPUTexture =>
+    device.createTexture({ size: [canvas.width, canvas.height], format: "depth24plus", usage: GPUTextureUsage.RENDER_ATTACHMENT });
+  let depthTexture = createDepth();
+  if (fill) {
+    window.addEventListener("resize", (): void => {
+      sizeCanvas();
+      depthTexture.destroy();
+      depthTexture = createDepth();
+    });
+  }
 
   const pipelines: GPURenderPipeline[] = [];
   const buffers: GPUBuffer[] = [];

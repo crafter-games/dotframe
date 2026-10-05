@@ -6,6 +6,8 @@ import { BufferUsage, type Color, type Draw, type RenderGpu, type Texture, Verte
 
 export interface Draw2D {
   begin: () => void;
+  // Changes the logical canvas size (for a window that resizes); coordinates map onto the whole surface.
+  resize: (width: number, height: number) => void;
   end: (clear: Color) => void;
   save: () => void;
   restore: () => void;
@@ -652,6 +654,11 @@ export function createDraw2D(gpu: RenderGpu, width: number, height: number): Dra
   };
 
   return {
+    resize: (w: number, h: number): void => {
+      uniforms[0] = w;
+      uniforms[1] = h;
+      gpu.writeBuffer(uniformBuffer, new Uint8Array(uniforms.buffer, uniforms.byteOffset, uniforms.byteLength));
+    },
     begin: (): void => {
       vertexCount = 0;
       batches.length = 0;
