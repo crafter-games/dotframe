@@ -1,4 +1,4 @@
-import { connectRelay } from "dotframe/src/netplay";
+import { connectRelay } from "dotframe/src/relay-client";
 import { run } from "dotframe/src/web/run";
 import { WINDOW } from "./src/game";
 import { createSetup } from "./src/setup";

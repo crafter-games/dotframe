@@ -4,6 +4,7 @@ import { type Config, type Ctx, findRoot, home, loadConfig, print, which } from 
 import type { Draw2D } from "../../src/draw2d";
 import type { Sim } from "../../src/sim";
 import { importGraph, vendorFix, vendorStatus } from "../native";
+import { iosPackFix, iosRuntimePack } from "../ios";
 import { dockerCheck } from "./docker";
 import { firstDifference, flatten, headlessRun, loadSim } from "../simkit";
 
@@ -46,6 +47,9 @@ export async function doctor(ctx: Ctx, fix: boolean, docker = false): Promise<vo
       }
     }
     for (const [name, t] of Object.entries(config.targets)) {
+      if (t.native?.platform === "ios" && t.native.team === "YOUR_TEAM_ID") {
+        checks.push({ check: `ios:${name}`, ok: false, detail: "the iOS team is still the template placeholder", fix: `dotframe config set targets.${name}.native.team '"<Apple team id>"'`, skill: "ios" });
+      }
       if (t.deploy?.provider === "vercel" && t.deploy.scope === "your-vercel-team") {
         checks.push({ check: `deploy:${name}`, ok: false, detail: "deploy scope is still the template placeholder", fix: `dotframe config set targets.${name}.deploy.scope '"<vercel team>"'`, skill: "export-web" });
       }
@@ -56,6 +60,11 @@ export async function doctor(ctx: Ctx, fix: boolean, docker = false): Promise<vo
       checks.push({ check: `vendor:${name}`, ok: v.missing.length === 0, detail: v.missing.length === 0 ? `${v.dir} (${v.sdl})` : `missing in ${v.dir}: ${v.missing.join(", ")}`, fix: v.missing.length === 0 ? "" : vendorFix(t.native.platform), skill: t.native.platform });
       checks.push(tool("scriptc", "native builds", "npm i -g scriptc", t.native.platform));
       if (t.native.platform === "windows") checks.push(tool("zig", "windows cross builds", "brew install zig", "macos"));
+      if (t.native.platform === "ios") {
+        checks.push(tool("xcodegen", "iOS project", "brew install xcodegen", "ios"));
+        const pack = await iosRuntimePack(ctx, config.root);
+        checks.push({ check: `ios-runtime:${name}`, ok: pack.path !== null, detail: pack.path ? `@scriptc/runtime-ios-arm64 ${pack.want}` : pack.found ? `runtime pack ${pack.found} does not match scriptc ${pack.want}` : `@scriptc/runtime-ios-arm64 ${pack.want} not installed`, fix: pack.path ? "" : iosPackFix(pack.want), skill: "ios" });
+      }
     }
     for (const bin of config.requires ?? []) checks.push(tool(bin, "listed in requires", `brew install ${bin}`, "export-web"));
     if (docker) {

@@ -3,6 +3,8 @@
 // it restores the snapshot taken before that frame and re-simulates to the present. Local input is delayed a few
 // frames to hide most of the latency, so rollbacks stay short.
 //
+// The relay client (web only) is in src/relay-client.
+//
 // The simulation is anything with the shape of the CLI's SimRun: step, save, restore, checksum. `dotframe desync`
 // tests the same contract.
 
@@ -227,44 +229,4 @@ export interface RelayLink<A = unknown> {
   // Netplay traffic for createRollback.
   transport: Transport;
   close: () => void;
-}
-
-// One WebSocket to a `dotframe relay serve` relay, split into game messages and netplay messages. Web only:
-// native and iOS builds have no WebSocket yet.
-export function connectRelay<A = unknown>(url: string, room: string): RelayLink<A> {
-  const socket = new WebSocket(`${url}${url.includes("?") ? "&" : "?"}room=${encodeURIComponent(room)}`);
-  let status = "connecting";
-  let slot = -1;
-  const app: A[] = [];
-  const net: NetMessage[] = [];
-  socket.onmessage = (event: MessageEvent): void => {
-    const message = JSON.parse(String(event.data)) as { t?: string; slot?: number; here?: boolean };
-    if (message.t === "hello") {
-      slot = message.slot ?? -1;
-      status = "waiting";
-    } else if (message.t === "peer") {
-      status = message.here ? "paired" : "waiting";
-      // A peer leaving drops whatever netplay traffic was in flight.
-      if (!message.here) net.length = 0;
-    } else if (message.t === "input" || message.t === "sum") net.push(message as NetMessage);
-    else app.push(message as A);
-  };
-  socket.onclose = (): void => {
-    status = "closed";
-  };
-  const send = (message: unknown): void => {
-    if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
-  };
-  return {
-    room,
-    status: (): string => status,
-    slot: (): number => slot,
-    send: (message: A): void => send(message),
-    receive: (): A[] => app.splice(0, app.length),
-    transport: {
-      send: (message: NetMessage): void => send(message),
-      receive: (): NetMessage[] => net.splice(0, net.length),
-    },
-    close: (): void => socket.close(),
-  };
 }

@@ -1,10 +1,11 @@
 // Shared by main.web.ts and main.native.ts: keyboard and pointer to inputs, fixed 60 Hz steps, one render per frame.
 // Online, the same steps go through dotframe's rollback netplay instead of straight to step().
 import { createDraw2D } from "dotframe/src/draw2d";
-import type { Frame, Setup } from "dotframe/src/gpu";
+import type { AudioPlayer } from "dotframe/src/audio";
+import type { Frame, RenderGpu } from "dotframe/src/gpu";
+import type { Input } from "dotframe/src/input";
 import { Key, MouseButton } from "dotframe/src/input";
 import { createRollback, type RelayLink, type Rollback } from "dotframe/src/netplay";
-import type { Platform } from "dotframe/src/platform";
 import { checksum, createGame, type Game, keyInput, PLAYERS, POINTER_BIT, randomInput, render, restore, snapshot, step, WINDOW } from "./game";
 
 export interface SetupOptions {
@@ -26,8 +27,15 @@ const STEP = 1 / 60;
 // A full charge takes one second of holding.
 const FULL_CHARGE = 60;
 
-export function createSetup(options: SetupOptions): Setup {
-  return ({ gpu, input, audio }: Platform): Frame => {
+// What setup needs from a platform: the async web and native platforms and iOS's library platform all have it.
+export interface SetupPlatform {
+  gpu: RenderGpu;
+  input: Input;
+  audio: AudioPlayer;
+}
+
+export function createSetup(options: SetupOptions): (platform: SetupPlatform) => Frame {
+  return ({ gpu, input, audio }: SetupPlatform): Frame => {
     // The logical canvas keeps the game's aspect and grows to fill the screen: on a 2.16 phone the game area is
     // centered with extra width around it instead of being stretched.
     const aspect = gpu.aspect();

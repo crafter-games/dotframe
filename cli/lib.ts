@@ -53,7 +53,7 @@ export interface Command {
 export interface Target {
   steps?: Command[];
   // Native targets built by the CLI itself (staged engine, vendored SDL3 and wgpu-native).
-  native?: import("./native").NativeTarget;
+  native?: import("./native").NativeTarget | import("./ios").IosTarget;
   out?: string;
   app?: string;
   device?: string;

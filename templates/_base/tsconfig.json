@@ -10,5 +10,5 @@
     "skipLibCheck": true
   },
   "include": ["*.ts", "src", "scripts"],
-  "exclude": ["main.native.ts"]
+  "exclude": ["main.native.ts", "main.ios.ts"]
 }
