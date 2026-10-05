@@ -251,49 +251,40 @@
       "returns": "i32"
     },
     {
-      "name": "dfMusicPlay",
-      "symbol": "df_music_play",
+      "name": "dfAudioActive",
+      "symbol": "df_audio_active",
+      "params": [],
+      "returns": "i32"
+    },
+    {
+      "name": "dfWsText",
+      "symbol": "df_ws_text",
       "params": [
         "i32",
-        "bool",
-        "f64"
+        "i32",
+        "string"
       ],
       "returns": "i32"
     },
     {
-      "name": "dfMusicStop",
-      "symbol": "df_music_stop",
-      "params": [],
-      "returns": "void"
-    },
-    {
-      "name": "dfMusicPause",
-      "symbol": "df_music_pause",
+      "name": "dfWs",
+      "symbol": "df_ws",
       "params": [
-        "bool"
+        "i32",
+        "i32",
+        "i32"
       ],
-      "returns": "void"
+      "returns": "i32"
     },
     {
-      "name": "dfMusicVolume",
-      "symbol": "df_music_volume",
+      "name": "dfMusic",
+      "symbol": "df_music",
       "params": [
+        "i32",
+        "f64",
+        "f64",
         "f64"
       ],
-      "returns": "void"
-    },
-    {
-      "name": "dfMasterVolume",
-      "symbol": "df_master_volume",
-      "params": [
-        "f64"
-      ],
-      "returns": "void"
-    },
-    {
-      "name": "dfAudioActive",
-      "symbol": "df_audio_active",
-      "params": [],
       "returns": "i32"
     }
   ],
@@ -325,6 +316,7 @@
     "dxgi",
     "d3dcompiler_47",
     "propsys",
-    "unwind"
+    "unwind",
+    "winhttp"
   ]
 }

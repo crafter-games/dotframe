@@ -6,7 +6,7 @@ import type { Frame, RenderGpu } from "dotframe/src/gpu";
 import type { Input } from "dotframe/src/input";
 import { Key, MouseButton } from "dotframe/src/input";
 import { createRollback, type RelayLink, type Rollback } from "dotframe/src/netplay";
-import { createMasher, createProbe } from "dotframe/src/probe";
+import { createMasher, createProbe, type ProbeState } from "dotframe/src/probe";
 import { checksum, createGame, type Game, keyInput, PLAYERS, POINTER_BIT, randomInput, render, restore, snapshot, step, WINDOW } from "./game";
 
 export interface SetupOptions {
@@ -14,6 +14,9 @@ export interface SetupOptions {
   link: RelayLink | null;
   // A seed makes player 1 a scripted masher (tests); null reads the keyboard and pointer.
   mash: number | null;
+  // Called after each step with the probe state: the web publishes it as globalThis.__dotframe, native builds write
+  // it to a file for dotframe play --native. Required, not optional: scriptc cannot represent an optional function.
+  onProbe: (state: ProbeState) => void;
 }
 
 
@@ -96,10 +99,12 @@ export function createSetup(options: SetupOptions): (platform: SetupPlatform) =>
           // Online, each browser controls its own player with player 1's keys.
           if (rollback) rollback.tick(keys[0]);
           probe.update(rollback, link.status());
+          options.onProbe(probe.state);
         } else {
           step(game, keys.slice(0, PLAYERS));
           localFrame += 1;
           probe.update(null, "local", localFrame);
+          options.onProbe(probe.state);
         }
         simulated += STEP;
       }

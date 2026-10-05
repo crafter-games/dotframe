@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.2.0
+
+From Craft Ones' asks (rounds 7 and 8).
+
+- Native textures grow without a cap (it was 256, and iOS aborted with no message past it); `gpu.destroyTexture(texture)` frees one and the bind groups that sample it.
+- iOS: build ios wraps init and frame so a TypeScript throw prints its message and stack before scriptc's trap aborts; `dotframe device logs <target>` copies the newest crash report from the device and summarizes it.
+- Native online play: `dotframe/src/native/relay` (`connectRelayNative`, the same RelayLink as the web, polled per frame) over a WebSocket client in C (NSURLSession on macOS and iOS, WinHTTP on Windows), and `shareText` (share sheet on iOS, clipboard on desktop). `play --online --native` runs a web peer against the macOS build. Inside a scriptc executable, hostnames and TLS do not connect yet (reported to scriptc); IP addresses and localhost do.
+- iOS library callbacks stay under scriptc's 32: the glue registers only the host functions the entry reaches, music and volume are one call, and networking is two.
+- `dotframe/src/ui`: buttons and arrow rows laid out once for drawing and hit-testing, focus, taps from mouse and touch, and a release gate so the press that starts a match does not reach gameplay.
+- Web: `run(window, setup, { fit: "window" })` fills and follows the browser window; `Draw2D.resize`; templates refit on shape changes and use it.
+- `doctor` compile-checks each native target with scriptc (no C, no link), so patterns that only fail natively show up before building for the phone.
+- `deploy init --site <dir> [--path /play/]` serves a static folder at / with the game at a subpath.
+- `dotframe config set vendor <dir>` stores the vendor dir per machine (~/.dotframe/config.json).
+- Fixed: the native templates trapped at startup since 0.1.7 (a setup function passed to run() with a narrower parameter type, and, since 0.1.9, the probe assigning globalThis). The probe no longer touches globalThis (`publishProbe` from `dotframe/src/probe-web` does, on the web), and CI now runs each template binary.
+
 ## 0.1.9
 
 The rest of round 7, which missed the 0.1.8 merge.

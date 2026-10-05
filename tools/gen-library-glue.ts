@@ -1,7 +1,8 @@
 // Generates what a scriptc library-mode host needs from an app spec and native/ffi.<target>.json:
 //   <out>/<name>.profile.json  library profile: the app's exports plus every df* function as a callback channel
 //   <out>/<name>_glue.c         C trampolines (scriptc calls callbacks as fn(ctx, args...)) and a registration function
-// Usage: bun tools/gen-library-glue.ts <app.json> <out-dir> [ffi manifest]
+// Usage: bun tools/gen-library-glue.ts <app.json> <out-dir> [ffi manifest] [used names, comma-separated]
+// With used names, only those functions become callbacks: library mode caps a library at 32.
 // app.json: { "name": "smash", "entry": "app.ts" (relative to app.json), "exports": [{ "export": "frame", "params": ["f64"], "returns": "bool" }] }
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -25,7 +26,8 @@ interface AppSpec {
   exports: AppExport[];
 }
 
-const [appPath, outDir, manifestPath = join(import.meta.dir, "..", "native", "ffi.macos.json")] = process.argv.slice(2);
+const [appPath, outDir, manifestPath = join(import.meta.dir, "..", "native", "ffi.macos.json"), usedList = ""] = process.argv.slice(2);
+const used = usedList === "" ? null : new Set(usedList.split(","));
 const app = JSON.parse(readFileSync(appPath, "utf8")) as AppSpec;
 const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as { functions: ManifestFunction[] };
 
@@ -35,9 +37,13 @@ const CALLBACK_RETURNS = new Set(["f64", "bool", "u8", "u32", "i32", "void"]);
 // The host drives the event loop and shutdown itself, so these stay out of the 32-channel callback budget.
 const HOST_OWNED = new Set(["dfPoll", "dfClose"]);
 const usable = manifest.functions.filter(
-  (f) => !HOST_OWNED.has(f.name) && f.params.every((p) => CALLBACK_PARAMS.has(p)) && CALLBACK_RETURNS.has(f.returns),
+  (f) => !HOST_OWNED.has(f.name) && (!used || used.has(f.name)) && f.params.every((p) => CALLBACK_PARAMS.has(p)) && CALLBACK_RETURNS.has(f.returns),
 );
-const skipped = manifest.functions.filter((f) => !usable.includes(f) && !HOST_OWNED.has(f.name)).map((f) => f.name);
+const skipped = manifest.functions.filter((f) => !usable.includes(f) && !HOST_OWNED.has(f.name) && (!used || used.has(f.name))).map((f) => f.name);
+if (usable.length > 32) {
+  console.error(`${usable.length} callbacks exceed scriptc library mode's 32: ${usable.map((f) => f.name).join(", ")}`);
+  process.exit(1);
+}
 
 const cType: Record<string, string> = { f64: "double", bool: "uint8_t", u8: "uint8_t", u32: "uint32_t", i32: "int32_t", void: "void" };
 const cParams = (params: string[]): string[] =>

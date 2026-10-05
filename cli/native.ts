@@ -182,9 +182,12 @@ export async function buildNative(ctx: Ctx, root: string, gameName: string, targ
   mkdirSync(lib, { recursive: true });
   const cc = platform === "macos" ? ["clang", "-O2", "-mmacosx-version-min=14.0"] : ["zig", "cc", "-target", "x86_64-windows-gnu", "-O2"];
   const ar = platform === "macos" ? ["ar", "rcs"] : ["zig", "ar", "rcs"];
+  // The WebSocket client is Objective-C on Apple platforms (NSURLSession) and WinHTTP on Windows.
+  const ws = platform === "macos" ? { source: "df_ws_apple.m", flags: ["-fobjc-arc"] } : { source: "df_ws_win.c", flags: [] as string[] };
   const steps = [
     ...["df_native", "df_audio"].map((unit) => ({ label: `cc ${unit}`, argv: [...cc, "-c", join(ENGINE, "native", `${unit}.c`), ...inc, "-o", join(lib, `${unit}.o`)] })),
-    { label: "ar libdf_native", argv: [...ar, join(lib, "libdf_native.a"), join(lib, "df_native.o"), join(lib, "df_audio.o")] },
+    { label: "cc df_ws", argv: [...cc, ...ws.flags, "-c", join(ENGINE, "native", ws.source), ...inc, "-o", join(lib, "df_ws.o")] },
+    { label: "ar libdf_native", argv: [...ar, join(lib, "libdf_native.a"), join(lib, "df_native.o"), join(lib, "df_audio.o"), join(lib, "df_ws.o")] },
   ];
   const ffi = JSON.parse(readFileSync(join(ENGINE, "native", `ffi.${platform}.json`), "utf8")) as { libraries: string[] };
   // scriptc validates that listed libraries exist even when it only emits IR, and a check links nothing.

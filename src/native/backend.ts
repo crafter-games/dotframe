@@ -17,13 +17,9 @@ import {
   dfHeight,
   dfImage,
   dfKeyDown,
-  dfMasterVolume,
   dfMouse,
-  dfMusicPause,
-  dfMusicPlay,
-  dfMusicStop,
-  dfMusicVolume,
   dfPipeline,
+  dfMusic,
   dfPlay,
   dfSound,
   dfTexture,
@@ -131,12 +127,12 @@ export function createNativeAudioPlayer(): AudioPlayer {
     play: (sound: number, volume: number, rate: number): void => dfPlay(sound, volume, rate),
     tone: (frequency: number, duration: number, volume: number): void => dfTone(frequency, duration, volume),
     playMusic: (track: number, loop: boolean, volume: number): void => {
-      dfMusicPlay(track, loop, volume);
+      dfMusic(0, track, loop ? 1 : 0, volume);
     },
-    stopMusic: (): void => dfMusicStop(),
-    pauseMusic: (paused: boolean): void => dfMusicPause(paused),
-    setMusicVolume: (volume: number): void => dfMusicVolume(volume),
-    setMasterVolume: (volume: number): void => dfMasterVolume(volume),
+    stopMusic: (): void => void dfMusic(1, 0, 0, 0),
+    pauseMusic: (paused: boolean): void => void dfMusic(2, paused ? 1 : 0, 0, 0),
+    setMusicVolume: (volume: number): void => void dfMusic(3, volume, 0, 0),
+    setMasterVolume: (volume: number): void => void dfMusic(4, volume, 0, 0),
   };
 }
 

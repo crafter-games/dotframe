@@ -75,13 +75,14 @@ Compares checksums every frame and the full inspect() state every --every frames
 Warns when rollbacks exceed the sim's rollbackWindow.
 
   dotframe desync --latency 474ms --jitter 40ms --mash 42 --json`,
-  play: `dotframe play --online [room] [--frames 600] [--seeds 1,2] [--out .dotframe/play] [--json]
+  play: `dotframe play --online [room] [--frames 600] [--seeds 1,2] [--native] [--out .dotframe/play] [--json]
 
 Builds the web target, starts a local relay, and opens two agent-browser sessions on ?room=<room>&relay=...&mash=<seed>
 (one seed per peer from --seeds).
 Waits until both confirm --frames frames, compares their checksums every 30 frames, and saves a screenshot of each.
 The web entry must honor ?room=, ?relay=, ?mash= and publish globalThis.__dotframe: createProbe() and createMasher()
-from dotframe/src/probe do both (templates show it).`,
+from dotframe/src/probe do both (templates show it). --native makes peer 1 the macOS build, which reads DOTFRAME_ROOM,
+DOTFRAME_RELAY, DOTFRAME_MASH and writes its probe to DOTFRAME_PROBE (templates' main.native.ts does).`,
   build: `dotframe build <target> [--release] [--dry-run] [--json]
 
 Runs targets.<target>.steps from dotframe.json, or for a native target ({"native": {"platform": "macos",
@@ -177,6 +178,7 @@ const { values, positionals } = parseArgs({
     online: { type: "boolean" },
     seeds: { type: "string" },
     site: { type: "string" },
+    native: { type: "boolean" },
     path: { type: "string" },
     provider: { type: "string" },
     compose: { type: "string" },
@@ -191,7 +193,7 @@ try {
   if (values.version) console.log(pkg.version);
   else if (command && values.help && COMMAND_HELP[command]) console.log(COMMAND_HELP[command]);
   else if (!command || values.help) console.log(HELP);
-  else if (command === "play" && values.online === true) await playOnline(ctx, rest[0], { frames: v.frames, out: v.out, seeds: v.seeds });
+  else if (command === "play" && values.online === true) await playOnline(ctx, rest[0], { frames: v.frames, out: v.out, seeds: v.seeds, native: values.native === true });
   else if (command === "sim") await sim(ctx, v);
   else if (command === "snap") await snap(ctx, v);
   else if (command === "replay" && rest[0] === "record") await record(ctx, rest[1], v);

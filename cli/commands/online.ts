@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { CliError, type Ctx, exec, loadConfig, num, print, runSteps, target, which } from "../lib";
+import { buildNative, type NativeTarget } from "../native";
 import { startRelay } from "../relay";
 
 interface Probe {
@@ -13,7 +14,7 @@ interface Probe {
 // Two browsers play one online match through a local relay, each with a scripted masher, and their checksums at
 // every 30th confirmed frame must agree. The game's web entry honors ?room=, ?relay= and ?mash=, and publishes
 // globalThis.__dotframe = { frame, confirmed, status, sums } (the templates do; see the netplay skill).
-export async function playOnline(ctx: Ctx, room: string | undefined, args: { frames?: string; out?: string; seeds?: string }): Promise<void> {
+export async function playOnline(ctx: Ctx, room: string | undefined, args: { frames?: string; out?: string; seeds?: string; native?: boolean }): Promise<void> {
   const skill = "netplay";
   const config = loadConfig();
   const t = target(config, "web");
@@ -27,6 +28,15 @@ export async function playOnline(ctx: Ctx, room: string | undefined, args: { fra
   const name = room ?? `play-${Date.now().toString(36)}`;
   const outDir = resolve(process.cwd(), args.out ?? ".dotframe/play");
   await runSteps({ ...ctx, json: true }, config.root, t.steps ?? [], "export-web");
+  // --native: peer 1 is the macOS build, launched with DOTFRAME_ROOM, DOTFRAME_RELAY, DOTFRAME_MASH and DOTFRAME_PROBE.
+  let nativeBinary = "";
+  if (args.native) {
+    const entry = Object.entries(config.targets).find(([, target]) => target.native?.platform === "macos");
+    if (!entry) throw new CliError("UNKNOWN_TARGET", "play --native needs a target with native.platform macos", "add \"macos\": {\"native\": {\"platform\": \"macos\", \"entry\": \"main.native.ts\"}}", skill);
+    const [nativeName, nativeTarget] = entry;
+    const built = await buildNative({ ...ctx, json: true }, config.root, config.name, nativeName, nativeTarget.native as NativeTarget);
+    nativeBinary = built.binary;
+  }
   const web = resolve(config.root, t.out);
   const relay = startRelay(0);
   const server = Bun.serve({
@@ -37,7 +47,9 @@ export async function playOnline(ctx: Ctx, room: string | undefined, args: { fra
       return existsSync(file) ? new Response(Bun.file(file)) : new Response("not found", { status: 404 });
     },
   });
-  const sessions = ["dotframe-play-0", "dotframe-play-1"];
+  const sessions = args.native ? ["dotframe-play-0"] : ["dotframe-play-0", "dotframe-play-1"];
+  const probeFile = join(outDir, "native-probe.json");
+  let nativeProcess: ReturnType<typeof Bun.spawn> | null = null;
   const ab = (session: string, ...a: string[]) => exec({ ...ctx, json: true }, config.root, { label: `agent-browser ${a[0]}`, argv: ["agent-browser", "--session", session, ...a] });
   const read = async (session: string): Promise<Probe | null> => {
     const r = await ab(session, "eval", "JSON.stringify(globalThis.__dotframe ?? null)");
@@ -54,13 +66,30 @@ export async function playOnline(ctx: Ctx, room: string | undefined, args: { fra
       const opened = await ab(session, "open", url);
       if (opened.code !== 0) throw new CliError("BROWSER_FAILED", opened.tail, "agent-browser install", skill);
     }
+    if (args.native) {
+      mkdirSync(outDir, { recursive: true });
+      rmSync(probeFile, { force: true });
+      nativeProcess = Bun.spawn([nativeBinary], {
+        cwd: config.root,
+        env: { ...process.env, DOTFRAME_ROOM: name, DOTFRAME_RELAY: `ws://localhost:${relay.port}`, DOTFRAME_MASH: String(seeds[1]), DOTFRAME_PROBE: probeFile },
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+    }
+    const readNative = (): Probe | null => {
+      try {
+        return JSON.parse(readFileSync(probeFile, "utf8")) as Probe;
+      } catch {
+        return null;
+      }
+    };
     let probes: (Probe | null)[] = [null, null];
     const started = Date.now();
     // Wait until both peers confirm `frames` frames, or stop making progress.
     let last = -1;
     let lastChange = Date.now();
     for (;;) {
-      probes = [await read(sessions[0]), await read(sessions[1])];
+      probes = [await read(sessions[0]), args.native ? readNative() : await read(sessions[1])];
       const confirmed = Math.min(...probes.map((p) => p?.confirmed ?? 0));
       if (confirmed >= frames) break;
       if (confirmed !== last) {
@@ -76,20 +105,22 @@ export async function playOnline(ctx: Ctx, room: string | undefined, args: { fra
     const compared = Object.keys(a.sums).filter((f: string): boolean => b.sums[f] !== undefined).map(Number).sort((x, y) => x - y);
     const mismatch = compared.find((f: number): boolean => a.sums[f] !== b.sums[f]);
     const shots = sessions.map((_s, i) => join(outDir, `peer-${i}.png`));
+    // The native peer's window is not captured; its checksums are the comparison.
     mkdirSync(outDir, { recursive: true });
     for (const [i, session] of sessions.entries()) {
       const shot = await ab(session, "screenshot", shots[i]);
       if (shot.code !== 0 || !existsSync(shots[i])) throw new CliError("BROWSER_FAILED", `screenshot of peer ${i} failed: ${shot.tail}`, "", skill);
     }
     const ok = mismatch === undefined && compared.length > 0;
-    print(ctx, { ok, room: name, seeds, frames: Math.min(a.confirmed, b.confirmed), compared: compared.length, firstMismatch: mismatch ?? null, seconds: Math.round((Date.now() - started) / 1000), screenshots: shots }, (): string =>
+    print(ctx, { ok, room: name, seeds, peers: args.native ? ["web", "native macOS"] : ["web", "web"], frames: Math.min(a.confirmed, b.confirmed), compared: compared.length, firstMismatch: mismatch ?? null, seconds: Math.round((Date.now() - started) / 1000), screenshots: shots }, (): string =>
       [
-        ok ? `in sync: ${compared.length} checksums compared over ${Math.min(a.confirmed, b.confirmed)} confirmed frames` : mismatch !== undefined ? `DESYNC at frame ${mismatch}` : "no checksums to compare",
+        ok ? `in sync${args.native ? " (web vs native macOS)" : ""}: ${compared.length} checksums compared over ${Math.min(a.confirmed, b.confirmed)} confirmed frames` : mismatch !== undefined ? `DESYNC at frame ${mismatch}` : "no checksums to compare",
         `screenshots: ${shots.join(", ")} (open them and look)`,
       ].join("\n"),
     );
     if (!ok) process.exit(1);
   } finally {
+    nativeProcess?.kill();
     for (const session of sessions) await ab(session, "close");
     server.stop(true);
     relay.stop(true);

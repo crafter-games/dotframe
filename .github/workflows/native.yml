@@ -60,6 +60,12 @@ jobs:
             bun node_modules/dotframe/cli/main.ts build macos --json
             bun node_modules/dotframe/cli/main.ts build windows --json
             test -x "dist/macos/$t" && test -f "dist/windows/$t.exe"
+            # Compiling is not running: a scriptc runtime trap only shows when the binary starts.
+            ./dist/macos/$t > run.log 2>&1 &
+            pid=$!
+            sleep 6
+            if grep -q "Uncaught" run.log || ! kill -0 $pid 2>/dev/null; then cat run.log; exit 1; fi
+            kill $pid
             cd "$GITHUB_WORKSPACE"
           done
       - uses: actions/upload-artifact@v4

@@ -46,10 +46,15 @@ Templates ship this as `main.ios.ts` over the same `src/setup.ts` web and macOS 
 
 ## Notes
 
+- Crash with no message? `dotframe device logs ios` copies the newest crash report from the device and prints the exception and crashed thread. build ios also wraps init and frame so a TypeScript throw prints `dotframe: init threw: <message and stack>` to the device log before scriptc's trap aborts.
+- scriptc library mode caps host callbacks at 32. build ios registers only the df* functions the entry reaches (a game without networking uses 27, with the native relay 29); the glue fails with the list if a game goes over.
+- Textures: native has no fixed cap anymore; free what you replace with `gpu.destroyTexture(texture)` (its id is retired, do not draw it again).
+- Online on iOS: `connectRelayNative` and `shareText` from `dotframe/src/native/relay` (see netplay).
+
 - The scriptc runtime pack (`@scriptc/runtime-ios-arm64`) must match `scriptc --version`. Right after a scriptc release, bun's minimum release age blocks it; doctor prints the install command with `--minimum-release-age 0`.
 - Touches never synthesize a mouse (SDL_HINT_TOUCH_MOUSE_EVENTS is off), so read `input.touches()` for fingers; `input.pointer()` stays the mouse.
 - Size the logical canvas from `gpu.aspect()` (templates do): a 1280x720 canvas on a 2.16 phone stretches otherwise.
-- Library mode has no `WebSocket`; online play is web only for now (`dotframe/src/relay-client` is web only).
+- Library mode has no browser `WebSocket`: use `dotframe/src/native/relay`, not `dotframe/src/relay-client`.
 - Signing is automatic with `team`; a locked password manager can fail signing with `failed to fill whole buffer`: ask the human to unlock it and retry.
 - `build ios --release` refuses assets marked local-only (see `assets`).
 - Confirm on the device by asking the human. A successful install is not a working game.
