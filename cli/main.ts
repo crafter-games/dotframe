@@ -8,7 +8,8 @@ import { desync, record, sim, verify } from "./commands/play";
 import { snap } from "./commands/snap";
 import { skills } from "./commands/skills";
 import { create, dev } from "./commands/new";
-import { CliError, type Ctx, fail, num } from "./lib";
+import { CliError, type Ctx, fail, num, print } from "./lib";
+import { startRelay } from "./relay";
 
 const HELP = `dotframe ${pkg.version}: build, test, and export dotframe games
 
@@ -23,6 +24,7 @@ Play (headless, deterministic)
 Build and ship
   build    <target> [--release]         targets come from dotframe.json
   deploy   <target> [--prod]            gated: --yes, preview with --dry-run
+  relay    serve [--port 8787]          local netplay relay (same protocol as production)
   relay    deploy [--region eze]        gated
   device   install <target>             gated
   vendor   <macos|windows>              SDL3 + wgpu-native for native builds (~/.dotframe/vendor)
@@ -82,9 +84,12 @@ Deploys targets.<target>.out with its deploy provider. Without --yes it stops wi
 Show the --dry-run plan to a human first.
 
   dotframe deploy web --prod --dry-run`,
-  relay: `dotframe relay deploy [--region eze] [--dry-run] [--yes]
+  relay: `dotframe relay serve [--port 8787]
+dotframe relay deploy [--region eze] [--dry-run] [--yes]
 
-Redeploys the netplay relay (dokploy) or deploys it to a region (fly). Gated like deploy.`,
+serve runs the netplay relay locally (PORT env or --port): it pairs two clients per ?room= and forwards their
+messages, the protocol connectRelay in dotframe/src/netplay speaks. deploy redeploys the production relay
+(dokploy) or deploys it to a region (fly), gated like deploy.`,
   device: `dotframe device install <target> [--dry-run] [--yes]
 
 Installs targets.<target>.app on targets.<target>.device with devicectl. Gated like deploy.`,
@@ -164,6 +169,12 @@ try {
   else if (command === "build") await build(ctx, rest[0], values.release === true);
   else if (command === "deploy") await deploy(ctx, rest[0], values.prod === true);
   else if (command === "relay" && rest[0] === "deploy") await relay(ctx, v.region);
+  else if (command === "relay" && rest[0] === "serve") {
+    const port = num("port", v.port, Number(process.env.PORT ?? "8787"), 1);
+    const server = startRelay(port, (line: string): void => console.error(line));
+    print(ctx, { relay: `ws://localhost:${server.port}`, port: server.port }, (): string => `relay listening on ws://localhost:${server.port} (Ctrl+C to stop)`);
+    await new Promise((): void => {});
+  }
   else if (command === "device" && rest[0] === "install") await device(ctx, rest[1] ?? "ios");
   else if (command === "vendor") await vendor(ctx, rest[0]);
   else if (command === "doctor") await doctor(ctx, values.fix === true);
