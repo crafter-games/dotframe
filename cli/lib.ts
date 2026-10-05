@@ -57,7 +57,7 @@ export interface Target {
   out?: string;
   app?: string;
   device?: string;
-  deploy?: { provider: "vercel"; project: string; scope: string };
+  deploy?: { provider: "vercel"; project: string; scope: string } | { provider: "dokploy"; compose: string; dir?: string };
 }
 
 export interface Config {
@@ -68,6 +68,8 @@ export interface Config {
   relay?: { provider: "dokploy"; compose: string } | { provider: "fly"; app: string; config: string; region?: string };
   links?: { path: string; target: string }[];
   assets?: { localOnly?: string[] };
+  // Tools the build needs besides bun (for example ffmpeg); doctor checks them and docker images install them.
+  requires?: string[];
 }
 
 export const CONFIG_FILE = "dotframe.json";

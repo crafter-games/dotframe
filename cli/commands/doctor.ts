@@ -4,6 +4,7 @@ import { type Config, type Ctx, findRoot, home, loadConfig, print, which } from 
 import type { Draw2D } from "../../src/draw2d";
 import type { Sim } from "../../src/sim";
 import { importGraph, vendorFix, vendorStatus } from "../native";
+import { dockerCheck } from "./docker";
 import { firstDifference, flatten, headlessRun, loadSim } from "../simkit";
 
 interface Check {
@@ -21,7 +22,7 @@ const tool = (bin: string, why: string, fix: string, skill: string): Check => {
   return { check: `tool:${bin}`, ok: path !== null, detail: path ?? `missing (${why})`, fix: path ? "" : fix, skill };
 };
 
-export async function doctor(ctx: Ctx, fix: boolean): Promise<void> {
+export async function doctor(ctx: Ctx, fix: boolean, docker = false): Promise<void> {
   const checks: Check[] = [tool("bun", "runs the CLI and the web build", "curl -fsSL https://bun.sh/install | bash", "core")];
   let config: Config | null = null;
   if (!findRoot()) checks.push({ check: "config", ok: false, detail: "no dotframe.json here or above", fix: "cd into a game repo or dotframe new <name>", skill: "core" });
@@ -45,7 +46,7 @@ export async function doctor(ctx: Ctx, fix: boolean): Promise<void> {
       }
     }
     for (const [name, t] of Object.entries(config.targets)) {
-      if (t.deploy?.scope === "your-vercel-team") {
+      if (t.deploy?.provider === "vercel" && t.deploy.scope === "your-vercel-team") {
         checks.push({ check: `deploy:${name}`, ok: false, detail: "deploy scope is still the template placeholder", fix: `dotframe config set targets.${name}.deploy.scope '"<vercel team>"'`, skill: "export-web" });
       }
     }
@@ -55,6 +56,11 @@ export async function doctor(ctx: Ctx, fix: boolean): Promise<void> {
       checks.push({ check: `vendor:${name}`, ok: v.missing.length === 0, detail: v.missing.length === 0 ? `${v.dir} (${v.sdl})` : `missing in ${v.dir}: ${v.missing.join(", ")}`, fix: v.missing.length === 0 ? "" : vendorFix(t.native.platform), skill: t.native.platform });
       checks.push(tool("scriptc", "native builds", "npm i -g scriptc", t.native.platform));
       if (t.native.platform === "windows") checks.push(tool("zig", "windows cross builds", "brew install zig", "macos"));
+    }
+    for (const bin of config.requires ?? []) checks.push(tool(bin, "listed in requires", `brew install ${bin}`, "export-web"));
+    if (docker) {
+      const dockerized = Object.values(config.targets).some((t) => t.deploy?.provider === "dokploy");
+      checks.push(dockerized ? await dockerCheck(ctx, config) : { check: "docker:web", ok: false, detail: "no target deploys with provider dokploy", fix: "dotframe deploy init web --provider dokploy", skill: "export-web" });
     }
     const targets = Object.keys(config.targets);
     if (targets.some((t: string): boolean => t === "web" || t === "discord")) {

@@ -3,6 +3,7 @@ import { parseArgs } from "node:util";
 import pkg from "../package.json" with { type: "json" };
 import { build, deploy, device, relay, vendor } from "./commands/ship";
 import { doctor } from "./commands/doctor";
+import { deployInit } from "./commands/docker";
 import { configCmd } from "./commands/config";
 import { desync, record, sim, verify } from "./commands/play";
 import { snap } from "./commands/snap";
@@ -24,11 +25,12 @@ Play (headless, deterministic)
 Build and ship
   build    <target> [--release]         targets come from dotframe.json
   deploy   <target> [--prod]            gated: --yes, preview with --dry-run
+  deploy   init <target> --provider dokploy [--compose id]   Dockerfiles, nginx, compose
   relay    serve [--port 8787]          local netplay relay (same protocol as production)
   relay    deploy [--region eze]        gated
   device   install <target>             gated
   vendor   <macos|windows>              SDL3 + wgpu-native for native builds (~/.dotframe/vendor)
-  doctor   [--fix]                      toolchain, vendor, links, config, sim render
+  doctor   [--fix] [--docker]           toolchain, vendor, links, config, sim render and math
   config   get [key] | set <key> <json>
 
 Project
@@ -79,11 +81,17 @@ Failures keep the full output in .dotframe/logs and return its path. --release r
   dotframe build web
   dotframe build ios --release`,
   deploy: `dotframe deploy <target> [--prod] [--dry-run] [--yes] [--json]
+dotframe deploy init <target> --provider dokploy [--compose <id>] [--yes]
 
-Deploys targets.<target>.out with its deploy provider. Without --yes it stops with APPROVAL_REQUIRED (exit 2).
-Show the --dry-run plan to a human first.
+provider vercel: uploads targets.<target>.out. provider dokploy: redeploys the compose stack (it builds from the
+pushed branch), waits for the result, and on failure returns the build log. Without --yes it stops with
+APPROVAL_REQUIRED (exit 2); show the --dry-run plan to a human first.
 
-  dotframe deploy web --prod --dry-run`,
+init writes deploy/Dockerfile.web (installs "requires" tools, builds with dotframe), deploy/Dockerfile.relay
+(dotframe relay serve), deploy/nginx.conf (no-cache index.html) and deploy/compose.yaml (web at /, relay at /relay).
+
+  dotframe deploy web --prod --dry-run
+  dotframe deploy init web --provider dokploy`,
   relay: `dotframe relay serve [--port 8787]
 dotframe relay deploy [--region eze] [--dry-run] [--yes]
 
@@ -97,10 +105,11 @@ Installs targets.<target>.app on targets.<target>.device with devicectl. Gated l
 
 Downloads wgpu-native and builds SDL3 for native targets into DOTFRAME_VENDOR (default ~/.dotframe/vendor), which
 survives reinstalling dotframe and is shared by every game.`,
-  doctor: `dotframe doctor [--fix] [--json]
+  doctor: `dotframe doctor [--fix] [--docker] [--json]
 
-Checks tools, dotframe.json, the sim (loads, renders with a stub Draw2D), placeholders, and vendor links.
---fix creates missing vendor symlinks.`,
+Checks tools (including "requires" in dotframe.json), vendor, links, placeholders, the sim (render with a stub
+Draw2D leaves state alone) and platform-dependent math in code the sim reaches. --fix creates missing vendor
+symlinks; --docker builds the dokploy web image locally, as the server would.`,
   config: `dotframe config get [key]
 dotframe config set <key> <json> [--dry-run]
 
@@ -150,6 +159,9 @@ const { values, positionals } = parseArgs({
     port: { type: "string" },
     "no-install": { type: "boolean" },
     "through-over": { type: "boolean" },
+    docker: { type: "boolean" },
+    provider: { type: "string" },
+    compose: { type: "string" },
   },
 });
 
@@ -167,6 +179,7 @@ try {
   else if (command === "replay" && rest[0] === "verify") await verify(ctx, rest.slice(1));
   else if (command === "desync") await desync(ctx, v);
   else if (command === "build") await build(ctx, rest[0], values.release === true);
+  else if (command === "deploy" && rest[0] === "init") await deployInit(ctx, rest[1], v.provider, v.compose);
   else if (command === "deploy") await deploy(ctx, rest[0], values.prod === true);
   else if (command === "relay" && rest[0] === "deploy") await relay(ctx, v.region);
   else if (command === "relay" && rest[0] === "serve") {
@@ -177,7 +190,7 @@ try {
   }
   else if (command === "device" && rest[0] === "install") await device(ctx, rest[1] ?? "ios");
   else if (command === "vendor") await vendor(ctx, rest[0]);
-  else if (command === "doctor") await doctor(ctx, values.fix === true);
+  else if (command === "doctor") await doctor(ctx, values.fix === true, values.docker === true);
   else if (command === "config") await configCmd(ctx, rest);
   else if (command === "skills") await skills(ctx, rest, values.full === true, values.all === true);
   else if (command === "new") await create(ctx, rest[0], v.template ?? "blank", values["no-install"] !== true);

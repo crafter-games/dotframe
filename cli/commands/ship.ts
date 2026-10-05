@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { deployDokploy } from "./docker";
 import { buildNative, ENGINE, type NativePlatform, vendorDir, vendorStatus } from "../native";
 import { CliError, type Command, type Ctx, exec, gate, loadConfig, print, runSteps, target, which } from "../lib";
 
@@ -44,16 +45,19 @@ export async function deploy(ctx: Ctx, name: string | undefined, prod: boolean):
   const config = loadConfig();
   const t = target(config, name);
   const skill = skillFor(name);
-  if (!t.deploy || !t.out) throw new CliError("NO_DEPLOY", `target "${name}" has no deploy provider or out dir`, `add "out" and "deploy": {"provider": "vercel", ...} to the target`, skill);
+  if (!t.deploy || !t.out) throw new CliError("NO_DEPLOY", `target "${name}" has no deploy provider or out dir`, `add "out" and "deploy": {"provider": "vercel", ...}, or run dotframe deploy init ${name} --provider dokploy`, skill);
+  // Dokploy builds the image from the repo, so there is no local build folder to check.
+  if (t.deploy.provider === "dokploy") return deployDokploy(ctx, config, name, t.deploy.compose);
+  const vercel = t.deploy;
   const out = resolve(config.root, t.out);
   // The 2026-10-03 incident: deploying the repo root put the wrong game in production.
   if (out === config.root || existsSync(join(out, "dotframe.json")) || existsSync(join(out, ".git"))) {
     throw new CliError("DEPLOY_SOURCE_DIR", `${t.out} looks like source, not a build`, "point out at the built folder (e.g. port/dist/web)", skill);
   }
   if (!existsSync(join(out, "index.html"))) throw new CliError("NOT_BUILT", `${t.out}/index.html is missing`, `dotframe build ${name}`, skill);
-  if (t.deploy.scope === "your-vercel-team") throw new CliError("CONFIG_PLACEHOLDER", `targets.${name}.deploy.scope is still the template placeholder`, `dotframe config set targets.${name}.deploy.scope '"<team>"'`, skill);
-  const argv = ["vercel", "deploy", ...(prod ? ["--prod"] : []), "--yes", "--scope", t.deploy.scope, "--name", t.deploy.project];
-  const plan = { target: name, provider: t.deploy.provider, project: `${t.deploy.scope}/${t.deploy.project}`, dir: out, production: prod, files: countFiles(out), command: argv.join(" ") };
+  if (vercel.scope === "your-vercel-team") throw new CliError("CONFIG_PLACEHOLDER", `targets.${name}.deploy.scope is still the template placeholder`, `dotframe config set targets.${name}.deploy.scope '"<team>"'`, skill);
+  const argv = ["vercel", "deploy", ...(prod ? ["--prod"] : []), "--yes", "--scope", vercel.scope, "--name", vercel.project];
+  const plan = { target: name, provider: vercel.provider, project: `${vercel.scope}/${vercel.project}`, dir: out, production: prod, files: countFiles(out), command: argv.join(" ") };
   if (ctx.dryRun) {
     print(ctx, { dryRun: true, ...plan }, (): string => `would deploy ${out} to ${plan.project}${prod ? " (production)" : " (preview)"}\n  ${plan.command}`);
     return;
@@ -61,7 +65,7 @@ export async function deploy(ctx: Ctx, name: string | undefined, prod: boolean):
   gate(ctx, `deploy ${name}${prod ? " to production" : ""}`, skill);
   if (!which("vercel")) throw new CliError("TOOL_MISSING", "vercel CLI not found", "npm i -g vercel", skill);
   const r = await exec(ctx, config.root, { label: "vercel deploy", argv, cwd: out });
-  if (r.code !== 0) throw new CliError("DEPLOY_FAILED", r.tail, "vercel whoami; vercel switch " + t.deploy.scope, skill);
+  if (r.code !== 0) throw new CliError("DEPLOY_FAILED", r.tail, "vercel whoami; vercel switch " + vercel.scope, skill);
   const url = r.tail.match(/https:\/\/\S+\.vercel\.app/g)?.pop() ?? null;
   print(ctx, { ...plan, url, ms: r.ms }, (): string => `deployed ${url ?? "(url not found in output)"}`);
 }
