@@ -60,7 +60,14 @@ Runtime traps (compile clean, fail when run):
 
 - **Structural coercion copies.** Passing a class instance, or a wider record, to a parameter typed as a narrower structural type passes a copy: the callee's writes to scalar fields are lost (arrays inside still alias). In Craft Ones every projectile froze mid-flight. Pass the exact type, or return the updated record and copy it back. Reported to scriptc.
 - **Out-of-range reads.** `rows[y - 1]?.[x]` typed as `string` but `undefined` at runtime crashes with "undefined is not representable in the target union". Bounds-check before reading.
+- **Assigning `globalThis`** traps at startup ("expected object at $"). Keep web-only code (probe publishing, DOM) in web-only modules.
+- **Passing a function whose parameter type differs** from the slot traps ("function invoked through a ... slot"): wrap it in a function of the exact type, for example `run(WINDOW, (platform: Platform): Frame => setup(platform))`. Passing a wider object as a direct argument works.
+- **`doctor`'s `native:<target>` check compiles but does not run.** Run the binary after changes; CI runs each template binary for a few seconds for this reason.
 - **`JSON.stringify` key order** differed from JavaScript in Craft Ones (not reproduced in a minimal case). Never build checksums or netplay comparisons from it.
+
+## Networking
+
+`dotframe/src/native/relay` (WebSocket over NSURLSession on macOS and iOS, WinHTTP on Windows). Inside a scriptc executable, hostnames and TLS hang (system services never answer there); IP addresses and localhost connect. `DF_WS_DEBUG=1` logs socket events.
 
 ## Debugging a native crash
 

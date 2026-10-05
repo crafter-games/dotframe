@@ -1,8 +1,8 @@
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, relative, resolve } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import { CliError, type Ctx, exec, print, type RunResult, which } from "./lib";
-import { ENGINE, sdlLibrary, stageGame, vendorFix, vendorStatus } from "./native";
+import { ENGINE, importGraph, sdlLibrary, stageGame, vendorFix, vendorStatus } from "./native";
 
 export interface IosTarget {
   platform: "ios";
@@ -158,6 +158,7 @@ targets:
       - path: ${o.id}_glue.c
       - path: ${join(ENGINE, "native", "df_native.c")}
       - path: ${join(ENGINE, "native", "df_audio.c")}
+      - path: ${join(ENGINE, "native", "df_ws_apple.m")}
       - path: game
         type: folder
         buildPhase: resources
@@ -178,6 +179,7 @@ ${o.icon ? "        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon\n" : ""}        
           - ${join(o.vendor, "wgpu", "ios", "lib", "libwgpu_native.a")}
           - -lc++
           - -liconv
+        CLANG_ENABLE_OBJC_ARC: YES
         GCC_WARN_INHIBIT_ALL_WARNINGS: YES
         ENABLE_BITCODE: NO
     dependencies:
@@ -185,8 +187,20 @@ ${frameworks.map((f) => `      - sdk: ${f}.framework`).join("\n")}
 `;
 }
 
-export async function buildIos(ctx: Ctx, root: string, gameName: string, targetName: string, t: IosTarget): Promise<{ app: string; log: string; steps: RunResult[] }> {
-  for (const tool of ["scriptc", "xcodegen", "xcodebuild", "sips"]) {
+// check: stop after the scriptc library (library mode is stricter than an executable build), for doctor.
+// The df* host functions the code reachable from the entry calls (engine files included, since staged imports are
+// relative): only those become library callbacks, because scriptc caps them at 32.
+function usedHostFunctions(entry: string): string[] {
+  const used = new Set<string>();
+  for (const file of importGraph(entry).files) {
+    if (!file.endsWith(".ts") || file.endsWith(`${sep}ffi.ts`)) continue;
+    for (const m of readFileSync(file, "utf8").matchAll(/\b(df[A-Z]\w*)\(/g)) used.add(m[1]);
+  }
+  return [...used].sort();
+}
+
+export async function buildIos(ctx: Ctx, root: string, gameName: string, targetName: string, t: IosTarget, check = false): Promise<{ app: string; log: string; steps: RunResult[] }> {
+  for (const tool of check ? ["scriptc"] : ["scriptc", "xcodegen", "xcodebuild", "sips"]) {
     if (!which(tool)) throw new CliError("TOOL_MISSING", `${tool} not found`, tool === "xcodegen" ? "brew install xcodegen" : tool === "scriptc" ? "npm i -g scriptc" : "install Xcode", SKILL);
   }
   for (const key of ["entry", "bundleId", "team"] as const) {
@@ -194,7 +208,7 @@ export async function buildIos(ctx: Ctx, root: string, gameName: string, targetN
   }
   if (!existsSync(join(root, t.entry))) throw new CliError("ENTRY_MISSING", `iOS entry ${t.entry} does not exist`, "add it (see the ios skill: export init and frame)", SKILL);
   const vendor = vendorStatus("ios");
-  if (vendor.missing.length > 0) throw new CliError("VENDOR_MISSING", `iOS needs SDL3 and wgpu-native in ${vendor.dir}; missing ${vendor.missing.join(", ")}`, vendorFix("ios"), SKILL);
+  if (vendor.missing.length > 0 && !check) throw new CliError("VENDOR_MISSING", `iOS needs SDL3 and wgpu-native in ${vendor.dir}; missing ${vendor.missing.join(", ")}`, vendorFix("ios"), SKILL);
   const pack = await iosRuntimePack(ctx, root);
   if (!pack.path) {
     throw new CliError("TOOL_MISSING", pack.found ? `scriptc iOS runtime pack is ${pack.found}, scriptc is ${pack.want}` : `scriptc iOS runtime pack ${pack.want} not found`, iosPackFix(pack.want), SKILL);
@@ -203,11 +217,11 @@ export async function buildIos(ctx: Ctx, root: string, gameName: string, targetN
   const display = t.displayName ?? gameName;
   const id = identifier(gameName);
   const name = scheme(display);
-  const stage = join(root, ".dotframe", "native", targetName);
+  const stage = join(root, ".dotframe", check ? "check" : "native", targetName);
   const out = join(root, "dist", targetName);
   const app = join(out, `${name}.app`);
   const logDir = join(root, ".dotframe", "logs");
-  const log = join(logDir, `build-${targetName}.log`);
+  const log = join(logDir, `${check ? "check" : "build"}-${targetName}.log`);
   if (ctx.dryRun) {
     print(ctx, { dryRun: true, platform: "ios", stage, app, scheme: name, bundleId: t.bundleId, team: t.team, runtimePack: pack.path }, (): string => `would stage ${t.entry} in ${stage} and build ${app}`);
     return { app, log, steps: [] };
@@ -218,9 +232,41 @@ export async function buildIos(ctx: Ctx, root: string, gameName: string, targetN
   const engineStage = join(stage, "dotframe");
   cpSync(join(ENGINE, "src"), join(engineStage, "src"), { recursive: true });
   const gameStage = stageGame(root, t.entry, join(stage, "tree"), engineStage);
+  // A throw in library mode becomes a trap that aborts with no message (SIGABRT in SDL_AppInit). The wrapper prints
+  // the error and its stack to stderr, which the device log keeps, before rethrowing.
+  const wrapper = join(gameStage, "dotframe-entry.ts");
+  const gameEntry = `./${t.entry.replace(/\.ts$/, "")}`;
+  writeFileSync(
+    wrapper,
+    `import { frame as gameFrame, init as gameInit } from ${JSON.stringify(gameEntry)};
+
+function report(where: string, error: unknown): void {
+  const detail = error instanceof Error ? \`\${error.message}\\n\${error.stack ?? ""}\` : String(error);
+  console.error(\`dotframe: \${where} threw: \${detail}\`);
+}
+
+export function init(base: string): void {
+  try {
+    gameInit(base);
+  } catch (error) {
+    report("init", error);
+    throw error;
+  }
+}
+
+export function frame(time: number): boolean {
+  try {
+    return gameFrame(time);
+  } catch (error) {
+    report("frame", error);
+    throw error;
+  }
+}
+`,
+  );
   writeFileSync(
     join(stage, "app.json"),
-    JSON.stringify({ name: id, entry: relative(stage, join(gameStage, t.entry)), exports: [{ export: "init", params: ["string"], returns: "void" }, { export: "frame", params: ["f64"], returns: "bool" }] }, null, 2),
+    JSON.stringify({ name: id, entry: relative(stage, wrapper), exports: [{ export: "init", params: ["string"], returns: "void" }, { export: "frame", params: ["f64"], returns: "bool" }] }, null, 2),
   );
   writeFileSync(join(stage, "host", "main.c"), hostC(id, display));
   writeFileSync(join(stage, "host", "Info.plist"), infoPlist(display, t.orientation ?? "landscape"));
@@ -232,7 +278,7 @@ export async function buildIos(ctx: Ctx, root: string, gameName: string, targetN
   cpSync(join(ENGINE, "assets", "fonts"), join(bundle, "dotframe", "assets", "fonts"), { recursive: true });
 
   const steps: { label: string; argv: string[]; cwd?: string; env?: Record<string, string> }[] = [];
-  if (t.icon) {
+  if (t.icon && !check) {
     const icons = join(stage, "Assets.xcassets", "AppIcon.appiconset");
     mkdirSync(icons, { recursive: true });
     writeFileSync(join(stage, "Assets.xcassets", "Contents.json"), '{"info":{"author":"xcode","version":1}}\n');
@@ -240,7 +286,7 @@ export async function buildIos(ctx: Ctx, root: string, gameName: string, targetN
     steps.push({ label: "icon", argv: ["sips", "-z", "1024", "1024", resolve(root, t.icon), "--out", join(icons, "icon-1024.png")] });
   }
   steps.push(
-    { label: "library glue", argv: ["bun", join(ENGINE, "tools", "gen-library-glue.ts"), join(stage, "app.json"), stage] },
+    { label: "library glue", argv: ["bun", join(ENGINE, "tools", "gen-library-glue.ts"), join(stage, "app.json"), stage, join(ENGINE, "native", "ffi.macos.json"), usedHostFunctions(wrapper).join(",")] },
     { label: "scriptc library", argv: ["scriptc", "build", "--lib", "--profile", `${id}.profile.json`], cwd: stage, env: { SCRIPTC_TARGET: "aarch64-apple-ios", SCRIPTC_RUNTIME_PACK: pack.path } },
   );
   const results: RunResult[] = [];
@@ -257,6 +303,7 @@ export async function buildIos(ctx: Ctx, root: string, gameName: string, targetN
     }
   };
   for (const step of steps) await run(step);
+  if (check) return { app, log, steps: results };
   const lib = readdirSync(join(stage, ".scriptc")).find((f: string): boolean => f.endsWith(".lib.a"));
   if (!lib) throw new CliError("STEP_FAILED", "scriptc produced no .lib.a", `read ${log}`, SKILL, 1, log);
   writeFileSync(join(stage, "project.yml"), projectYml({ name, id, bundleId: t.bundleId, team: t.team, vendor: vendor.dir, sdl: vendor.sdl ?? "", lib: join(stage, ".scriptc", lib), icon: !!t.icon }));

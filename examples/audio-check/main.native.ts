@@ -1,7 +1,7 @@
 // Headless check of the native mixer: plays a known timeline so the output can be measured.
 // Run with SDL_AUDIO_DRIVER=disk to write the mix to a file instead of a device.
 import { readFileSync } from "node:fs";
-import { dfAudioOpen, dfMusicPlay, dfMusicStop, dfPlay, dfSound, dfTone, dfTrack } from "../../src/native/ffi";
+import { dfAudioOpen, dfMusic, dfPlay, dfSound, dfTone, dfTrack } from "../../src/native/ffi";
 
 const root = process.env.DF_ROOT ?? ".";
 const bytes = (path: string): Uint8Array => {
@@ -21,8 +21,8 @@ dfPlay(hit, 1, 1);
 await wait(500);
 dfTone(880, 0.3, 0.3);
 await wait(500);
-dfMusicPlay(loop, true, 1);
+dfMusic(0, loop, 1, 1);
 await wait(1000);
-dfMusicStop();
+dfMusic(1, 0, 0, 0);
 await wait(500);
 console.log("done");

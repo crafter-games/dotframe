@@ -264,3 +264,15 @@ void df_audio_close(void) {
   if (g_lock) SDL_DestroyMutex(g_lock);
   g_lock = NULL;
 }
+
+// One host call for music and volume, because scriptc library mode (iOS) caps a library at 32 callbacks.
+// op 0 plays track a (loop when b != 0) at volume c, 1 stops, 2 pauses (a != 0) or resumes, 3 sets the music volume
+// to a, 4 sets the master volume to a. Returns df_music_play's result for op 0, else 0.
+int32_t df_music(int32_t op, double a, double b, double c) {
+  if (op == 0) return df_music_play((int32_t)a, b != 0, c);
+  if (op == 1) df_music_stop();
+  else if (op == 2) df_music_pause(a != 0);
+  else if (op == 3) df_music_volume(a);
+  else if (op == 4) df_master_volume(a);
+  return 0;
+}

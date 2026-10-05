@@ -6,7 +6,7 @@ import type { Frame, RenderGpu } from "dotframe/src/gpu";
 import type { Input } from "dotframe/src/input";
 import { Key, MouseButton } from "dotframe/src/input";
 import { createRollback, type RelayLink, type Rollback } from "dotframe/src/netplay";
-import { createMasher, createProbe } from "dotframe/src/probe";
+import { createMasher, createProbe, type ProbeState } from "dotframe/src/probe";
 import { checksum, createGame, type Game, keyInput, PLAYERS, POINTER_BIT, randomInput, render, restore, snapshot, step, WINDOW } from "./game";
 
 export interface SetupOptions {
@@ -14,6 +14,9 @@ export interface SetupOptions {
   link: RelayLink | null;
   // A seed makes player 1 a scripted masher (tests); null reads the keyboard and pointer.
   mash: number | null;
+  // Called after each step with the probe state: the web publishes it as globalThis.__dotframe, native builds write
+  // it to a file for dotframe play --native. Required, not optional: scriptc cannot represent an optional function.
+  onProbe: (state: ProbeState) => void;
 }
 
 
@@ -32,12 +35,21 @@ export function createSetup(options: SetupOptions): (platform: SetupPlatform) =>
   return ({ gpu, input, audio }: SetupPlatform): Frame => {
     // The logical canvas keeps the game's aspect and grows to fill the screen: on a 2.16 phone the game area is
     // centered with extra width around it instead of being stretched.
-    const aspect = gpu.aspect();
-    const logicalWidth = Math.max(WINDOW.width, Math.round(WINDOW.height * aspect));
-    const logicalHeight = Math.max(WINDOW.height, Math.round(WINDOW.width / aspect));
-    const offsetX = (logicalWidth - WINDOW.width) / 2;
-    const offsetY = (logicalHeight - WINDOW.height) / 2;
-    const draw = createDraw2D(gpu, logicalWidth, logicalHeight);
+    // Recomputed when the surface changes shape (a resizable window, run(..., { fit: "window" }) on the web).
+    let aspect = 0;
+    let offsetX = 0;
+    let offsetY = 0;
+    const draw = createDraw2D(gpu, WINDOW.width, WINDOW.height);
+    const fit = (): void => {
+      const now = gpu.aspect();
+      if (now === aspect) return;
+      aspect = now;
+      const logicalWidth = Math.max(WINDOW.width, Math.round(WINDOW.height * aspect));
+      const logicalHeight = Math.max(WINDOW.height, Math.round(WINDOW.width / aspect));
+      offsetX = (logicalWidth - WINDOW.width) / 2;
+      offsetY = (logicalHeight - WINDOW.height) / 2;
+      draw.resize(logicalWidth, logicalHeight);
+    };
     // Online peers must start from the same state, so the seed is fixed there.
     const game: Game = createGame(options.link ? 1 : Math.floor(Math.random() * 1e9));
     let rollback: Rollback | null = null;
@@ -87,13 +99,16 @@ export function createSetup(options: SetupOptions): (platform: SetupPlatform) =>
           // Online, each browser controls its own player with player 1's keys.
           if (rollback) rollback.tick(keys[0]);
           probe.update(rollback, link.status());
+          options.onProbe(probe.state);
         } else {
           step(game, keys.slice(0, PLAYERS));
           localFrame += 1;
           probe.update(null, "local", localFrame);
+          options.onProbe(probe.state);
         }
         simulated += STEP;
       }
+      fit();
       draw.begin();
       draw.translate(offsetX, offsetY);
       render(game, draw);

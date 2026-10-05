@@ -1,10 +1,28 @@
-import { readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { CONFIG_FILE, CliError, type Ctx, formatJson, loadConfig, print } from "../lib";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { CONFIG_FILE, CliError, type Ctx, formatJson, home, loadConfig, loadUserConfig, print, saveUserConfig, USER_KEYS, userConfigPath } from "../lib";
 
 // Dotted keys: targets.web.deploy.project
 export async function configCmd(ctx: Ctx, args: string[]): Promise<void> {
   const [op, key, value] = args;
+  // Machine paths go to ~/.dotframe/config.json, never into the repo.
+  if (key && (USER_KEYS as readonly string[]).includes(key)) {
+    const user = loadUserConfig();
+    if (op === "get") {
+      print(ctx, { key, value: user.vendor ?? null, file: userConfigPath() }, (): string => user.vendor ?? "(not set)");
+      return;
+    }
+    if (op !== "set" || value === undefined) throw new CliError("MISSING_ARG", `config set ${key} needs a value`, `dotframe config set ${key} ~/Programming/crafter-games/dotframe/vendor`);
+    const dir = resolve(home(value));
+    if (!existsSync(dir)) throw new CliError("BAD_ARG", `${dir} does not exist`, "point at a vendor dir that holds wgpu/ and SDL3-*/");
+    if (ctx.dryRun) {
+      print(ctx, { dryRun: true, key, value: dir, file: userConfigPath() }, (): string => `would set ${key} = ${dir} in ${userConfigPath()}`);
+      return;
+    }
+    saveUserConfig({ ...user, vendor: dir });
+    print(ctx, { key, value: dir, file: userConfigPath() }, (): string => `${key} = ${dir} (${userConfigPath()})`);
+    return;
+  }
   const config = loadConfig();
   const file = join(config.root, CONFIG_FILE);
   const raw = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;

@@ -15,7 +15,9 @@ case $target in
       clang -O2 -c "$root/native/$unit.c" -I"$root/vendor/SDL3-3.4.16/include" -I"$root/vendor/wgpu/macos/include" \
         -mmacosx-version-min=14.0 -o "$root/build/macos/$unit.o"
     done
-    ar rcs "$root/build/macos/libdf_native.a" "$root/build/macos/df_native.o" "$root/build/macos/df_audio.o"
+    clang -O2 -fobjc-arc -c "$root/native/df_ws_apple.m" -I"$root/vendor/SDL3-3.4.16/include" -mmacosx-version-min=14.0 \
+      -o "$root/build/macos/df_ws.o"
+    ar rcs "$root/build/macos/libdf_native.a" "$root/build/macos/df_native.o" "$root/build/macos/df_audio.o" "$root/build/macos/df_ws.o"
     cd "$(dirname "$entry_file")" && scriptc build "$(basename "$entry_file")" --ffi "$root/native/ffi.macos.json" \
       -o "$root/build/macos/$name"
     ;;
@@ -24,7 +26,9 @@ case $target in
       zig cc -target x86_64-windows-gnu -O2 -c "$root/native/$unit.c" -I"$root/vendor/SDL3-3.4.16/include" \
         -I"$root/vendor/wgpu/windows/include" -o "$root/build/windows/$unit.o"
     done
-    zig ar rcs "$root/build/windows/libdf_native.a" "$root/build/windows/df_native.o" "$root/build/windows/df_audio.o"
+    zig cc -target x86_64-windows-gnu -O2 -c "$root/native/df_ws_win.c" -I"$root/vendor/SDL3-3.4.16/include" \
+      -o "$root/build/windows/df_ws.o"
+    zig ar rcs "$root/build/windows/libdf_native.a" "$root/build/windows/df_native.o" "$root/build/windows/df_audio.o" "$root/build/windows/df_ws.o"
     cd "$(dirname "$entry_file")" && SCRIPTC_RUNTIME_PACK="$root/node_modules/@scriptc/runtime-win32-x64-msvc" \
       SCRIPTC_TARGET=x86_64-windows-gnu scriptc build "$(basename "$entry_file")" --ffi "$root/native/ffi.windows.json" \
       --windows-subsystem gui -o "$root/build/windows/$name.exe"

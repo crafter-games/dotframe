@@ -24,6 +24,7 @@ dotframe deploy web --prod --yes     # only after the human approved the plan
 
 ```sh
 dotframe deploy init web --provider dokploy     # deploy/Dockerfile.web, Dockerfile.relay, nginx.conf, compose.yaml
+dotframe deploy init web --provider dokploy --site landing   # a static folder at /, the game at /play/ (--path)
 dotframe doctor --docker                        # builds the web image locally, as the server will
 dotframe config set targets.web.deploy.compose '"<compose id>"'   # vps compose list
 dotframe deploy web --dry-run && dotframe deploy web --yes

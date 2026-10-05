@@ -15,7 +15,11 @@ dotframe relay serve                  # local relay on :8787, same protocol as p
 dotframe play --online --frames 900   # two browsers, scripted match, checksums compared, screenshots saved
 ```
 
-`play --online` needs the web entry to honor `?room=`, `?relay=` and `?mash=<seed>` and to publish `globalThis.__dotframe = { frame, confirmed, status, sums }` (sums: checksum per 30th confirmed frame). `dotframe/src/probe` does both: `createProbe()` publishes it (call `probe.update(rollback, link.status())` each step, or `probe.update(null, "local", frame)` offline), and `createMasher(seed, randomInput)` returns a function giving the scripted input for each step. `--seeds 7,42` picks each peer's seed. The templates show the wiring.
+Native builds connect with `dotframe/src/native/relay`: `connectRelayNative(url, room)` returns the same RelayLink, polled from the frame (no promises in library mode). `shareText(text)` opens the share sheet on iOS and copies to the clipboard on macOS and Windows. `play --online --native` makes peer 1 the macOS build (it reads DOTFRAME_ROOM, DOTFRAME_RELAY, DOTFRAME_MASH and writes its probe to DOTFRAME_PROBE; templates do), so a web peer and a native peer must agree on every checksum.
+
+Known limit: inside a scriptc executable (macOS), hostnames and TLS never connect (Network.framework waits on system services that never answer there); IP addresses and localhost work, so local relays and LAN play do. Reported to scriptc. iOS runs as a library under SDL and is not affected the same way; verify on a device.
+
+`play --online` needs the web entry to honor `?room=`, `?relay=` and `?mash=<seed>` and to publish `globalThis.__dotframe = { frame, confirmed, status, sums }` (sums: checksum per 30th confirmed frame). `dotframe/src/probe` does both: `createProbe()` keeps it (call `probe.update(rollback, link.status())` each step, or `probe.update(null, "local", frame)` offline) and `publishProbe(state)` from `dotframe/src/probe-web` exposes it (web only: assigning globalThis traps in scriptc), and `createMasher(seed, randomInput)` returns a function giving the scripted input for each step. `--seeds 7,42` picks each peer's seed. The templates show the wiring.
 
 dotframe online play is rollback netcode: each peer predicts the remote input (repeat the last one), simulates ahead, and when the real input arrives and differs, restores a snapshot and resimulates. It only works if every peer computes bit-identical state from the same inputs.
 

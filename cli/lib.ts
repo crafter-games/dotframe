@@ -57,7 +57,7 @@ export interface Target {
   out?: string;
   app?: string;
   device?: string;
-  deploy?: { provider: "vercel"; project: string; scope: string } | { provider: "dokploy"; compose: string; dir?: string };
+  deploy?: { provider: "vercel"; project: string; scope: string } | { provider: "dokploy"; compose: string; dir?: string; site?: string; path?: string };
 }
 
 export interface Config {
@@ -191,3 +191,31 @@ export function formatJson(value: unknown, indent = "", width = 100): string {
   const entries = Object.entries(value as Record<string, unknown>);
   return `{\n${entries.map(([k, v]) => `${next}${JSON.stringify(k)}: ${formatJson(v, next, width)}`).join(",\n")}\n${indent}}`;
 }
+
+// Per-machine settings (paths that must not go into a repo), in ~/.dotframe/config.json.
+export interface UserConfig {
+  vendor?: string;
+}
+
+export function userConfigPath(): string {
+  return join(process.env.HOME ?? "", ".dotframe", "config.json");
+}
+
+export function loadUserConfig(): UserConfig {
+  const path = userConfigPath();
+  if (!existsSync(path)) return {};
+  try {
+    return JSON.parse(readFileSync(path, "utf8")) as UserConfig;
+  } catch {
+    throw new CliError("BAD_CONFIG", `${path} is not valid JSON`, `fix or delete ${path}`);
+  }
+}
+
+export function saveUserConfig(config: UserConfig): void {
+  const path = userConfigPath();
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
+}
+
+// Keys stored per machine rather than in dotframe.json.
+export const USER_KEYS = ["vendor"] as const;

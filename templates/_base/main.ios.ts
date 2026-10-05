@@ -10,7 +10,7 @@ let tick: Frame | null = null;
 
 export function init(_base: string): void {
   const platform = openLibraryPlatform(WINDOW);
-  tick = createSetup({ link: null, mash: null })(platform);
+  tick = createSetup({ link: null, mash: null, onProbe: (): void => {} })(platform);
 }
 
 // Returns false to ask the host to quit.

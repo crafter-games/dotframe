@@ -121,6 +121,18 @@ if (last && last.texture === 1) hits += 1;
 
 dotframe will keep the workarounds until these land, and rerun bench2d against Bloom after each scriptc release.
 
+### Rerun on scriptc 0.2.3 (2026-10-05)
+
+Same repros, same machine. The cases above are unchanged; differences are within run-to-run noise.
+
+| Case | 0.2.0 | 0.2.3 | Node (V8) | 0.2.3 / V8 |
+|---|---:|---:|---:|---:|
+| E. fresh `number[]` + `push` per shape | 57.0 ms | 56.7 ms | 8.2 ms | 6.9× |
+| F. read last element of `Batch[]`, mutate one field | 64.0 ms | 60.2 ms | 2.1 ms | 29× |
+| G. captured `const` `Float32Array` update loop | 32.8 ms | 31.1 ms | 13.5 ms | 2.3× |
+| H. read a 96-element `number[]` | 26.7 ms | 27.6 ms | 11.2 ms | 2.5× |
+| I. read last element as `Batch \| undefined`, narrow | 66.7 ms | 59.5 ms | 4.4 ms | 14× |
+
 ### dotframe's own share (not scriptc)
 
 `memmove` under `writeBuffer` is the vertex upload: 7.2 MB per frame at 50,000 sprites with 24-byte vertices (it was 10.8 MB with 36-byte ones). It is dotframe's cost, not scriptc's.
@@ -203,3 +215,9 @@ In Craft Ones the native build serialized the same state with `roundNumber` in a
 ### `--optimization dev` fails to link (low, not reproduced minimally)
 
 `scriptc build main.native.ts --optimization dev` failed in Craft Ones with `Undefined symbols: _main`. A small file and a template game with `--ffi` both link in dev mode, so the trigger is project-specific.
+
+### XPC-backed system services hang inside a scriptc executable (high for networking)
+
+In a scriptc 0.2.3 executable on macOS, NSURLSession never finishes anything that needs a system daemon: resolving a hostname (mDNSResponder) or verifying a TLS certificate (trustd). The task stays "connecting" with no error and no system log line. The same Objective-C client (`native/df_ws_apple.m`) works in a plain C program, with or without an SDL window and event loop, and works inside the scriptc executable for `ws://127.0.0.1` and `ws://localhost`, which need neither service. `getaddrinfo` returns in 2 ms inside the scriptc executable, so libc resolution is fine; Network.framework's asynchronous paths are what never complete. Not tried yet: a scriptc library (iOS), where SDL owns the app lifecycle.
+
+Repro: build `examples` with a native entry that calls `dfWsOpen("wss://example.com/")` and polls `dfWsState`; it stays 0. With `DF_WS_DEBUG=1` the client logs "connecting" and nothing after it. The C program at the same URL logs "open" within a second.

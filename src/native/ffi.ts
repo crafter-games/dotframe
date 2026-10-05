@@ -14,6 +14,7 @@ export declare function dfPipeline(wgsl: string, stride: number, attributes: Uin
 export declare function dfBind(pipeline: number, buffer: number, texture: number): number;
 export declare function dfTexture(width: number, height: number, rgba: Uint8Array, smooth: boolean): number;
 export declare function dfImage(png: Uint8Array, smooth: boolean): number;
+export declare function dfTextureDestroy(texture: number): void;
 export declare function dfTextureSize(texture: number, axis: number): number;
 export declare function dfPoll(): boolean;
 export declare function dfTouchCount(): number;
@@ -34,9 +35,12 @@ export declare function dfSound(mp3: Uint8Array): number;
 export declare function dfPlay(sound: number, volume: number, rate: number): void;
 export declare function dfTone(frequency: number, duration: number, volume: number): void;
 export declare function dfTrack(mp3: Uint8Array): number;
-export declare function dfMusicPlay(track: number, loop: boolean, volume: number): number;
-export declare function dfMusicStop(): void;
-export declare function dfMusicPause(paused: boolean): void;
-export declare function dfMusicVolume(volume: number): void;
-export declare function dfMasterVolume(volume: number): void;
 export declare function dfAudioActive(): number;
+// Music and volume in one call (library mode caps host callbacks at 32): op 0 play track a, loop when b != 0, at
+// volume c; 1 stop; 2 pause when a != 0, else resume; 3 music volume a; 4 master volume a.
+export declare function dfMusic(op: number, a: number, b: number, c: number): number;
+// WebSocket client and share (df_ws_apple.m, df_ws_win.c), two calls because library mode caps host callbacks at
+// 32. dfWsText: op 0 open url, 1 send text on socket, 2 share text. dfWs: op 0 state, 1 next length, 2 byte, 3 pop,
+// 4 close. See native/relay.ts.
+export declare function dfWsText(op: number, socket: number, text: string): number;
+export declare function dfWs(op: number, socket: number, arg: number): number;

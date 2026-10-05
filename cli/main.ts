@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { parseArgs } from "node:util";
 import pkg from "../package.json" with { type: "json" };
-import { build, deploy, device, relay, vendor } from "./commands/ship";
+import { build, deploy, device, deviceLogs, relay, vendor } from "./commands/ship";
 import { doctor } from "./commands/doctor";
 import { deployInit } from "./commands/docker";
 import { configCmd } from "./commands/config";
@@ -31,6 +31,7 @@ Build and ship
   relay    serve [--port 8787]          local netplay relay (same protocol as production)
   relay    deploy [--region eze]        gated
   device   install <target>             gated
+  device   logs <target>                newest crash report from the device, summarized
   vendor   <macos|windows>              SDL3 + wgpu-native for native builds (~/.dotframe/vendor)
   doctor   [--fix] [--docker]           toolchain, vendor, links, config, sim render and math
   config   get [key] | set <key> <json>
@@ -74,13 +75,14 @@ Compares checksums every frame and the full inspect() state every --every frames
 Warns when rollbacks exceed the sim's rollbackWindow.
 
   dotframe desync --latency 474ms --jitter 40ms --mash 42 --json`,
-  play: `dotframe play --online [room] [--frames 600] [--seeds 1,2] [--out .dotframe/play] [--json]
+  play: `dotframe play --online [room] [--frames 600] [--seeds 1,2] [--native] [--out .dotframe/play] [--json]
 
 Builds the web target, starts a local relay, and opens two agent-browser sessions on ?room=<room>&relay=...&mash=<seed>
 (one seed per peer from --seeds).
 Waits until both confirm --frames frames, compares their checksums every 30 frames, and saves a screenshot of each.
 The web entry must honor ?room=, ?relay=, ?mash= and publish globalThis.__dotframe: createProbe() and createMasher()
-from dotframe/src/probe do both (templates show it).`,
+from dotframe/src/probe do both (templates show it). --native makes peer 1 the macOS build, which reads DOTFRAME_ROOM,
+DOTFRAME_RELAY, DOTFRAME_MASH and writes its probe to DOTFRAME_PROBE (templates' main.native.ts does).`,
   build: `dotframe build <target> [--release] [--dry-run] [--json]
 
 Runs targets.<target>.steps from dotframe.json, or for a native target ({"native": {"platform": "macos",
@@ -90,14 +92,15 @@ Failures keep the full output in .dotframe/logs and return its path. --release r
   dotframe build web
   dotframe build ios --release`,
   deploy: `dotframe deploy <target> [--prod] [--dry-run] [--yes] [--json]
-dotframe deploy init <target> --provider dokploy [--compose <id>] [--yes]
+dotframe deploy init <target> --provider dokploy [--compose <id>] [--site <dir>] [--path /play/] [--yes]
 
 provider vercel: uploads targets.<target>.out. provider dokploy: redeploys the compose stack (it builds from the
 pushed branch), waits for the result, and on failure returns the build log. Without --yes it stops with
 APPROVAL_REQUIRED (exit 2); show the --dry-run plan to a human first.
 
 init writes deploy/Dockerfile.web (installs "requires" tools, builds with dotframe), deploy/Dockerfile.relay
-(dotframe relay serve), deploy/nginx.conf (no-cache index.html) and deploy/compose.yaml (web at /, relay at /relay).
+(dotframe relay serve), deploy/nginx.conf (no-cache HTML) and deploy/compose.yaml (web at /, relay at /relay).
+--site serves a static folder (a landing page) at / with the game at --path (default /play/ with a site).
 
   dotframe deploy web --prod --dry-run
   dotframe deploy init web --provider dokploy`,
@@ -108,8 +111,11 @@ serve runs the netplay relay locally (PORT env or --port): it pairs two clients 
 messages, the protocol connectRelay in dotframe/src/netplay speaks. deploy redeploys the production relay
 (dokploy) or deploys it to a region (fly), gated like deploy.`,
   device: `dotframe device install <target> [--dry-run] [--yes]
+dotframe device logs <target> [--json]
 
-Installs targets.<target>.app on targets.<target>.device with devicectl. Gated like deploy.`,
+install puts the built app on targets.<target>.device with devicectl (gated like deploy). logs copies the newest
+crash report of the app's process from the device into .dotframe/logs and prints the exception, termination and
+the crashed thread's frames (read-only on the device).`,
   vendor: `dotframe vendor <macos|windows> [--dry-run]
 
 Downloads wgpu-native and builds SDL3 for native targets into DOTFRAME_VENDOR (default ~/.dotframe/vendor), which
@@ -123,7 +129,7 @@ symlinks; --docker builds the dokploy web image locally, as the server would.`,
 dotframe config set <key> <json> [--dry-run]
 
 Dotted keys. Values are JSON (strings need inner quotes). set rewrites dotframe.json with 2-space indent and short
-objects and arrays on one line.
+objects and arrays on one line. vendor is per machine: dotframe config set vendor <dir> writes ~/.dotframe/config.json.
 
   dotframe config set targets.web.deploy.scope '"my-team"'`,
   new: `dotframe new <name> [--template fighter|platformer|blank] [--no-install] [--json]
@@ -171,6 +177,9 @@ const { values, positionals } = parseArgs({
     docker: { type: "boolean" },
     online: { type: "boolean" },
     seeds: { type: "string" },
+    site: { type: "string" },
+    native: { type: "boolean" },
+    path: { type: "string" },
     provider: { type: "string" },
     compose: { type: "string" },
   },
@@ -184,14 +193,14 @@ try {
   if (values.version) console.log(pkg.version);
   else if (command && values.help && COMMAND_HELP[command]) console.log(COMMAND_HELP[command]);
   else if (!command || values.help) console.log(HELP);
-  else if (command === "play" && values.online === true) await playOnline(ctx, rest[0], { frames: v.frames, out: v.out, seeds: v.seeds });
+  else if (command === "play" && values.online === true) await playOnline(ctx, rest[0], { frames: v.frames, out: v.out, seeds: v.seeds, native: values.native === true });
   else if (command === "sim") await sim(ctx, v);
   else if (command === "snap") await snap(ctx, v);
   else if (command === "replay" && rest[0] === "record") await record(ctx, rest[1], v);
   else if (command === "replay" && rest[0] === "verify") await verify(ctx, rest.slice(1));
   else if (command === "desync") await desync(ctx, v);
   else if (command === "build") await build(ctx, rest[0], values.release === true);
-  else if (command === "deploy" && rest[0] === "init") await deployInit(ctx, rest[1], v.provider, v.compose);
+  else if (command === "deploy" && rest[0] === "init") await deployInit(ctx, rest[1], v.provider, v.compose, v.site, v.path);
   else if (command === "deploy") await deploy(ctx, rest[0], values.prod === true);
   else if (command === "relay" && rest[0] === "deploy") await relay(ctx, v.region);
   else if (command === "relay" && rest[0] === "serve") {
@@ -201,6 +210,7 @@ try {
     await new Promise((): void => {});
   }
   else if (command === "device" && rest[0] === "install") await device(ctx, rest[1] ?? "ios");
+  else if (command === "device" && rest[0] === "logs") await deviceLogs(ctx, rest[1] ?? "ios");
   else if (command === "vendor") await vendor(ctx, rest[0]);
   else if (command === "doctor") await doctor(ctx, values.fix === true, values.docker === true);
   else if (command === "config") await configCmd(ctx, rest);

@@ -60,7 +60,9 @@ Pass `--json` and read `ok`. Errors look like `{"ok": false, "error": {"code", "
 
 - `dotframe/src/detmath`: deterministic sin, cos, tan, atan, atan2, exp, log, pow, hypot for simulation code.
 - `dotframe/src/checksum`: a fixed-order checksum over numbers.
-- `dotframe/src/netplay` and `dotframe/src/relay-client`: rollback netplay and the relay connection (see netplay).
+- `dotframe/src/netplay` and `dotframe/src/relay-client`: rollback netplay and the relay connection (see netplay); `dotframe/src/native/relay` on native.
+- `dotframe/src/ui`: buttons and arrow rows laid out once for drawing and hit-testing (`column`, `hit`, `drawUi`, `moveFocus`), taps from mouse and touch (`createTap`), and `createReleaseGate` so the press that starts a match does not reach gameplay.
+- Web: `run(window, setup, { fit: "window" })` fills the browser window; `Draw2D.resize(w, h)` lets the logical canvas follow `gpu.aspect()`.
 
 ## Other guides
 

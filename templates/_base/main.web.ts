@@ -1,3 +1,4 @@
+import { publishProbe } from "dotframe/src/probe-web";
 import { connectRelay } from "dotframe/src/relay-client";
 import { run } from "dotframe/src/web/run";
 import { WINDOW } from "./src/game";
@@ -10,4 +11,5 @@ const room = params.get("room");
 const relay = params.get("relay") ?? `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/relay`;
 const mash = params.get("mash");
 
-await run(WINDOW, createSetup({ link: room ? connectRelay(relay, room) : null, mash: mash === null ? null : Number(mash) }));
+// fit: "window" fills the browser window; the setup refits the canvas when its shape changes.
+await run(WINDOW, createSetup({ link: room ? connectRelay(relay, room) : null, mash: mash === null ? null : Number(mash), onProbe: publishProbe }), { fit: "window" });

@@ -1,6 +1,7 @@
 // The state `dotframe play --online` reads from each browser: frame, confirmed frame, link status, and this peer's
-// checksum at every 30th confirmed frame. Call update() once per fixed step; publish() exposes it as
-// globalThis.__dotframe.
+// checksum at every 30th confirmed frame. Call update() once per fixed step. On the web, publishProbe (probe-web.ts)
+// exposes the state as globalThis.__dotframe; native builds write it to a file instead (writing globalThis traps in
+// scriptc).
 import type { Rollback } from "./netplay";
 
 export interface ProbeState {
@@ -20,7 +21,6 @@ const EVERY = 30;
 
 export function createProbe(): Probe {
   const state: ProbeState = { frame: 0, confirmed: 0, status: "local", sums: {} };
-  (globalThis as { __dotframe?: ProbeState }).__dotframe = state;
   return {
     state,
     update: (rollback: Rollback | null, status: string, localFrame?: number): void => {
