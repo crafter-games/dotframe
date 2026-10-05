@@ -185,8 +185,9 @@ ${frameworks.map((f) => `      - sdk: ${f}.framework`).join("\n")}
 `;
 }
 
-export async function buildIos(ctx: Ctx, root: string, gameName: string, targetName: string, t: IosTarget): Promise<{ app: string; log: string; steps: RunResult[] }> {
-  for (const tool of ["scriptc", "xcodegen", "xcodebuild", "sips"]) {
+// check: stop after the scriptc library (library mode is stricter than an executable build), for doctor.
+export async function buildIos(ctx: Ctx, root: string, gameName: string, targetName: string, t: IosTarget, check = false): Promise<{ app: string; log: string; steps: RunResult[] }> {
+  for (const tool of check ? ["scriptc"] : ["scriptc", "xcodegen", "xcodebuild", "sips"]) {
     if (!which(tool)) throw new CliError("TOOL_MISSING", `${tool} not found`, tool === "xcodegen" ? "brew install xcodegen" : tool === "scriptc" ? "npm i -g scriptc" : "install Xcode", SKILL);
   }
   for (const key of ["entry", "bundleId", "team"] as const) {
@@ -194,7 +195,7 @@ export async function buildIos(ctx: Ctx, root: string, gameName: string, targetN
   }
   if (!existsSync(join(root, t.entry))) throw new CliError("ENTRY_MISSING", `iOS entry ${t.entry} does not exist`, "add it (see the ios skill: export init and frame)", SKILL);
   const vendor = vendorStatus("ios");
-  if (vendor.missing.length > 0) throw new CliError("VENDOR_MISSING", `iOS needs SDL3 and wgpu-native in ${vendor.dir}; missing ${vendor.missing.join(", ")}`, vendorFix("ios"), SKILL);
+  if (vendor.missing.length > 0 && !check) throw new CliError("VENDOR_MISSING", `iOS needs SDL3 and wgpu-native in ${vendor.dir}; missing ${vendor.missing.join(", ")}`, vendorFix("ios"), SKILL);
   const pack = await iosRuntimePack(ctx, root);
   if (!pack.path) {
     throw new CliError("TOOL_MISSING", pack.found ? `scriptc iOS runtime pack is ${pack.found}, scriptc is ${pack.want}` : `scriptc iOS runtime pack ${pack.want} not found`, iosPackFix(pack.want), SKILL);
@@ -203,11 +204,11 @@ export async function buildIos(ctx: Ctx, root: string, gameName: string, targetN
   const display = t.displayName ?? gameName;
   const id = identifier(gameName);
   const name = scheme(display);
-  const stage = join(root, ".dotframe", "native", targetName);
+  const stage = join(root, ".dotframe", check ? "check" : "native", targetName);
   const out = join(root, "dist", targetName);
   const app = join(out, `${name}.app`);
   const logDir = join(root, ".dotframe", "logs");
-  const log = join(logDir, `build-${targetName}.log`);
+  const log = join(logDir, `${check ? "check" : "build"}-${targetName}.log`);
   if (ctx.dryRun) {
     print(ctx, { dryRun: true, platform: "ios", stage, app, scheme: name, bundleId: t.bundleId, team: t.team, runtimePack: pack.path }, (): string => `would stage ${t.entry} in ${stage} and build ${app}`);
     return { app, log, steps: [] };
@@ -264,7 +265,7 @@ export function frame(time: number): boolean {
   cpSync(join(ENGINE, "assets", "fonts"), join(bundle, "dotframe", "assets", "fonts"), { recursive: true });
 
   const steps: { label: string; argv: string[]; cwd?: string; env?: Record<string, string> }[] = [];
-  if (t.icon) {
+  if (t.icon && !check) {
     const icons = join(stage, "Assets.xcassets", "AppIcon.appiconset");
     mkdirSync(icons, { recursive: true });
     writeFileSync(join(stage, "Assets.xcassets", "Contents.json"), '{"info":{"author":"xcode","version":1}}\n');
@@ -289,6 +290,7 @@ export function frame(time: number): boolean {
     }
   };
   for (const step of steps) await run(step);
+  if (check) return { app, log, steps: results };
   const lib = readdirSync(join(stage, ".scriptc")).find((f: string): boolean => f.endsWith(".lib.a"));
   if (!lib) throw new CliError("STEP_FAILED", "scriptc produced no .lib.a", `read ${log}`, SKILL, 1, log);
   writeFileSync(join(stage, "project.yml"), projectYml({ name, id, bundleId: t.bundleId, team: t.team, vendor: vendor.dir, sdl: vendor.sdl ?? "", lib: join(stage, ".scriptc", lib), icon: !!t.icon }));

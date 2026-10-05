@@ -1,10 +1,10 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, symlinkSync, unlinkSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
-import { type Config, type Ctx, findRoot, home, loadConfig, print, which } from "../lib";
+import { CliError, type Config, type Ctx, findRoot, home, loadConfig, print, type Target, which } from "../lib";
 import type { Draw2D } from "../../src/draw2d";
 import type { Sim } from "../../src/sim";
-import { importGraph, vendorFix, vendorStatus } from "../native";
-import { iosPackFix, iosRuntimePack } from "../ios";
+import { buildNative, importGraph, vendorFix, vendorStatus } from "../native";
+import { buildIos, iosPackFix, iosRuntimePack } from "../ios";
 import { dockerCheck } from "./docker";
 import { firstDifference, flatten, headlessRun, loadSim } from "../simkit";
 
@@ -59,6 +59,7 @@ export async function doctor(ctx: Ctx, fix: boolean, docker = false): Promise<vo
     }
     for (const [name, t] of Object.entries(config.targets)) {
       if (!t.native) continue;
+      checks.push(await nativeCheck(ctx, config, name, t.native));
       const v = vendorStatus(t.native.platform);
       checks.push({ check: `vendor:${name}`, ok: v.missing.length === 0, detail: v.missing.length === 0 ? `${v.dir} (${v.sdl})` : `missing in ${v.dir}: ${v.missing.join(", ")}`, fix: v.missing.length === 0 ? "" : vendorFix(t.native.platform), skill: t.native.platform });
       checks.push(tool("scriptc", "native builds", "npm i -g scriptc", t.native.platform));
@@ -195,4 +196,24 @@ function mathCheck(simFile: string): Check {
     detail: `${hits.length} platform-dependent math call(s) in code the sim reaches: ${shown}`,
     fix: "use dotframe/src/detmath (dsin, dcos, datan2, dexp, dpow, ...) in simulation code; mark render-only lines with // dotframe-allow-math, or a render-only file with // dotframe-allow-math-file",
   };
+}
+
+// Compiles a native target's TypeScript the way the real build does (staging plus scriptc; for iOS the library),
+// without C or linking: as const tuples and other patterns that work on the web fail here, not on the phone.
+async function nativeCheck(ctx: Ctx, config: Config, name: string, native: NonNullable<Target["native"]>): Promise<Check> {
+  const base = { check: `native:${name}`, skill: native.platform };
+  if (!which("scriptc")) return { ...base, ok: false, detail: "scriptc not found", fix: "npm i -g scriptc" };
+  const quiet = { ...ctx, json: true, dryRun: false };
+  try {
+    const started = performance.now();
+    if (native.platform === "ios") await buildIos(quiet, config.root, config.name, name, native, true);
+    else await buildNative(quiet, config.root, config.name, name, native, true);
+    return { ...base, ok: true, detail: `${native.entry} compiles with scriptc (${Math.round(performance.now() - started)} ms)`, fix: "" };
+  } catch (error) {
+    if (!(error instanceof CliError)) throw error;
+    // Missing tools or packs have their own checks; this one is about the code.
+    if (error.code !== "STEP_FAILED") return { ...base, ok: false, detail: error.message.split("\n")[0], fix: error.fix };
+    const first = error.message.split("\n").find((l: string): boolean => /error SC\d+/.test(l)) ?? error.message.split("\n")[0];
+    return { ...base, ok: false, detail: `scriptc rejects ${native.entry}: ${first.replace(/^.*?\.dotframe\/check\/[^/]+\/(game|tree)\//, "")}`, fix: `read ${error.log}; the macos skill lists what scriptc rejects` };
+  }
 }

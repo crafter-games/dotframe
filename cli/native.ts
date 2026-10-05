@@ -151,17 +151,18 @@ export function stageGame(root: string, entry: string, tree: string, engineStage
   return join(tree, relative(base, realpathSync(root)));
 }
 
-export async function buildNative(ctx: Ctx, root: string, gameName: string, targetName: string, t: NativeTarget): Promise<{ binary: string; log: string; steps: RunResult[] }> {
+// check: compile the TypeScript only (scriptc --emit ir, no C, no link), for doctor.
+export async function buildNative(ctx: Ctx, root: string, gameName: string, targetName: string, t: NativeTarget, check = false): Promise<{ binary: string; log: string; steps: RunResult[] }> {
   const platform = t.platform;
   const skill = platform;
   const tools = platform === "macos" ? ["clang", "scriptc"] : ["zig", "scriptc"];
   for (const tool of tools) if (!which(tool)) throw new CliError("TOOL_MISSING", `${tool} not found`, tool === "scriptc" ? "npm i -g scriptc" : tool === "zig" ? "brew install zig" : "xcode-select --install", skill);
   const vendor = vendorStatus(platform);
-  if (vendor.missing.length > 0) throw new CliError("VENDOR_MISSING", `native ${platform} needs SDL3 and wgpu-native in ${vendor.dir}; missing ${vendor.missing.join(", ")}`, vendorFix(platform), skill);
+  if (vendor.missing.length > 0 && !check) throw new CliError("VENDOR_MISSING", `native ${platform} needs SDL3 and wgpu-native in ${vendor.dir}; missing ${vendor.missing.join(", ")}`, vendorFix(platform), skill);
 
-  const stage = join(root, ".dotframe", "native", targetName);
+  const stage = join(root, ".dotframe", check ? "check" : "native", targetName);
   const logDir = join(root, ".dotframe", "logs");
-  const log = join(logDir, `build-${targetName}.log`);
+  const log = join(logDir, `${check ? "check" : "build"}-${targetName}.log`);
   const out = join(root, "dist", targetName);
   const binary = join(out, `${t.name ?? gameName}${platform === "windows" ? ".exe" : ""}`);
   if (!existsSync(join(root, t.entry))) throw new CliError("ENTRY_MISSING", `native entry ${t.entry} does not exist`, `add ${t.entry} (see the macos skill) or fix targets.${targetName}.native.entry`, skill);
@@ -186,7 +187,8 @@ export async function buildNative(ctx: Ctx, root: string, gameName: string, targ
     { label: "ar libdf_native", argv: [...ar, join(lib, "libdf_native.a"), join(lib, "df_native.o"), join(lib, "df_audio.o")] },
   ];
   const ffi = JSON.parse(readFileSync(join(ENGINE, "native", `ffi.${platform}.json`), "utf8")) as { libraries: string[] };
-  ffi.libraries = [join(lib, "libdf_native.a"), join(vendor.dir, "build", `sdl-${platform}`, "libSDL3.a"), join(vendor.dir, "wgpu", platform, "lib", "libwgpu_native.a")];
+  // scriptc validates that listed libraries exist even when it only emits IR, and a check links nothing.
+  ffi.libraries = check ? [] : [join(lib, "libdf_native.a"), join(vendor.dir, sdlLibrary(platform)), join(vendor.dir, "wgpu", platform, "lib", "libwgpu_native.a")];
   writeFileSync(join(stage, "ffi.json"), JSON.stringify(ffi, null, 2));
   let env: Record<string, string> = {};
   if (platform === "windows") {
@@ -197,13 +199,15 @@ export async function buildNative(ctx: Ctx, root: string, gameName: string, targ
   }
   const scriptc = {
     label: "scriptc",
-    argv: ["scriptc", "build", t.entry, "--ffi", join(stage, "ffi.json"), ...(platform === "windows" ? ["--windows-subsystem", "gui"] : []), "-o", binary],
+    argv: check
+      ? ["scriptc", "build", t.entry, "--ffi", join(stage, "ffi.json"), "--emit", "ir", "-o", join(stage, "check.ll")]
+      : ["scriptc", "build", t.entry, "--ffi", join(stage, "ffi.json"), ...(platform === "windows" ? ["--windows-subsystem", "gui"] : []), "-o", binary],
     cwd: gameStage,
     env,
   };
   const results: RunResult[] = [];
   const full: string[] = [];
-  for (const step of [...steps, scriptc]) {
+  for (const step of check ? [scriptc] : [...steps, scriptc]) {
     if (!ctx.json) console.error(`> ${step.label}`);
     const r = await exec(ctx, root, step);
     full.push(`> ${step.label}: ${step.argv.join(" ")}\n${r.output}`);
