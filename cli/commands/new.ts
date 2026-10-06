@@ -3,6 +3,8 @@ import { join, resolve } from "node:path";
 import { CliError, type Ctx, exec, loadConfig, print, runSteps, target } from "../lib";
 
 const TEMPLATES = resolve(import.meta.dir, "../../templates");
+// A game scaffolded by this CLI depends on this same engine version.
+const VERSION: string = JSON.parse(readFileSync(resolve(import.meta.dir, "../../package.json"), "utf8")).version;
 
 export async function create(ctx: Ctx, name: string | undefined, template: string, install = true): Promise<void> {
   if (!name || !/^[a-z0-9][a-z0-9-]*$/.test(name)) throw new CliError("BAD_NAME", "new needs a lowercase name (letters, digits, dashes)", "dotframe new my-game --template fighter", "game-design");
@@ -22,7 +24,7 @@ export async function create(ctx: Ctx, name: string | undefined, template: strin
   }
   for (const [from, to] of files) {
     mkdirSync(join(dir, to, ".."), { recursive: true });
-    writeFileSync(join(dir, to), readFileSync(from, "utf8").replaceAll("__NAME__", name).replaceAll("__SCOPE__", "your-vercel-team"));
+    writeFileSync(join(dir, to), readFileSync(from, "utf8").replaceAll("__NAME__", name).replaceAll("__SCOPE__", "your-vercel-team").replaceAll("__VERSION__", VERSION));
   }
   mkdirSync(join(dir, ".agents/skills/dotframe"), { recursive: true });
   cpSync(resolve(import.meta.dir, "../../skills/dotframe/SKILL.md"), join(dir, ".agents/skills/dotframe/SKILL.md"));

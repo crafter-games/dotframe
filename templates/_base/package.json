@@ -8,7 +8,7 @@
     "typecheck": "tsc"
   },
   "dependencies": {
-    "dotframe": "^0.1.0"
+    "dotframe": "^__VERSION__"
   },
   "devDependencies": {
     "@types/bun": "^1.3.0",
