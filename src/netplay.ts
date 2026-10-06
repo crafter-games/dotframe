@@ -51,6 +51,9 @@ export interface RollbackOptions<S = unknown> {
   maxRollback: number;
   // Called around re-simulation, so the game can mute sound and skip effects that should play once.
   resimulating?: (active: boolean) => void;
+  // Wall clock in ms (performance.now). With it the round trip is measured in time, so a peer that stalls does not
+  // read a shorter round trip, think it is further ahead and stall again. Without it the round trip counts frames.
+  clock?: () => number;
 }
 
 export interface RollbackStats {
@@ -83,6 +86,10 @@ export interface Rollback {
 const SUM_EVERY = 30;
 // Weight of each new sample in the round-trip and lead averages (an exponential moving average over about 10 ticks).
 const SMOOTHING = 0.1;
+const FRAME_MS = 1000 / 60;
+// Frames of estimated lead before a peer waits for the other. One frame was inside link jitter: both peers kept
+// reading themselves ahead and stalled every few frames.
+const AHEAD_TOLERANCE = 2;
 // Inputs resent with every message so a late peer catches up without acknowledgments.
 const RESEND = 8;
 
@@ -103,6 +110,9 @@ export function createRollback<S>(options: RollbackOptions<S>): Rollback {
   let rtt = 0;
   let ahead = 0;
   let sentSums = 0;
+  const clock = options.clock;
+  // When each frame number was first sent as `now`; the peer echoes the newest one back as `ack`.
+  const sentAt: (number | undefined)[] = [];
   const stats: RollbackStats = { frame: 0, rollbacks: 0, longestRollback: 0, stalls: 0, desync: -1, rtt: 0, ahead: 0, tickMs: 0 };
 
   for (let f = 0; f < inputDelay; f++) {
@@ -146,7 +156,9 @@ export function createRollback<S>(options: RollbackOptions<S>): Rollback {
       }
       if (message.now >= peerNow) {
         peerNow = message.now;
-        rtt = rtt * (1 - SMOOTHING) + Math.max(0, frame - message.ack) * SMOOTHING;
+        const sent = sentAt[message.ack];
+        const sample = clock && sent !== undefined ? (clock() - sent) / FRAME_MS : frame - message.ack;
+        rtt = rtt * (1 - SMOOTHING) + Math.max(0, sample) * SMOOTHING;
       }
       for (let i = 0; i < message.inputs.length; i++) {
         const f = message.from + i;
@@ -174,12 +186,15 @@ export function createRollback<S>(options: RollbackOptions<S>): Rollback {
   };
 
   const step = (localInput: number): boolean => {
+    if (clock && sentAt[frame] === undefined) sentAt[frame] = clock();
+    // Acks trail by one round trip; ten seconds back is never echoed again.
+    if (frame >= 600) sentAt[frame - 600] = undefined;
     settle();
     // Wait rather than predict too far, or run ahead of a slower peer. The peer's last reported frame is one trip
     // old; its current frame is about that plus half the round trip. Waiting on the raw gap instead would make both
     // peers wait for each other and play at round-trip speed.
     ahead = ahead * (1 - SMOOTHING) + (frame - (peerNow + rtt / 2)) * SMOOTHING;
-    if (frame - confirmed >= maxRollback || ahead > 1) {
+    if (frame - confirmed >= maxRollback || ahead > AHEAD_TOLERANCE) {
       stats.stalls += 1;
       const from = Math.max(0, frame + inputDelay - RESEND);
       transport.send({ t: "input", now: frame, ack: peerNow, from, inputs: local.slice(from, frame + inputDelay) });

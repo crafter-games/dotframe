@@ -106,3 +106,40 @@ test("a peer whose simulation diverges is reported as a desync", () => {
   }
   expect(rollbacks[0].stats().desync).toBeGreaterThanOrEqual(0);
 });
+
+// 15 ticks each way; peer 1 only gets two ticks out of three, so peer 0 has to wait for it.
+function slowPeer(clocked: boolean): { rtt: number; frames: number[] } {
+  const net = link(15, 0);
+  let tick = 0;
+  const clock = clocked ? (): number => (tick * 1000) / 60 : undefined;
+  const rollbacks = [0, 1].map((port) =>
+    createRollback({ sim: sim(), transport: port === 0 ? net.a : net.b, localPort: port, neutral: 0, inputDelay: DELAY, maxRollback: 60, clock }),
+  );
+  for (; tick < 1800; tick++) {
+    rollbacks[0].tick(input(0, tick));
+    if (tick % 3 !== 2) rollbacks[1].tick(input(1, tick));
+    net.advance();
+  }
+  return { rtt: rollbacks[0].stats().rtt, frames: rollbacks.map((r) => r.stats().frame) };
+}
+
+test("with a clock, stalls do not shrink the measured round trip", () => {
+  const { rtt } = slowPeer(true);
+  expect(rtt).toBeGreaterThan(28);
+  expect(rtt).toBeLessThan(40);
+  expect(slowPeer(false).rtt).toBeLessThan(rtt);
+});
+
+test("a peer on an equal link does not stall: both run at full speed", () => {
+  const net = link(15, 12); // 200 ms of jitter, about what a Discord-proxied relay shows
+  let tick = 0;
+  const clock = (): number => (tick * 1000) / 60;
+  const rollbacks = [0, 1].map((port) =>
+    createRollback({ sim: sim(), transport: port === 0 ? net.a : net.b, localPort: port, neutral: 0, inputDelay: DELAY, maxRollback: 60, clock }),
+  );
+  for (; tick < 1800; tick++) {
+    for (const port of [0, 1]) rollbacks[port].tick(input(port, tick));
+    net.advance();
+  }
+  for (const r of rollbacks) expect(r.stats().stalls).toBeLessThan(30);
+});
