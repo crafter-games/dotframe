@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 import { CliError, type Ctx, exec, print, type RunResult, which } from "./lib";
 import { ENGINE, importGraph, sdlLibrary, stageGame, vendorFix, vendorStatus } from "./native";
+import { slimAssets } from "./slim";
 
 export interface IosTarget {
   platform: "ios";
@@ -289,7 +290,7 @@ export function frame(time: number): boolean {
   const bundle = join(stage, "game");
   mkdirSync(bundle, { recursive: true });
   const assets = t.assets ?? "assets";
-  if (existsSync(join(root, assets))) cpSync(join(root, assets), join(bundle, assets), { recursive: true });
+  if (existsSync(join(root, assets))) slimAssets(join(root, assets), join(bundle, assets));
   cpSync(join(ENGINE, "assets", "fonts"), join(bundle, "dotframe", "assets", "fonts"), { recursive: true });
 
   const steps: { label: string; argv: string[]; cwd?: string; env?: Record<string, string> }[] = [];

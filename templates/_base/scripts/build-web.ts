@@ -1,6 +1,7 @@
 // Builds the web target into dist/web with a content-hashed bundle (main.<hash>.js) and a never-cached
 // index.html, so browsers and Discord's proxy never run a stale build.
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { slimAssets } from "dotframe/cli/slim";
 
 const out = "dist/web";
 // Keep .vercel: it links this folder to its project, and without it the next deploy links the repo instead.
@@ -18,5 +19,6 @@ writeFileSync(
   `${out}/vercel.json`,
   `${JSON.stringify({ headers: [{ source: "/index.html", headers: [{ key: "Cache-Control", value: "no-cache" }] }, { source: "/", headers: [{ key: "Cache-Control", value: "no-cache" }] }] }, null, 2)}\n`,
 );
-if (existsSync("assets")) cpSync("assets", `${out}/assets`, { recursive: true });
+// Ship-size assets: GLBs keep what the loader reads and opaque PNG textures become JPEG (dotframe assets slim).
+if (existsSync("assets")) slimAssets("assets", `${out}/assets`);
 console.log(`${out}/${bundle}`);

@@ -4,6 +4,9 @@
 
 From porting The Ones (Godot, first-person 3D horror) to dotframe.
 
+- Native sound effects stay 16-bit in their own channel count instead of float stereo, a quarter of the memory for mono files. The Ones' decoded audio went from about 159 MB to 40 MB.
+- `Environment.sky`: a procedural sky drawn behind the scene in its own pass: zenith to horizon gradient (Godot's sky_curve), ground, sun disc, a textured moon, twinkling stars, a Milky Way band and a low horizon glow, tonemapped like the scene.
+- `assets slim`: copies assets for shipping, with GLBs cut to what `loadGlb` reads (unused maps, tangents and UV sets dropped, 16-bit indices when they fit) and opaque PNG textures recoded as JPEG through ffmpeg. The web template and iOS builds use it. The Ones' models went from 15.2 MB to 8.7 MB with the same `loadGlb` output.
 - `deploy` links the build folder to `deploy.project` before deploying, so vercel 60 no longer uploads the repo root or links a project named after the folder. The template's `build-web.ts` keeps `dist/web/.vercel`.
 - `doctor`: `native-traps:<target>` warns on code that aborts natively while web passes (unguarded `Record` reads into a variable or argument, `obj && expr` as a value; silence a line with `// dotframe-allow-native`). `tool:xcodebuild` runs `xcodebuild -version`. `build`, `device` and `doctor` use Xcode when xcode-select points at Command Line Tools.
 - `snap` fails with the WGSL error and line instead of a black frame (`gpuErrors` in `web/run`), uses one browser session per run (back-to-back snaps timed out), and a timeout prints the page console.
