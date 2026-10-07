@@ -50,7 +50,154 @@ export interface Environment {
   // Soft round billboards drawn after the scene, blended, tested against depth (src/particles: PARTICLE_FLOATS
   // each, final colors, fogged here).
   particles?: number[];
+  // A sky drawn behind everything (where nothing else writes depth): a gradient, an optional sun disc, moon, stars
+  // and Milky Way. Without it the frame's clear color shows.
+  sky?: Sky;
 }
+
+export interface Sky {
+  zenith: Vec3;
+  horizon: Vec3;
+  // Below the horizon; defaults to the horizon color darkened.
+  ground?: Vec3;
+  // How fast the horizon color gives way to the zenith going up (Godot's sky_curve); default 0.15.
+  curve?: number;
+  // Multiplies the whole sky; default 1.
+  energy?: number;
+  // size is the disc's angular radius in radians.
+  sun?: { direction: Vec3; color: Vec3; size: number };
+  // texture (optional) is wrapped on the disc like a lit sphere.
+  moon?: { direction: Vec3; color: Vec3; size: number; texture?: Texture };
+  // Star brightness (0: none) and Milky Way strength; stars twinkle with Environment.time.
+  stars?: number;
+  milkyWay?: number;
+  // A low warm glow toward a direction on the horizon (a town).
+  glow?: { direction: Vec3; color: Vec3 };
+}
+
+// Full-screen triangle; each pixel's view ray picks the sky color. Ported from The Ones' night_sky.gdshader and
+// Godot's ProceduralSkyMaterial gradient.
+const SKY_SHADER = `
+struct Sky {
+  right: vec4f,
+  up: vec4f,
+  forward: vec4f,
+  zenith: vec4f,
+  horizon: vec4f,
+  ground: vec4f,
+  sunDir: vec4f,
+  sunColor: vec4f,
+  moonDir: vec4f,
+  moonColor: vec4f,
+  glowDir: vec4f,
+  glowColor: vec4f,
+}
+@group(0) @binding(0) var<uniform> u: Sky;
+@group(0) @binding(1) var moonTex: texture_2d<f32>;
+@group(0) @binding(2) var moonSampler: sampler;
+struct Out {
+  @builtin(position) position: vec4f,
+  @location(0) ndc: vec2f,
+}
+@vertex fn vs_main(@builtin(vertex_index) i: u32) -> Out {
+  let p = vec2f(f32((i << 1u) & 2u), f32(i & 2u)) * 2.0 - 1.0;
+  var out: Out;
+  out.position = vec4f(p, 0.0, 1.0);
+  out.ndc = p;
+  return out;
+}
+fn hash3(q: vec3f) -> f32 {
+  var p = fract(q * vec3f(443.897, 441.423, 437.195));
+  p += dot(p, p.yzx + 19.19);
+  return fract((p.x + p.y) * p.z);
+}
+fn noise3(p: vec3f) -> f32 {
+  let i = floor(p);
+  var f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(mix(hash3(i), hash3(i + vec3f(1, 0, 0)), f.x), mix(hash3(i + vec3f(0, 1, 0)), hash3(i + vec3f(1, 1, 0)), f.x), f.y),
+    mix(mix(hash3(i + vec3f(0, 0, 1)), hash3(i + vec3f(1, 0, 1)), f.x), mix(hash3(i + vec3f(0, 1, 1)), hash3(i + vec3f(1, 1, 1)), f.x), f.y), f.z);
+}
+fn fbm(q: vec3f) -> f32 {
+  var p = q;
+  var v = 0.0;
+  var a = 0.5;
+  for (var i = 0; i < 5; i++) {
+    v += a * noise3(p);
+    p *= 2.03;
+    a *= 0.5;
+  }
+  return v;
+}
+fn stars(d: vec3f, scale: f32, threshold: f32, time: f32) -> f32 {
+  let p = d * scale;
+  let cell = floor(p);
+  let h = hash3(cell);
+  if (h < threshold) { return 0.0; }
+  let center = cell + vec3f(hash3(cell + 1.3), hash3(cell + 2.7), hash3(cell + 4.1));
+  let b = (h - threshold) / (1.0 - threshold);
+  let twinkle = 0.75 + 0.25 * sin(time * (1.5 + h * 4.0) + h * 40.0);
+  return smoothstep(0.12, 0.0, length(p - center)) * (0.25 + 0.75 * b) * twinkle;
+}
+@fragment fn fs_main(in: Out) -> @location(0) vec4f {
+  let d = normalize(u.forward.xyz + u.right.xyz * in.ndc.x * u.right.w + u.up.xyz * in.ndc.y * u.up.w);
+  let curve = u.ground.w;
+  let c = 1.0 - acos(clamp(d.y, -1.0, 1.0)) / 1.5707963;
+  var col: vec3f;
+  if (d.y >= 0.0) {
+    col = mix(u.horizon.rgb, u.zenith.rgb, clamp(1.0 - pow(1.0 - c, 1.0 / curve), 0.0, 1.0));
+  } else {
+    col = mix(u.horizon.rgb * 0.7, u.ground.rgb, clamp(1.0 - pow(1.0 + c, 1.0 / 0.02), 0.0, 1.0));
+  }
+  let up = clamp(d.y, -0.2, 1.0);
+  if (u.glowColor.w > 0.0) {
+    let flat = normalize(vec3f(d.x, 0.0, d.z) + vec3f(0.0001, 0.0, 0.0));
+    col += u.glowColor.rgb * pow(max(dot(flat, normalize(u.glowDir.xyz)), 0.0), 6.0) * smoothstep(0.25, 0.0, up) * 0.6;
+  }
+  let starEnergy = u.sunColor.w;
+  let milky = u.moonColor.w;
+  let band = exp(-pow(dot(d, normalize(vec3f(0.35, 0.25, 0.9))) / 0.22, 2.0));
+  if (milky > 0.0) {
+    col += vec3f(0.05, 0.055, 0.07) * band * (0.4 + 0.6 * smoothstep(0.3, 0.75, fbm(d * 3.0 + vec3f(11.0)))) * milky;
+  }
+  if (starEnergy > 0.0) {
+    let time = u.forward.w;
+    var s = stars(d, 90.0, 0.966, time) * 1.6;
+    s += stars(d, 220.0, 0.949, time) * 0.9;
+    s += stars(d, 480.0, 0.915, time) * 0.5 * (0.3 + band * 1.4);
+    let tint = mix(vec3f(0.75, 0.82, 1.0), vec3f(1.0, 0.88, 0.75), hash3(floor(d * 220.0)));
+    col += tint * s * starEnergy * smoothstep(-0.02, 0.12, d.y);
+  }
+  if (u.sunDir.w > 0.0) {
+    let a = acos(clamp(dot(d, normalize(u.sunDir.xyz)), -1.0, 1.0));
+    col = mix(col, u.sunColor.rgb, smoothstep(u.sunDir.w, u.sunDir.w * 0.6, a));
+    col += u.sunColor.rgb * 0.12 * pow(max(dot(d, normalize(u.sunDir.xyz)), 0.0), 64.0);
+  }
+  if (u.moonDir.w > 0.0) {
+    let md = normalize(u.moonDir.xyz);
+    let k = dot(d, md);
+    if (k > 0.0) {
+      let right = normalize(cross(md, vec3f(0.0, 1.0, 0.0)));
+      let upv = cross(right, md);
+      let uv = vec2f(dot(d, right), dot(d, upv)) / u.moonDir.w;
+      let r = length(uv);
+      let z = sqrt(max(1.0 - r * r, 0.0));
+      let tuv = vec2f(0.5 + atan2(uv.x, z) / 6.2831853, 0.5 - asin(clamp(uv.y, -1.0, 1.0)) / 3.14159265);
+      var m = textureSampleLevel(moonTex, moonSampler, tuv, 0.0).rgb;
+      col = mix(col, m * u.moonColor.rgb * pow(z, 0.35), smoothstep(1.0, 0.97, r));
+      col += vec3f(0.5, 0.58, 0.72) * pow(k, 900.0) * 0.6;
+      col += vec3f(0.2, 0.25, 0.35) * pow(k, 40.0) * 0.08;
+    }
+  }
+  col *= u.horizon.w;
+  if (u.zenith.w > 0.0) {
+    let x = col * u.zenith.w;
+    col = clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), vec3f(0.0), vec3f(1.0));
+  }
+  return vec4f(col, 1.0);
+}
+`;
+const SKY_FLOATS = 48;
 
 // Floats per instance in addInstances: x, y, z, scale, yaw, sway phase, 0, 0.
 export const INSTANCE_FLOATS = 8;
@@ -522,6 +669,48 @@ export function createRenderer(gpu: RenderGpu): Renderer {
     return { pipeline: particle.pipeline, bindGroup: particle.bindGroup, vertexBuffer: particle.quad, indexBuffer: particle.indices, first: 0, count: 12, instanceBuffer: particle.instances, instances: count };
   };
 
+  // Sky: pipeline and uniform buffer made on first use; the bind group follows the moon texture.
+  const sky = { pipeline: -1, uniforms: -1, bindGroup: -1, texture: -1 };
+  const skyUniforms = new Float32Array(SKY_FLOATS);
+  const skyDraw = (camera: Camera, view: Float32Array, env: Environment): Draw | null => {
+    const s = env.sky;
+    if (!s) return null;
+    if (sky.pipeline < 0) {
+      sky.pipeline = gpu.createPipeline({ wgsl: SKY_SHADER, stride: 0, attributes: [], depth: false, blend: false });
+      sky.uniforms = gpu.createBuffer(BufferUsage.Uniform, f32Bytes(skyUniforms));
+    }
+    const texture = s.moon && s.moon.texture ? s.moon.texture.id : white.id;
+    if (sky.texture !== texture) {
+      sky.bindGroup = gpu.bind(sky.pipeline, sky.uniforms, texture);
+      sky.texture = texture;
+    }
+    const tanY = Math.tan(camera.fovY / 2);
+    const put = (slot: number, x: number, y: number, z: number, w: number): void => {
+      skyUniforms[slot * 4] = x;
+      skyUniforms[slot * 4 + 1] = y;
+      skyUniforms[slot * 4 + 2] = z;
+      skyUniforms[slot * 4 + 3] = w;
+    };
+    skyUniforms.fill(0);
+    put(0, view[0], view[4], view[8], tanY * gpu.aspect());
+    put(1, view[1], view[5], view[9], tanY);
+    put(2, -view[2], -view[6], -view[10], env.time ?? 0);
+    put(3, s.zenith.x, s.zenith.y, s.zenith.z, env.exposure ?? 0);
+    put(4, s.horizon.x, s.horizon.y, s.horizon.z, s.energy ?? 1);
+    const ground = s.ground ?? vec3(s.horizon.x * 0.3, s.horizon.y * 0.3, s.horizon.z * 0.3);
+    put(5, ground.x, ground.y, ground.z, s.curve ?? 0.15);
+    if (s.sun) put(6, s.sun.direction.x, s.sun.direction.y, s.sun.direction.z, s.sun.size);
+    put(7, s.sun ? s.sun.color.x : 0, s.sun ? s.sun.color.y : 0, s.sun ? s.sun.color.z : 0, s.stars ?? 0);
+    if (s.moon) put(8, s.moon.direction.x, s.moon.direction.y, s.moon.direction.z, s.moon.size);
+    put(9, s.moon ? s.moon.color.x : 0, s.moon ? s.moon.color.y : 0, s.moon ? s.moon.color.z : 0, s.milkyWay ?? 0);
+    if (s.glow) {
+      put(10, s.glow.direction.x, s.glow.direction.y, s.glow.direction.z, 0);
+      put(11, s.glow.color.x, s.glow.color.y, s.glow.color.z, 1);
+    }
+    gpu.writeBuffer(sky.uniforms, f32Bytes(skyUniforms));
+    return { pipeline: sky.pipeline, bindGroup: sky.bindGroup, vertexBuffer: -1, indexBuffer: -1, first: 0, count: 3 };
+  };
+
   const draws = (world: World, gameCamera: Camera, environment?: Environment): Draw[] => {
     const forced = cameraOverride.camera;
     const camera: Camera = forced ? { eye: forced.eye, target: forced.target, fovY: forced.fovY, near: gameCamera.near, far: gameCamera.far } : gameCamera;
@@ -529,6 +718,9 @@ export function createRenderer(gpu: RenderGpu): Renderer {
     const viewProjection = multiply(perspective(camera.fovY, gpu.aspect(), camera.near ?? 0.1, camera.far ?? 100), view);
     writeScene(camera, environment ?? DEFAULT_ENVIRONMENT);
     const out: Draw[] = [];
+    // First, in its own pass (no depth): everything after draws over it.
+    const skyFirst = skyDraw(camera, view, environment ?? DEFAULT_ENVIRONMENT);
+    if (skyFirst) out.push(skyFirst);
     const lightVP = shadowVP;
     if (lightVP) {
       // Shadow pass: static meshes seen from the spot, their distance packed into the shadow map.
