@@ -10,6 +10,7 @@ From porting The Ones (Godot, first-person 3D horror) to dotframe.
 - Skeletal animation: `src/anim.ts` (clip sampling with crossfade weights, joint matrices) and a GPU-skinned pipeline (`addSkinnedMesh`, `MeshRef.joints`).
 - Audio: steerable looping voices (`start`, `setVoice`, `stopVoice`) and `spatial()`.
 - Post-processing: `gpu.createTarget` and `gpu.frame(clear, draws, target)` render into textures; `src/post.ts` runs a full-screen pass with your WGSL. `RenderGpu.createTarget` and `destroyTexture` are now required (scriptc cannot call optional functions): custom stub GPUs need both.
+- Mipmaps (`createTexture`/`createImage` `mipmaps` flag), instancing (`addInstances`, `MeshRef.instances`, `sway`, `Environment.time`) and spot light shadows (`SpotLight.shadows`, a 1024 shadow map with 4-tap PCF). `bind` takes an optional second texture (bindings 3 and 4).
 - `Input.look()` with `run(..., { pointerLock: true })` on the web, for first-person cameras.
 - `SimPlatform.image` (decode for snap) and `Sim.clear` (snap's clear color).
 - Native decodes JPEG (stb_image was PNG-only).

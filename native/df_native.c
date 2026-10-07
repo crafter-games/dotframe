@@ -496,7 +496,8 @@ int32_t df_pipeline(const uint8_t *wgsl, size_t wgsl_len, uint32_t stride, const
 
 // Group 0 of the pipeline's auto layout: binding 0 uniform buffer, binding 1 texture, binding 2 sampler.
 // Pass -1 for a resource the shader does not declare.
-int32_t df_bind(int32_t pipeline, int32_t buffer, int32_t texture) {
+// texture2, when not negative, binds at 3 (view) and 4 (linear clamp sampler): a second map such as a shadow map.
+int32_t df_bind(int32_t pipeline, int32_t buffer, int32_t texture, int32_t texture2) {
   if (pipeline < 0 || pipeline >= g_pipeline_count) return -1;
   int32_t capacity = g_bind_group_capacity;
   if (!grow((void **)&g_bind_groups, &capacity, g_bind_group_count + 1, sizeof *g_bind_groups)) return -2;
@@ -505,7 +506,8 @@ int32_t df_bind(int32_t pipeline, int32_t buffer, int32_t texture) {
   g_bind_group_capacity = capacity;
   // A destroyed texture cannot be bound again.
   if (texture >= 0 && texture < g_texture_count && !g_textures[texture]) return -3;
-  WGPUBindGroupEntry entries[3];
+  if (texture2 >= 0 && texture2 < g_texture_count && !g_textures[texture2]) return -3;
+  WGPUBindGroupEntry entries[5];
   size_t count = 0;
   if (buffer >= 0 && buffer < g_buffer_count) {
     entries[count] = (WGPUBindGroupEntry)WGPU_BIND_GROUP_ENTRY_INIT;
@@ -522,6 +524,16 @@ int32_t df_bind(int32_t pipeline, int32_t buffer, int32_t texture) {
     entries[count] = (WGPUBindGroupEntry)WGPU_BIND_GROUP_ENTRY_INIT;
     entries[count].binding = 2;
     entries[count].sampler = g_texture_smooth[texture] == 2 ? g_sampler_mips : g_texture_smooth[texture] ? g_sampler_linear : g_sampler;
+    count++;
+  }
+  if (texture2 >= 0 && texture2 < g_texture_count) {
+    entries[count] = (WGPUBindGroupEntry)WGPU_BIND_GROUP_ENTRY_INIT;
+    entries[count].binding = 3;
+    entries[count].textureView = g_texture_views[texture2];
+    count++;
+    entries[count] = (WGPUBindGroupEntry)WGPU_BIND_GROUP_ENTRY_INIT;
+    entries[count].binding = 4;
+    entries[count].sampler = g_sampler_linear;
     count++;
   }
   WGPUBindGroupDescriptor desc = WGPU_BIND_GROUP_DESCRIPTOR_INIT;

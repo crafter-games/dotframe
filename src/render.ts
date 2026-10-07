@@ -23,7 +23,11 @@ export interface SpotLight extends PointLight {
   direction: Vec3;
   // Half angle of the cone, in radians.
   angle: number;
+  // Static meshes cast shadows from this light (a SHADOW_SIZE map rendered each frame).
+  shadows?: boolean;
 }
+
+export const SHADOW_SIZE = 1024;
 
 // Lighting for one frame. Leaving it out keeps the default: a fixed key light and no fog.
 export interface Environment {
@@ -102,11 +106,27 @@ struct Uniforms {
   spotDir: vec4f,
   spotColor: vec4f,
   lights: array<Light, ${MAX_LIGHTS}>,
+  shadowVP: mat4x4f,
+  // x on, y bias (fraction of the spot's range), z one texel in uv.
+  shadowParams: vec4f,
   ${skinned ? `joints: array<mat4x4f, ${MAX_JOINTS}>,` : ""}
 }
 @group(0) @binding(0) var<uniform> u: Uniforms;
-@group(0) @binding(1) var tex: texture_2d<f32>;
+${
+  kind === 3
+    ? ""
+    : `@group(0) @binding(1) var tex: texture_2d<f32>;
 @group(0) @binding(2) var samp: sampler;
+@group(0) @binding(3) var shadowTex: texture_2d<f32>;
+@group(0) @binding(4) var shadowSamp: sampler;`
+}
+
+// Depth as a fraction of the spot's range, in the 24 bits of an 8-bit RGB target.
+fn packDepth(d: f32) -> vec3f {
+  var e = fract(clamp(d, 0.0, 0.99999) * vec3f(1.0, 255.0, 65025.0));
+  e -= e.yzz * vec3f(1.0 / 255.0, 1.0 / 255.0, 0.0);
+  return e;
+}
 
 struct VertexOut {
   @builtin(position) position: vec4f,
@@ -157,9 +177,26 @@ fn vs_main(@location(0) position: vec3f, @location(1) normal: vec3f, @location(2
 }`
 }
 
-fn falloff(d: f32, range: f32) -> f32 {
-  let t = clamp(1.0 - d / max(range, 0.001), 0.0, 1.0);
-  return t * t;
+${
+  kind === 3
+    ? `@fragment
+fn fs_main(in: VertexOut) -> @location(0) vec4f {
+  return vec4f(packDepth(distance(in.world, u.spotPos.xyz) / u.spotPos.w), 1.0);
+}`
+    : `fn spotShadow(world: vec3f) -> f32 {
+  if (u.shadowParams.x < 0.5) { return 1.0; }
+  let clip = u.shadowVP * vec4f(world, 1.0);
+  if (clip.w <= 0.0) { return 1.0; }
+  let ndc = clip.xyz / clip.w;
+  let uv = vec2f(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+  let d = distance(world, u.spotPos.xyz) / u.spotPos.w - u.shadowParams.y;
+  var lit = 0.0;
+  for (var i = 0; i < 4; i++) {
+    let o = (vec2f(f32(i % 2), f32(i / 2)) - 0.5) * u.shadowParams.z * 1.5;
+    let stored = dot(textureSampleLevel(shadowTex, shadowSamp, uv + o, 0.0).rgb, vec3f(1.0, 1.0 / 255.0, 1.0 / 65025.0));
+    lit += select(0.0, 1.0, d <= stored);
+  }
+  return lit / 4.0;
 }
 
 @fragment
@@ -196,7 +233,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
     let d = length(to);
     let dir = to / max(d, 0.0001);
     let cone = smoothstep(u.spotDir.w, u.spotColor.w, dot(-dir, normalize(u.spotDir.xyz)));
-    light += u.spotColor.rgb * max(dot(n, dir), 0.0) * falloff(d, u.spotPos.w) * cone;
+    light += u.spotColor.rgb * max(dot(n, dir), 0.0) * falloff(d, u.spotPos.w) * cone * spotShadow(in.world);
   }
   var color = albedo * light + u.color.rgb * u.color.w;
   if (u.fog.w > 0.0) {
@@ -209,14 +246,24 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
   }
   return vec4f(color, 1.0);
 }
+`
+}
+
+fn falloff(d: f32, range: f32) -> f32 {
+  let t = clamp(1.0 - d / max(range, 0.001), 0.0, 1.0);
+  return t * t;
+}
+
 `;
 };
 
 // Position, normal, uv; skinned meshes add four joint slots and four weights.
 const VERTEX_FLOATS = 8;
 const SKINNED_FLOATS = 16;
-// mvp (16) + model (16) + 10 vec4 + MAX_LIGHTS * 2 vec4 floats.
-const UNIFORM_FLOATS = 32 + 10 * 4 + MAX_LIGHTS * 8;
+// mvp (16) + model (16) + 10 vec4 + MAX_LIGHTS * 2 vec4 + shadowVP (16) + shadowParams (4) floats.
+const UNIFORM_FLOATS = 32 + 10 * 4 + MAX_LIGHTS * 8 + 20;
+// Where shadowVP starts in the scene block (which starts at float 40).
+const SHADOW_SLOT = 8 * 4 + MAX_LIGHTS * 8;
 
 const DEFAULT_ENVIRONMENT: Environment = {
   ambient: vec3(0.25, 0.25, 0.25),
@@ -236,6 +283,11 @@ export function createRenderer(gpu: RenderGpu): Renderer {
   let instancedPipeline = -1;
   // The shader always samples, so untextured meshes bind one white pixel.
   const white = gpu.createTexture(1, 1, new Uint8Array([255, 255, 255, 255]), false);
+  // Every lit pipeline samples the shadow map, so it exists from the start; it is drawn only when a spot asks.
+  const shadowMap = gpu.createTarget(SHADOW_SIZE, SHADOW_SIZE);
+  const shadowPipeline = gpu.createPipeline({ wgsl: shader(3), stride: VERTEX_FLOATS * 4, attributes: BASE_ATTRIBUTES, depth: true, blend: false });
+  const shadowBindings = new Map<number, number[]>();
+  const shadowUniforms = new Float32Array(UNIFORM_FLOATS);
   const meshes: GpuMesh[] = [];
   const bindings = new Map<number, EntityBinding>();
   const uniforms = new Float32Array(UNIFORM_FLOATS);
@@ -309,6 +361,7 @@ export function createRenderer(gpu: RenderGpu): Renderer {
     return meshes.length - 1;
   };
 
+  let shadowVP: Float32Array | null = null;
   // The per-frame part of the uniforms, written once and copied into every entity's buffer.
   const writeScene = (camera: Camera, env: Environment): void => {
     scene.fill(0);
@@ -331,6 +384,17 @@ export function createRenderer(gpu: RenderGpu): Renderer {
       put(5, env.spot.position, env.spot.range);
       put(6, env.spot.direction, Math.cos(env.spot.angle));
       put(7, env.spot.color, Math.cos(env.spot.angle * 0.6));
+    }
+    shadowVP = null;
+    if (env.spot && env.spot.shadows) {
+      const sp = env.spot;
+      const up = Math.abs(sp.direction.y) > 0.99 ? vec3(0, 0, 1) : vec3(0, 1, 0);
+      const target = vec3(sp.position.x + sp.direction.x, sp.position.y + sp.direction.y, sp.position.z + sp.direction.z);
+      shadowVP = multiply(perspective(Math.min(sp.angle * 2.2, 3), 1, 0.05, sp.range), lookAt(sp.position, target, up));
+      scene.set(shadowVP, SHADOW_SLOT);
+      scene[SHADOW_SLOT + 16] = 1;
+      scene[SHADOW_SLOT + 17] = 0.004;
+      scene[SHADOW_SLOT + 18] = 1 / SHADOW_SIZE;
     }
     const lights = env.lights ?? [];
     for (let i = 0; i < Math.min(lights.length, MAX_LIGHTS); i++) {
@@ -362,6 +426,29 @@ export function createRenderer(gpu: RenderGpu): Renderer {
     const viewProjection = multiply(perspective(camera.fovY, gpu.aspect(), camera.near ?? 0.1, camera.far ?? 100), view);
     writeScene(camera, environment ?? DEFAULT_ENVIRONMENT);
     const out: Draw[] = [];
+    const lightVP = shadowVP;
+    if (lightVP) {
+      // Shadow pass: static meshes seen from the spot, their distance packed into the shadow map.
+      const casters: Draw[] = [];
+      for (const [entity, meshRef] of world.meshes) {
+        const transform = world.transforms.get(entity);
+        const mesh = meshes[meshRef.mesh];
+        if (!transform || !mesh || mesh.skinned || meshRef.instances || (meshRef.emissive ?? 0) > 0) continue;
+        let binding = shadowBindings.get(entity);
+        if (!binding) {
+          const buffer = gpu.createBuffer(BufferUsage.Uniform, f32Bytes(shadowUniforms));
+          binding = [buffer, gpu.bind(shadowPipeline, buffer, -1)];
+          shadowBindings.set(entity, binding);
+        }
+        const model = compose(transform.position, transform.rotation, transform.scale);
+        shadowUniforms.set(multiply(lightVP, model), 0);
+        shadowUniforms.set(model, 16);
+        shadowUniforms.set(scene, 40);
+        gpu.writeBuffer(binding[0], f32Bytes(shadowUniforms));
+        casters.push({ pipeline: shadowPipeline, bindGroup: binding[1], vertexBuffer: mesh.vertexBuffer, indexBuffer: mesh.indexBuffer, first: 0, count: mesh.count });
+      }
+      gpu.frame({ r: 1, g: 1, b: 1 }, casters, shadowMap);
+    }
     for (const [entity, meshRef] of world.meshes) {
       const transform = world.transforms.get(entity);
       const mesh = meshes[meshRef.mesh];
@@ -374,7 +461,7 @@ export function createRenderer(gpu: RenderGpu): Renderer {
       let binding = bindings.get(entity);
       if (!binding || binding.texture !== texture) {
         const uniformBuffer = binding?.uniformBuffer ?? gpu.createBuffer(BufferUsage.Uniform, f32Bytes(data));
-        binding = { uniformBuffer, bindGroup: gpu.bind(entityPipeline, uniformBuffer, texture.id), texture };
+        binding = { uniformBuffer, bindGroup: gpu.bind(entityPipeline, uniformBuffer, texture.id, shadowMap.id), texture };
         bindings.set(entity, binding);
       }
 

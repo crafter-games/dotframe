@@ -194,12 +194,16 @@ export async function run(options: WindowOptions, setup: Setup, runOptions: RunO
       if (pipelineOptions.depth) depthPipelines.add(pipelines.length - 1);
       return pipelines.length - 1;
     },
-    bind: (pipeline: number, buffer: number, texture: number): number => {
+    bind: (pipeline: number, buffer: number, texture: number, texture2 = -1): number => {
       const entries: GPUBindGroupEntry[] = [];
       if (buffer >= 0) entries.push({ binding: 0, resource: { buffer: buffers[buffer] } });
       if (texture >= 0) {
         entries.push({ binding: 1, resource: textureViews[texture] });
         entries.push({ binding: 2, resource: textureMips[texture] ? mipmapped : textureSmooth[texture] ? linear : nearest });
+      }
+      if (texture2 >= 0) {
+        entries.push({ binding: 3, resource: textureViews[texture2] });
+        entries.push({ binding: 4, resource: linear });
       }
       bindGroups.push(device.createBindGroup({ layout: pipelines[pipeline].getBindGroupLayout(0), entries }));
       return bindGroups.length - 1;

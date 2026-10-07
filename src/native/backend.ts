@@ -70,8 +70,8 @@ export function createNativeRenderGpu(): RenderGpu {
       if (pipelineOptions.depth) depthPipelines.add(pipeline);
       return pipeline;
     },
-    bind: (pipeline: number, buffer: number, texture: number): number => {
-      const group = dfBind(pipeline, buffer, texture);
+    bind: (pipeline: number, buffer: number, texture: number, texture2 = -1): number => {
+      const group = dfBind(pipeline, buffer, texture, texture2);
       if (group < 0) throw new Error(`dfBind failed: ${group}`);
       return group;
     },

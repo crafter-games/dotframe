@@ -64,8 +64,9 @@ export interface RenderGpu {
   writeBuffer: (buffer: number, data: Uint8Array) => void;
   destroyBuffer: (buffer: number) => void;
   createPipeline: (options: PipelineOptions) => number;
-  // Group 0: binding 0 uniform buffer, binding 1 texture, binding 2 nearest sampler; -1 skips one.
-  bind: (pipeline: number, buffer: number, texture: number) => number;
+  // Group 0: binding 0 uniform buffer, binding 1 texture, binding 2 its sampler; -1 skips one. texture2 binds at 3
+  // with a linear clamp sampler at 4, for a second map (a shadow map).
+  bind: (pipeline: number, buffer: number, texture: number, texture2?: number) => number;
   // smooth: linear filtering (fonts, photos); otherwise nearest (pixel art). mipmaps (implies smooth): a full mip
   // chain and a repeating sampler, for textures tiled across 3D surfaces, so they do not shimmer at distance.
   createTexture: (width: number, height: number, rgba: Uint8Array, smooth: boolean, mipmaps?: boolean) => Texture;

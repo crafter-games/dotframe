@@ -98,7 +98,7 @@ test("the environment reaches the uniforms: emissive, texture tile, lights, spot
   expect(u[40 + 5 * 4 + 3]).toBe(22);
   expect(u[40 + 6 * 4 + 3]).toBeCloseTo(Math.cos(0.4), 5);
   // Lights past MAX_LIGHTS are dropped: the last slot holds light MAX_LIGHTS - 1.
-  expect(u.length).toBe(40 + 8 * 4 + MAX_LIGHTS * 8);
+  expect(u.length).toBe(40 + 8 * 4 + MAX_LIGHTS * 8 + 20);
   expect(u[40 + (8 + (MAX_LIGHTS - 1) * 2) * 4 + 3]).toBe(5 + MAX_LIGHTS - 1);
 });
 
@@ -162,4 +162,13 @@ test("instanced meshes draw once with an instance buffer, count and sway, on a p
   // material.w is the sway; sunDir.w the time, with no sun set.
   expect(u[39]).toBeCloseTo(0.06, 5);
   expect(u[40 + 3 * 4 + 3]).toBe(2.5);
+});
+
+test("every renderer shader is fully interpolated (bun cannot compile WGSL, but it can catch a literal ${)", () => {
+  const { gpu, pipelines } = recordingGpu();
+  const renderer = createRenderer(gpu);
+  renderer.addInstances(new Float32Array(INSTANCE_FLOATS));
+  renderer.addSkinnedMesh(box(), { positions: new Float32Array(72), normals: new Float32Array(72), joints: new Float32Array(96), weights: new Float32Array(96) });
+  expect(pipelines.length).toBe(4);
+  for (const p of pipelines) expect(p.wgsl).not.toContain("${");
 });

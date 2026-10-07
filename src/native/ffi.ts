@@ -11,7 +11,7 @@ export declare function dfBuffer(usage: number, data: Uint8Array): number;
 export declare function dfBufferWrite(buffer: number, data: Uint8Array): void;
 export declare function dfBufferDestroy(buffer: number): void;
 export declare function dfPipeline(wgsl: string, stride: number, attributes: Uint8Array, flags: number): number;
-export declare function dfBind(pipeline: number, buffer: number, texture: number): number;
+export declare function dfBind(pipeline: number, buffer: number, texture: number, texture2: number): number;
 // mode: 0 nearest, 1 linear, 2 linear with mipmaps and repeat.
 export declare function dfTexture(width: number, height: number, rgba: Uint8Array, mode: number): number;
 export declare function dfImage(png: Uint8Array, mode: number): number;
