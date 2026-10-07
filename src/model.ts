@@ -56,6 +56,23 @@ export interface Placement {
 
 // textures[i] is the decoded GlbModel.images[i], or undefined while it loads (the base color shows).
 export function spawnModel(world: World, model: GlbModel, uploaded: ModelMeshes, textures: (Texture | undefined)[], placement: Placement): number[] {
+  const entities: number[] = [];
+  model.primitives.forEach((p, i: number): void => {
+    const entity = spawn(world);
+    const material = p.material >= 0 ? model.materials[p.material] : undefined;
+    const ref: MeshRef = { mesh: uploaded.meshes[i], color: material ? vec3(material.color[0], material.color[1], material.color[2]) : vec3(1, 1, 1) };
+    if (material && material.image >= 0) ref.texture = textures[material.image];
+    if (material && material.alphaMode !== "OPAQUE") ref.alphaCutoff = material.alphaCutoff;
+    world.meshes.set(entity, ref);
+    entities.push(entity);
+  });
+  placeModel(world, model, entities, placement);
+  return entities;
+}
+
+// Moves a spawned model: every primitive's entity gets the same transform, so a model with several primitives
+// (a body and a dress) moves as one. Call it each frame for a model that walks.
+export function placeModel(world: World, model: GlbModel, entities: number[], placement: Placement): void {
   const s = placement.scale;
   const ground = placement.ground ?? true;
   // The ground offset is in model space, so it is rotated with the model by baking it into each entity's mesh
@@ -67,18 +84,7 @@ export function spawnModel(world: World, model: GlbModel, uploaded: ModelMeshes,
   const ox = (Math.cos(ry) * cx + Math.sin(ry) * cz) * s;
   const oz = (-Math.sin(ry) * cx + Math.cos(ry) * cz) * s;
   const position = vec3(placement.position.x - ox, placement.position.y - cy * s, placement.position.z - oz);
-  const entities: number[] = [];
-  model.primitives.forEach((p, i: number): void => {
-    const entity = spawn(world);
-    world.transforms.set(entity, { position, rotation: placement.rotation, scale: vec3(s, s, s) });
-    const material = p.material >= 0 ? model.materials[p.material] : undefined;
-    const ref: MeshRef = { mesh: uploaded.meshes[i], color: material ? vec3(material.color[0], material.color[1], material.color[2]) : vec3(1, 1, 1) };
-    if (material && material.image >= 0) ref.texture = textures[material.image];
-    if (material && material.alphaMode !== "OPAQUE") ref.alphaCutoff = material.alphaCutoff;
-    world.meshes.set(entity, ref);
-    entities.push(entity);
-  });
-  return entities;
+  for (const entity of entities) world.transforms.set(entity, { position, rotation: placement.rotation, scale: vec3(s, s, s) });
 }
 
 // Sets each primitive's texture once the model's images are decoded (spawnModel may run before they load).

@@ -48,8 +48,9 @@ export interface Environment {
 export const INSTANCE_FLOATS = 8;
 
 export const MAX_LIGHTS = 8;
-// Joints a skinned mesh can use; extra joints draw at rest.
-export const MAX_JOINTS = 128;
+// Joints a skinned mesh can use (Character Creator rigs have ~150); extra joints draw at rest. 256 joints are 16 KB
+// of uniforms, under the 64 KB WebGPU guarantees.
+export const MAX_JOINTS = 256;
 
 // Bind-space geometry of a skinned primitive (GlbPrimitive.skinned).
 export interface SkinnedData {

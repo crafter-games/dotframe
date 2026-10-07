@@ -17,6 +17,9 @@ export interface GlbMaterial {
   // "OPAQUE", "MASK" (cut out below alphaCutoff) or "BLEND" (drawn as MASK at 0.5 for now).
   alphaMode: string;
   alphaCutoff: number;
+  // Both faces show. loadGlb adds the back faces as geometry (reversed winding, flipped normals), so every
+  // backend keeps culling back faces.
+  doubleSided: boolean;
   emissive: [number, number, number];
   name: string;
 }
@@ -141,6 +144,7 @@ interface GltfMaterial {
   pbrMetallicRoughness?: { baseColorFactor?: number[]; baseColorTexture?: GltfTextureRef };
   extensions?: { KHR_materials_pbrSpecularGlossiness?: { diffuseFactor?: number[]; diffuseTexture?: GltfTextureRef } };
   alphaMode?: string;
+  doubleSided?: boolean;
   alphaCutoff?: number;
   emissiveFactor?: number[];
 }
@@ -393,9 +397,34 @@ function material(doc: GltfFullDocument, m: GltfMaterial): GlbMaterial {
     image: source,
     alphaMode: m.alphaMode ?? "OPAQUE",
     alphaCutoff: m.alphaCutoff ?? 0.5,
+    doubleSided: m.doubleSided ?? false,
     emissive: [e[0], e[1], e[2]],
     name: m.name ?? "",
   };
+}
+
+// Appends a mirrored copy of every vertex (normal flipped) and every triangle (winding reversed).
+function addBackFaces(p: GlbPrimitive): void {
+  const twice = (a: Float32Array, negate: boolean): Float32Array => {
+    const out = new Float32Array(a.length * 2);
+    out.set(a);
+    for (let i = 0; i < a.length; i++) out[a.length + i] = negate ? -a[i] : a[i];
+    return out;
+  };
+  const m = p.mesh;
+  const count = m.positions.length / 3;
+  const indices = new Uint32Array(m.indices.length * 2);
+  indices.set(m.indices);
+  for (let i = 0; i + 2 < m.indices.length; i += 3) {
+    const o = m.indices.length + i;
+    indices[o] = m.indices[i] + count;
+    indices[o + 1] = m.indices[i + 2] + count;
+    indices[o + 2] = m.indices[i + 1] + count;
+  }
+  p.mesh = { positions: twice(m.positions, false), normals: twice(m.normals, true), indices };
+  if (m.uvs) p.mesh.uvs = twice(m.uvs, false);
+  const s = p.skinned;
+  if (s) p.skinned = { skin: s.skin, positions: twice(s.positions, false), normals: twice(s.normals, true), joints: twice(s.joints, false), weights: twice(s.weights, false) };
 }
 
 export function loadGlb(bytes: Uint8Array): GlbModel {
@@ -480,6 +509,7 @@ export function loadGlb(bytes: Uint8Array): GlbModel {
         if (p.attributes.TEXCOORD_0 !== undefined) mesh.uvs = readAccessor(bytes, bin, doc, p.attributes.TEXCOORD_0);
         const out: GlbPrimitive = { mesh, material: p.material ?? -1, node: node.name ?? "" };
         if (skinned) out.skinned = skinned;
+        if (p.material !== undefined && doc.materials?.[p.material]?.doubleSided) addBackFaces(out);
         primitives.push(out);
       }
     }

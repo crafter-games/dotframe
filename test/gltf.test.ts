@@ -128,3 +128,13 @@ test("parseGlb still reads the first primitive's geometry", () => {
   expect(Array.from(mesh.indices)).toEqual([0, 1, 2]);
   expect(mesh.positions.length).toBe(9);
 });
+
+test("a double-sided material adds the back faces: reversed winding, flipped normals", () => {
+  const model = loadGlb(glb({ accessors, meshes: [{ primitives: [primitive] }], nodes: [{ mesh: 0 }], materials: [{ doubleSided: true }] }, buffers));
+  const m = model.primitives[0].mesh;
+  expect(model.materials[0].doubleSided).toBe(true);
+  expect(Array.from(m.indices)).toEqual([0, 1, 2, 3, 5, 4]);
+  expect(Array.from(m.positions.slice(9, 12))).toEqual([0, 0, 0]);
+  expect(Array.from(m.normals.slice(9, 12)).map((v) => v + 0)).toEqual([0, 0, -1]);
+  expect(Array.from(m.uvs ?? []).length).toBe(12);
+});

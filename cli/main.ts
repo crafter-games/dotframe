@@ -19,7 +19,7 @@ Agents: run \`dotframe skills get core\` before anything else.
 
 Play (headless, deterministic)
   sim      [--inputs f.jsonl | --mash <seed>] [--frames 600] [--seed 1] [--options json] [--every n]
-  snap     --frame <n> [--out frame.png] [--inputs f | --mash <seed>] [--seed 1] [--options json]
+  snap     --frame <n>[,<n>...] [--out frame.png] [--inputs f | --mash <seed>] [--seed 1] [--options json]
   replay   record <file> | verify <file...>
   play     --online [room] [--frames 600] [--seeds 1,2]   two browsers, local relay, scripted match
   desync   [--latency 100ms] [--jitter 0ms] [--delay 2] [--frames 1800] [--renders 3]
@@ -54,12 +54,13 @@ ${INPUTS}
 
   dotframe sim --mash 7 --frames 600 --json
   dotframe sim --inputs combo.jsonl --options '{"stocks": 1}'`,
-  snap: `dotframe snap --frame <n> [--out snap-<n>.png] [--mash <seed> | --inputs f.jsonl] [--seed 1] [--options json] [--json]
+  snap: `dotframe snap --frame <n>[,<n>...] [--out snap-{frame}.png] [--mash <seed> | --inputs f.jsonl] [--seed 1] [--options json] [--json]
 
 Steps the sim to frame n in a real browser (WebGPU, through agent-browser) and screenshots it. Open the PNG and look.
 ${INPUTS}
 
-  dotframe snap --frame 300 --mash 7 --out /tmp/f300.png`,
+  dotframe snap --frame 300 --mash 7 --out /tmp/f300.png
+  dotframe snap --frame 60,240,600 --out /tmp/walk-{frame}.png   several frames of one run, one browser`,
   replay: `dotframe replay record <file> [--mash <seed> | --inputs f.jsonl] [--frames 1800] [--seed 1] [--options json] [--through-over]
 dotframe replay verify <file...>
 
