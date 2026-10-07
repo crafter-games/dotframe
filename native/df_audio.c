@@ -16,9 +16,11 @@
 #define MAX_TRACKS 32
 
 typedef struct {
-  float *frames;  // interleaved stereo
+  // 16-bit PCM in the file's own channel count (1 or 2): a quarter of float stereo for mono sounds.
+  int16_t *frames;
   uint64_t count;
   uint32_t rate;
+  uint32_t channels;
 } Sound;
 
 typedef struct {
@@ -69,6 +71,11 @@ static uint64_t g_music_buffered;
 static double g_music_position;
 static double g_music_step;
 static float g_master = 0.8f;
+
+// Sample of channel c (0 left, 1 right) at frame i; mono sounds feed both channels.
+static float sample(const Sound *sound, uint64_t i, int c) {
+  return sound->frames[i * sound->channels + (sound->channels > 1 ? (uint64_t)c : 0)] * (1.0f / 32768.0f);
+}
 
 static float clampf(float v) { return v < -1.0f ? -1.0f : v > 1.0f ? 1.0f : v; }
 
@@ -124,8 +131,8 @@ static void SDLCALL mix(void *userdata, SDL_AudioStream *stream, int additional,
           }
         }
         float t = (float)(voice->position - (double)i);
-        out[f * 2] += (sound->frames[i * 2] * (1 - t) + sound->frames[(i + 1) * 2] * t) * voice->volume * voice->left;
-        out[f * 2 + 1] += (sound->frames[i * 2 + 1] * (1 - t) + sound->frames[(i + 1) * 2 + 1] * t) * voice->volume * voice->right;
+        out[f * 2] += (sample(sound, i, 0) * (1 - t) + sample(sound, i + 1, 0) * t) * voice->volume * voice->left;
+        out[f * 2 + 1] += (sample(sound, i, 1) * (1 - t) + sample(sound, i + 1, 1) * t) * voice->volume * voice->right;
         voice->position += voice->step;
       }
       if (done) g_voices[v] = g_voices[--g_voice_count];
@@ -180,17 +187,20 @@ int32_t df_sound(const uint8_t *mp3, size_t len) {
   if (g_sound_count >= MAX_SOUNDS) return -1;
   drmp3_config config;
   drmp3_uint64 count = 0;
-  float *mono_or_stereo = drmp3_open_memory_and_read_pcm_frames_f32(mp3, len, &config, &count, NULL);
-  if (!mono_or_stereo) return -2;
-  float *frames = malloc(sizeof(float) * 2 * (size_t)count);
-  for (drmp3_uint64 i = 0; i < count; i++) {
-    frames[i * 2] = mono_or_stereo[i * config.channels];
-    frames[i * 2 + 1] = mono_or_stereo[i * config.channels + (config.channels > 1 ? 1 : 0)];
+  drmp3_int16 *decoded = drmp3_open_memory_and_read_pcm_frames_s16(mp3, len, &config, &count, NULL);
+  if (!decoded) return -2;
+  uint32_t channels = config.channels > 1 ? 2 : 1;
+  int16_t *frames = malloc(sizeof(int16_t) * channels * (size_t)count);
+  if (!frames) {
+    drmp3_free(decoded, NULL);
+    return -3;
   }
-  drmp3_free(mono_or_stereo, NULL);
+  for (drmp3_uint64 i = 0; i < count; i++)
+    for (uint32_t c = 0; c < channels; c++) frames[i * channels + c] = decoded[i * config.channels + c];
+  drmp3_free(decoded, NULL);
   SDL_LockMutex(g_lock);
   int32_t id = g_sound_count++;
-  g_sounds[id] = (Sound){frames, count, config.sampleRate};
+  g_sounds[id] = (Sound){frames, count, config.sampleRate, channels};
   SDL_UnlockMutex(g_lock);
   return id;
 }
