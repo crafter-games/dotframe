@@ -1,4 +1,5 @@
 // Places a model loaded with loadGlb in an ECS world: one entity per primitive, sharing one transform.
+import { jointMatrices, type Pose } from "./anim";
 import { type MeshRef, spawn, type World } from "./ecs";
 import type { GlbModel } from "./gltf";
 import type { Texture } from "./gpu";
@@ -8,11 +9,35 @@ import type { Renderer } from "./render";
 export interface ModelMeshes {
   // One renderer mesh per primitive, in GlbModel.primitives order.
   meshes: number[];
+  // True where the mesh is GPU-skinned and needs poseModel() before it draws right.
+  skinned: boolean[];
 }
 
-// Uploads every primitive once; spawn the result as many times as needed.
-export function uploadModel(renderer: Renderer, model: GlbModel): ModelMeshes {
-  return { meshes: model.primitives.map((p) => renderer.addMesh(p.mesh)) };
+// Uploads every primitive once; spawn the result as many times as needed. With animate, skinned primitives are
+// uploaded for GPU skinning; without it they draw at rest from the baked mesh.
+export function uploadModel(renderer: Renderer, model: GlbModel, animate = false): ModelMeshes {
+  const meshes: number[] = [];
+  const skinned: boolean[] = [];
+  for (const p of model.primitives) {
+    const skin = animate ? p.skinned : undefined;
+    meshes.push(skin ? renderer.addSkinnedMesh(p.mesh, skin) : renderer.addMesh(p.mesh));
+    skinned.push(skin !== undefined);
+  }
+  return { meshes, skinned };
+}
+
+// Sets the joint matrices of every skinned primitive of one spawned model from pose.
+export function poseModel(world: World, model: GlbModel, uploaded: ModelMeshes, entities: number[], pose: Pose): void {
+  // One computation per skin; an empty array marks a skin not computed yet (scriptc has no Map<number, T>.get).
+  const bySkin: Float32Array[] = model.skins.map((): Float32Array => new Float32Array(0));
+  model.primitives.forEach((p, i: number): void => {
+    if (!uploaded.skinned[i] || !p.skinned) return;
+    const ref = world.meshes.get(entities[i]);
+    if (!ref) return;
+    const skin = p.skinned.skin;
+    if (bySkin[skin].length === 0) bySkin[skin] = jointMatrices(model, pose, skin, ref.joints);
+    ref.joints = bySkin[skin];
+  });
 }
 
 // Uniform scale that makes the model this tall, as Godot's fit-to-height placement does.

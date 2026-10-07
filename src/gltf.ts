@@ -26,8 +26,53 @@ export interface GlbImage {
   mimeType: string;
 }
 
+// A skinned primitive's data in bind space, for GPU skinning. mesh holds the same geometry baked at rest.
+export interface GlbSkinnedMesh {
+  // Index into GlbModel.skins.
+  skin: number;
+  positions: Float32Array;
+  normals: Float32Array;
+  // Four joint slots (indices into the skin's joints) and four weights per vertex.
+  joints: Float32Array;
+  weights: Float32Array;
+}
+
+export interface GlbNode {
+  name: string;
+  // -1 for a root.
+  parent: number;
+  // Rest pose, local to the parent: translation, rotation quaternion (x, y, z, w), scale.
+  translation: number[];
+  rotation: number[];
+  scale: number[];
+}
+
+export interface GlbSkin {
+  // Node indices, in joint slot order.
+  joints: number[];
+  // 16 floats per joint, column-major.
+  inverseBind: Float32Array;
+}
+
+export interface GlbChannel {
+  node: number;
+  // "translation", "rotation" or "scale"; weights (morph targets) are skipped.
+  path: string;
+  // "LINEAR", "STEP" or "CUBICSPLINE" (in-tangent, value, out-tangent per key).
+  interpolation: string;
+  times: Float32Array;
+  values: Float32Array;
+}
+
+export interface GlbAnimation {
+  name: string;
+  duration: number;
+  channels: GlbChannel[];
+}
+
 export interface GlbPrimitive {
   mesh: MeshData;
+  skinned?: GlbSkinnedMesh;
   // Index into GlbModel.materials, or -1 for the default white material.
   material: number;
   // The node that holds it, for debugging and picking parts.
@@ -36,6 +81,9 @@ export interface GlbPrimitive {
 
 export interface GlbModel {
   primitives: GlbPrimitive[];
+  nodes: GlbNode[];
+  skins: GlbSkin[];
+  animations: GlbAnimation[];
   materials: GlbMaterial[];
   images: GlbImage[];
   // Axis-aligned bounds of the baked model, to place and scale it.
@@ -108,6 +156,7 @@ interface GltfFullDocument {
   textures?: { source?: number }[];
   images?: { bufferView?: number; mimeType?: string }[];
   skins?: { joints: number[]; inverseBindMatrices?: number }[];
+  animations?: { name?: string; channels: { sampler: number; target: { node?: number; path: string } }[]; samplers: { input: number; output: number; interpolation?: string }[] }[];
 }
 
 interface GltfDocument {
@@ -256,6 +305,66 @@ function nodeMatrix(node: GltfNode): Float32Array {
   return m;
 }
 
+function identities(count: number): Float32Array {
+  const out = new Float32Array(count * 16);
+  for (let i = 0; i < count; i++) {
+    out[i * 16] = 1;
+    out[i * 16 + 5] = 1;
+    out[i * 16 + 10] = 1;
+    out[i * 16 + 15] = 1;
+  }
+  return out;
+}
+
+// Splits a column-major affine matrix without shear into translation, rotation quaternion and scale.
+function decompose(m: Float32Array): { translation: number[]; rotation: number[]; scale: number[] } {
+  let sx = Math.hypot(m[0], m[1], m[2]);
+  const sy = Math.hypot(m[4], m[5], m[6]);
+  const sz = Math.hypot(m[8], m[9], m[10]);
+  const det = m[0] * (m[5] * m[10] - m[9] * m[6]) - m[4] * (m[1] * m[10] - m[9] * m[2]) + m[8] * (m[1] * m[6] - m[5] * m[2]);
+  if (det < 0) sx = -sx;
+  const r00 = m[0] / sx;
+  const r10 = m[1] / sx;
+  const r20 = m[2] / sx;
+  const r01 = m[4] / sy;
+  const r11 = m[5] / sy;
+  const r21 = m[6] / sy;
+  const r02 = m[8] / sz;
+  const r12 = m[9] / sz;
+  const r22 = m[10] / sz;
+  const trace = r00 + r11 + r22;
+  let x = 0;
+  let y = 0;
+  let z = 0;
+  let w = 1;
+  if (trace > 0) {
+    const s = Math.sqrt(trace + 1) * 2;
+    w = s / 4;
+    x = (r21 - r12) / s;
+    y = (r02 - r20) / s;
+    z = (r10 - r01) / s;
+  } else if (r00 > r11 && r00 > r22) {
+    const s = Math.sqrt(1 + r00 - r11 - r22) * 2;
+    w = (r21 - r12) / s;
+    x = s / 4;
+    y = (r01 + r10) / s;
+    z = (r02 + r20) / s;
+  } else if (r11 > r22) {
+    const s = Math.sqrt(1 + r11 - r00 - r22) * 2;
+    w = (r02 - r20) / s;
+    x = (r01 + r10) / s;
+    y = s / 4;
+    z = (r12 + r21) / s;
+  } else {
+    const s = Math.sqrt(1 + r22 - r00 - r11) * 2;
+    w = (r10 - r01) / s;
+    x = (r02 + r20) / s;
+    y = (r12 + r21) / s;
+    z = s / 4;
+  }
+  return { translation: [m[12], m[13], m[14]], rotation: [x, y, z, w], scale: [sx, sy, sz] };
+}
+
 function identityMatrix(): Float32Array {
   return new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 }
@@ -316,10 +425,14 @@ export function loadGlb(bytes: Uint8Array): GlbModel {
         let localNormals = p.attributes.NORMAL !== undefined ? readAccessor(bytes, bin, doc, p.attributes.NORMAL) : new Float32Array(count * 3);
         const skin = node.skin !== undefined ? doc.skins?.[node.skin] : undefined;
         let transform = world;
-        if (skin && p.attributes.JOINTS_0 !== undefined && p.attributes.WEIGHTS_0 !== undefined) {
-          const skinned = restPose(skin, readAccessor(bytes, bin, doc, p.attributes.JOINTS_0), readAccessor(bytes, bin, doc, p.attributes.WEIGHTS_0), local, localNormals);
-          local = skinned.positions;
-          localNormals = skinned.normals;
+        let skinned: GlbSkinnedMesh | undefined;
+        if (skin && node.skin !== undefined && p.attributes.JOINTS_0 !== undefined && p.attributes.WEIGHTS_0 !== undefined) {
+          const joints = readAccessor(bytes, bin, doc, p.attributes.JOINTS_0);
+          const weights = readAccessor(bytes, bin, doc, p.attributes.WEIGHTS_0);
+          skinned = { skin: node.skin, positions: local, normals: localNormals, joints, weights };
+          const rest = restPose(skin, joints, weights, local, localNormals);
+          local = rest.positions;
+          localNormals = rest.normals;
           transform = identityMatrix();
         }
         const positions = new Float32Array(count * 3);
@@ -365,7 +478,9 @@ export function loadGlb(bytes: Uint8Array): GlbModel {
         }
         const mesh: MeshData = { positions, normals, indices };
         if (p.attributes.TEXCOORD_0 !== undefined) mesh.uvs = readAccessor(bytes, bin, doc, p.attributes.TEXCOORD_0);
-        primitives.push({ mesh, material: p.material ?? -1, node: node.name ?? "" });
+        const out: GlbPrimitive = { mesh, material: p.material ?? -1, node: node.name ?? "" };
+        if (skinned) out.skinned = skinned;
+        primitives.push(out);
       }
     }
     for (const child of node.children ?? []) bake(child, world);
@@ -413,5 +528,37 @@ export function loadGlb(bytes: Uint8Array): GlbModel {
     const start = bin + (view.byteOffset ?? 0);
     images.push({ bytes: bytes.subarray(start, start + view.byteLength), mimeType: image.mimeType ?? "" });
   }
-  return { primitives, materials: (doc.materials ?? []).map((m: GltfMaterial): GlbMaterial => material(doc, m)), images, min, max };
+  const parents = nodes.map((): number => -1);
+  nodes.forEach((n: GltfNode, i: number): void => {
+    for (const child of n.children ?? []) parents[child] = i;
+  });
+  const glbNodes: GlbNode[] = nodes.map((n: GltfNode, i: number): GlbNode => {
+    let t = n.translation ?? [0, 0, 0];
+    let r = n.rotation ?? [0, 0, 0, 1];
+    let sc = n.scale ?? [1, 1, 1];
+    if (n.matrix && n.matrix.length === 16) {
+      const d = decompose(new Float32Array(n.matrix));
+      t = d.translation;
+      r = d.rotation;
+      sc = d.scale;
+    }
+    return { name: n.name ?? "", parent: parents[i], translation: [t[0], t[1], t[2]], rotation: [r[0], r[1], r[2], r[3]], scale: [sc[0], sc[1], sc[2]] };
+  });
+  const skins: GlbSkin[] = (doc.skins ?? []).map((sk): GlbSkin => ({
+    joints: sk.joints.slice(),
+    inverseBind: sk.inverseBindMatrices !== undefined ? readAccessor(bytes, bin, doc, sk.inverseBindMatrices) : identities(sk.joints.length),
+  }));
+  const animations: GlbAnimation[] = (doc.animations ?? []).map((a): GlbAnimation => {
+    const channels: GlbChannel[] = [];
+    let duration = 0;
+    for (const c of a.channels) {
+      if (c.target.node === undefined || c.target.path === "weights") continue;
+      const sampler = a.samplers[c.sampler];
+      const times = readAccessor(bytes, bin, doc, sampler.input);
+      if (times.length > 0 && times[times.length - 1] > duration) duration = times[times.length - 1];
+      channels.push({ node: c.target.node, path: c.target.path, interpolation: sampler.interpolation ?? "LINEAR", times, values: readAccessor(bytes, bin, doc, sampler.output) });
+    }
+    return { name: a.name ?? "", duration, channels };
+  });
+  return { primitives, nodes: glbNodes, skins, animations, materials: (doc.materials ?? []).map((m: GltfMaterial): GlbMaterial => material(doc, m)), images, min, max };
 }

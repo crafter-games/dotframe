@@ -39,9 +39,21 @@ export interface Environment {
 }
 
 export const MAX_LIGHTS = 8;
+// Joints a skinned mesh can use; extra joints draw at rest.
+export const MAX_JOINTS = 128;
+
+// Bind-space geometry of a skinned primitive (GlbPrimitive.skinned).
+export interface SkinnedData {
+  positions: Float32Array;
+  normals: Float32Array;
+  joints: Float32Array;
+  weights: Float32Array;
+}
 
 export interface Renderer {
   addMesh: (data: MeshData) => number;
+  // A mesh deformed by MeshRef.joints. data supplies indices and UVs; skin the bind-space geometry.
+  addSkinnedMesh: (data: MeshData, skin: SkinnedData) => number;
   // The scene's draws without presenting a frame, for Draw2D.scene() to put under a 2D HUD in Sim.render.
   draws: (world: World, camera: Camera, environment?: Environment) => Draw[];
   render: (world: World, camera: Camera, clear: Color, environment?: Environment) => void;
@@ -52,6 +64,7 @@ interface GpuMesh {
   indexBuffer: number;
   count: number;
   uvs: boolean;
+  skinned: boolean;
 }
 
 interface EntityBinding {
@@ -60,7 +73,7 @@ interface EntityBinding {
   texture: Texture;
 }
 
-const shader = `
+const shader = (skinned: boolean): string => `
 struct Light {
   position: vec4f,
   color: vec4f,
@@ -79,6 +92,7 @@ struct Uniforms {
   spotDir: vec4f,
   spotColor: vec4f,
   lights: array<Light, ${MAX_LIGHTS}>,
+  ${skinned ? `joints: array<mat4x4f, ${MAX_JOINTS}>,` : ""}
 }
 @group(0) @binding(0) var<uniform> u: Uniforms;
 @group(0) @binding(1) var tex: texture_2d<f32>;
@@ -91,7 +105,20 @@ struct VertexOut {
   @location(2) uv: vec2f,
 }
 
-@vertex
+${
+  skinned
+    ? `@vertex
+fn vs_main(@location(0) position: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2f, @location(3) joints: vec4f, @location(4) weights: vec4f) -> VertexOut {
+  let skin = u.joints[u32(joints.x)] * weights.x + u.joints[u32(joints.y)] * weights.y + u.joints[u32(joints.z)] * weights.z + u.joints[u32(joints.w)] * weights.w;
+  let p = skin * vec4f(position, 1.0);
+  var out: VertexOut;
+  out.position = u.mvp * p;
+  out.normal = (u.model * skin * vec4f(normal, 0.0)).xyz;
+  out.world = (u.model * p).xyz;
+  out.uv = uv;
+  return out;
+}`
+    : `@vertex
 fn vs_main(@location(0) position: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2f) -> VertexOut {
   var out: VertexOut;
   out.position = u.mvp * vec4f(position, 1.0);
@@ -99,6 +126,7 @@ fn vs_main(@location(0) position: vec3f, @location(1) normal: vec3f, @location(2
   out.world = (u.model * vec4f(position, 1.0)).xyz;
   out.uv = uv;
   return out;
+}`
 }
 
 fn falloff(d: f32, range: f32) -> f32 {
@@ -154,8 +182,9 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
 }
 `;
 
-// Position, normal, uv.
+// Position, normal, uv; skinned meshes add four joint slots and four weights.
 const VERTEX_FLOATS = 8;
+const SKINNED_FLOATS = 16;
 // mvp (16) + model (16) + 10 vec4 + MAX_LIGHTS * 2 vec4 floats.
 const UNIFORM_FLOATS = 32 + 10 * 4 + MAX_LIGHTS * 8;
 
@@ -164,23 +193,22 @@ const DEFAULT_ENVIRONMENT: Environment = {
   sun: { direction: vec3(0.4, 0.8, 0.6), color: vec3(0.75, 0.75, 0.75) },
 };
 
+const BASE_ATTRIBUTES = [
+  { format: VertexFormat.Float32x3, offset: 0, location: 0 },
+  { format: VertexFormat.Float32x3, offset: 12, location: 1 },
+  { format: VertexFormat.Float32x2, offset: 24, location: 2 },
+];
+
 export function createRenderer(gpu: RenderGpu): Renderer {
-  const pipeline = gpu.createPipeline({
-    wgsl: shader,
-    stride: VERTEX_FLOATS * 4,
-    attributes: [
-      { format: VertexFormat.Float32x3, offset: 0, location: 0 },
-      { format: VertexFormat.Float32x3, offset: 12, location: 1 },
-      { format: VertexFormat.Float32x2, offset: 24, location: 2 },
-    ],
-    depth: true,
-    blend: false,
-  });
+  const pipeline = gpu.createPipeline({ wgsl: shader(false), stride: VERTEX_FLOATS * 4, attributes: BASE_ATTRIBUTES, depth: true, blend: false });
+  // Created on the first skinned mesh, so games without one pay nothing.
+  let skinnedPipeline = -1;
   // The shader always samples, so untextured meshes bind one white pixel.
   const white = gpu.createTexture(1, 1, new Uint8Array([255, 255, 255, 255]), false);
   const meshes: GpuMesh[] = [];
   const bindings = new Map<number, EntityBinding>();
   const uniforms = new Float32Array(UNIFORM_FLOATS);
+  const skinnedUniforms = new Float32Array(UNIFORM_FLOATS + MAX_JOINTS * 16);
   const scene = new Float32Array(UNIFORM_FLOATS - 40);
 
   const addMesh = (data: MeshData): number => {
@@ -205,6 +233,47 @@ export function createRenderer(gpu: RenderGpu): Renderer {
       indexBuffer: gpu.createBuffer(BufferUsage.Index, u32Bytes(data.indices)),
       count: data.indices.length,
       uvs: uvs !== undefined,
+      skinned: false,
+    });
+    return meshes.length - 1;
+  };
+
+  const addSkinnedMesh = (data: MeshData, skin: SkinnedData): number => {
+    if (skinnedPipeline < 0) {
+      skinnedPipeline = gpu.createPipeline({
+        wgsl: shader(true),
+        stride: SKINNED_FLOATS * 4,
+        attributes: [...BASE_ATTRIBUTES, { format: VertexFormat.Float32x4, offset: 32, location: 3 }, { format: VertexFormat.Float32x4, offset: 48, location: 4 }],
+        depth: true,
+        blend: false,
+      });
+    }
+    const vertexCount = skin.positions.length / 3;
+    const interleaved = new Float32Array(vertexCount * SKINNED_FLOATS);
+    const uvs = data.uvs;
+    for (let i = 0; i < vertexCount; i++) {
+      const o = i * SKINNED_FLOATS;
+      for (let c = 0; c < 3; c++) {
+        interleaved[o + c] = skin.positions[i * 3 + c];
+        interleaved[o + 3 + c] = skin.normals[i * 3 + c];
+      }
+      if (uvs) {
+        interleaved[o + 6] = uvs[i * 2];
+        interleaved[o + 7] = uvs[i * 2 + 1];
+      }
+      for (let c = 0; c < 4; c++) {
+        // A joint past MAX_JOINTS would index outside the array; its weight falls back to joint 0.
+        const joint = skin.joints[i * 4 + c];
+        interleaved[o + 8 + c] = joint < MAX_JOINTS ? joint : 0;
+        interleaved[o + 12 + c] = skin.weights[i * 4 + c];
+      }
+    }
+    meshes.push({
+      vertexBuffer: gpu.createBuffer(BufferUsage.Vertex, f32Bytes(interleaved)),
+      indexBuffer: gpu.createBuffer(BufferUsage.Index, u32Bytes(data.indices)),
+      count: data.indices.length,
+      uvs: uvs !== undefined,
+      skinned: true,
     });
     return meshes.length - 1;
   };
@@ -248,10 +317,12 @@ export function createRenderer(gpu: RenderGpu): Renderer {
       if (!transform || !mesh) continue;
 
       const texture = meshRef.texture ?? white;
+      const entityPipeline = mesh.skinned ? skinnedPipeline : pipeline;
+      const data = mesh.skinned ? skinnedUniforms : uniforms;
       let binding = bindings.get(entity);
       if (!binding || binding.texture !== texture) {
-        const uniformBuffer = binding?.uniformBuffer ?? gpu.createBuffer(BufferUsage.Uniform, f32Bytes(uniforms));
-        binding = { uniformBuffer, bindGroup: gpu.bind(pipeline, uniformBuffer, texture.id), texture };
+        const uniformBuffer = binding?.uniformBuffer ?? gpu.createBuffer(BufferUsage.Uniform, f32Bytes(data));
+        binding = { uniformBuffer, bindGroup: gpu.bind(entityPipeline, uniformBuffer, texture.id), texture };
         bindings.set(entity, binding);
       }
 
@@ -267,10 +338,25 @@ export function createRenderer(gpu: RenderGpu): Renderer {
       uniforms[38] = meshRef.alphaCutoff ?? 0;
       uniforms[39] = 0;
       uniforms.set(scene, 40);
-      gpu.writeBuffer(binding.uniformBuffer, f32Bytes(uniforms));
+      if (mesh.skinned) {
+        skinnedUniforms.set(uniforms, 0);
+        const joints = meshRef.joints;
+        for (let j = 0; j < MAX_JOINTS; j++) {
+          const o = UNIFORM_FLOATS + j * 16;
+          if (joints && j * 16 + 16 <= joints.length) skinnedUniforms.set(joints.subarray(j * 16, j * 16 + 16), o);
+          else {
+            skinnedUniforms.fill(0, o, o + 16);
+            skinnedUniforms[o] = 1;
+            skinnedUniforms[o + 5] = 1;
+            skinnedUniforms[o + 10] = 1;
+            skinnedUniforms[o + 15] = 1;
+          }
+        }
+      }
+      gpu.writeBuffer(binding.uniformBuffer, f32Bytes(data));
 
       out.push({
-        pipeline,
+        pipeline: entityPipeline,
         bindGroup: binding.bindGroup,
         vertexBuffer: mesh.vertexBuffer,
         indexBuffer: mesh.indexBuffer,
@@ -284,5 +370,5 @@ export function createRenderer(gpu: RenderGpu): Renderer {
   const render = (world: World, camera: Camera, clear: Color, environment?: Environment): void =>
     gpu.frame(clear, draws(world, camera, environment));
 
-  return { addMesh, draws, render };
+  return { addMesh, addSkinnedMesh, draws, render };
 }

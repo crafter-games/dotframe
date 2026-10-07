@@ -22,6 +22,8 @@ export interface MeshRef {
   alphaCutoff?: number;
   // Forces world-space triplanar mapping on a UV-mapped mesh. Meshes without UVs are always triplanar.
   triplanar?: boolean;
+  // Joint matrices (16 floats per joint, from anim.jointMatrices) for a mesh added with addSkinnedMesh.
+  joints?: Float32Array;
 }
 
 export interface World {
