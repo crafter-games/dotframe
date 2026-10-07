@@ -167,12 +167,11 @@ export function worldMatrices(model: GlbModel, pose: Pose): Float32Array {
   const resolve = (i: number): void => {
     if (done[i]) return;
     const parent = model.nodes[i].parent;
+    // Resolve the parent first: it reuses the local scratch matrix.
+    if (parent >= 0) resolve(parent);
     localMatrix(pose.locals, i, local);
     if (parent < 0) worlds.set(local, i * 16);
-    else {
-      resolve(parent);
-      multiplyInto(worlds, parent * 16, local, 0, worlds, i * 16);
-    }
+    else multiplyInto(worlds, parent * 16, local, 0, worlds, i * 16);
     done[i] = 1;
   };
   for (let i = 0; i < count; i++) resolve(i);

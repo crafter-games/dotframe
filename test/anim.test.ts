@@ -72,3 +72,14 @@ test("joint matrices compose parents: the child follows the root's translation",
   const joints = jointMatrices(m, pose, 0);
   expect(round(joints.subarray(12, 15))).toEqual([4, 1, 0]);
 });
+
+test("world matrices are right when a child comes before its parent in the node list", () => {
+  const m = model();
+  // Swap the order: the arm (child) is node 0, the root node 1.
+  m.nodes = [
+    { name: "arm", parent: 1, translation: [0, 1, 0], rotation: [0, 0, 0, 1], scale: [1, 1, 1] },
+    { name: "root", parent: -1, translation: [3, 0, 0], rotation: [0, 0, 0, 1], scale: [2, 2, 2] },
+  ];
+  const worlds = worldMatrices(m, restPose(m));
+  expect(round(worlds.subarray(12, 15))).toEqual([3, 2, 0]);
+});

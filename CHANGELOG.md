@@ -11,6 +11,8 @@ From porting The Ones (Godot, first-person 3D horror) to dotframe.
 - Audio: steerable looping voices (`start`, `setVoice`, `stopVoice`) and `spatial()`.
 - Post-processing: `gpu.createTarget` and `gpu.frame(clear, draws, target)` render into textures; `src/post.ts` runs a full-screen pass with your WGSL. `RenderGpu.createTarget` and `destroyTexture` are now required (scriptc cannot call optional functions): custom stub GPUs need both.
 - Mipmaps (`createTexture`/`createImage` `mipmaps` flag), instancing (`addInstances`, `MeshRef.instances`, `sway`, `Environment.time`) and spot light shadows (`SpotLight.shadows`, a 1024 shadow map with 4-tap PCF). `bind` takes an optional second texture (bindings 3 and 4).
+- `src/retarget.ts`: humanoid retargeting across Mixamo, Quaternius UAL and Character Creator 3 skeletons (ported from The Ones).
+- Fixed: `worldMatrices` composed the wrong local matrix when a child node came before its parent in the file (UAL's Head is node 0), which skewed animated poses of such models.
 - `Input.look()` with `run(..., { pointerLock: true })` on the web, for first-person cameras.
 - `SimPlatform.image` (decode for snap) and `Sim.clear` (snap's clear color).
 - Native decodes JPEG (stb_image was PNG-only).
