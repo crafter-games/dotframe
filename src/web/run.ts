@@ -158,6 +158,14 @@ export async function run(options: WindowOptions, setup: Setup, runOptions: RunO
               },
             ]
           : [];
+      const instanceAttributes = pipelineOptions.instanceAttributes ?? [];
+      if (instanceAttributes.length > 0) {
+        buffersLayout.push({
+          arrayStride: pipelineOptions.instanceStride ?? 0,
+          stepMode: "instance",
+          attributes: instanceAttributes.map((attribute) => ({ format: vertexFormats[attribute.format] ?? "float32x3", offset: attribute.offset, shaderLocation: attribute.location })),
+        });
+      }
       pipelines.push(
         device.createRenderPipeline({
           layout: "auto",
@@ -253,11 +261,13 @@ export async function run(options: WindowOptions, setup: Setup, runOptions: RunO
           pass.setPipeline(pipeline);
           if (draw.bindGroup >= 0) pass.setBindGroup(0, bindGroups[draw.bindGroup]);
           if (draw.vertexBuffer >= 0) pass.setVertexBuffer(0, buffers[draw.vertexBuffer]);
+          const instances = draw.instances ?? 1;
+          if (draw.instanceBuffer !== undefined && draw.instanceBuffer >= 0) pass.setVertexBuffer(1, buffers[draw.instanceBuffer]);
           if (draw.indexBuffer >= 0) {
             pass.setIndexBuffer(buffers[draw.indexBuffer], "uint32");
-            pass.drawIndexed(draw.count, 1, draw.first);
+            pass.drawIndexed(draw.count, instances, draw.first);
           } else {
-            pass.draw(draw.count, 1, draw.first);
+            pass.draw(draw.count, instances, draw.first);
           }
         }
         pass.end();

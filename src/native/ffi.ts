@@ -28,6 +28,8 @@ export declare function dfDraw(
   indexBuffer: number,
   first: number,
   count: number,
+  instanceBuffer: number,
+  instances: number,
 ): void;
 export declare function dfTarget(op: number, a: number, b: number, c: number, d: number, e: number): number;
 export declare function dfPass(depth: boolean): void;

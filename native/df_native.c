@@ -435,6 +435,10 @@ int32_t df_pipeline(const uint8_t *wgsl, size_t wgsl_len, uint32_t stride, const
   WGPUVertexAttribute attributes[16];
   size_t attribute_count = attrs_len / 12;
   if (attribute_count > 16) attribute_count = 16;
+  // flags bits 8-15: how many of the attributes (the last ones) step per instance; bits 16-31: their stride.
+  size_t instance_count = (flags >> 8) & 255;
+  if (instance_count > attribute_count) instance_count = attribute_count;
+  uint32_t instance_stride = flags >> 16;
   for (size_t i = 0; i < attribute_count; i++) {
     const uint32_t *t = (const uint32_t *)(attrs + i * 12);
     static const WGPUVertexFormat formats[] = {WGPUVertexFormat_Float32x2, WGPUVertexFormat_Float32x3,
@@ -445,10 +449,14 @@ int32_t df_pipeline(const uint8_t *wgsl, size_t wgsl_len, uint32_t stride, const
     attributes[i].offset = t[1];
     attributes[i].shaderLocation = t[2];
   }
-  WGPUVertexBufferLayout layout = WGPU_VERTEX_BUFFER_LAYOUT_INIT;
-  layout.arrayStride = stride;
-  layout.attributeCount = attribute_count;
-  layout.attributes = attributes;
+  WGPUVertexBufferLayout layouts[2] = {WGPU_VERTEX_BUFFER_LAYOUT_INIT, WGPU_VERTEX_BUFFER_LAYOUT_INIT};
+  layouts[0].arrayStride = stride;
+  layouts[0].attributeCount = attribute_count - instance_count;
+  layouts[0].attributes = attributes;
+  layouts[1].arrayStride = instance_stride;
+  layouts[1].stepMode = WGPUVertexStepMode_Instance;
+  layouts[1].attributeCount = instance_count;
+  layouts[1].attributes = attributes + (attribute_count - instance_count);
 
   WGPUBlendState blend = WGPU_BLEND_STATE_INIT;
   blend.color = (WGPUBlendComponent){WGPUBlendOperation_Add, WGPUBlendFactor_SrcAlpha, WGPUBlendFactor_OneMinusSrcAlpha};
@@ -471,8 +479,8 @@ int32_t df_pipeline(const uint8_t *wgsl, size_t wgsl_len, uint32_t stride, const
   desc.vertex.module = module;
   desc.vertex.entryPoint = (WGPUStringView){"vs_main", WGPU_STRLEN};
   if (stride > 0) {
-    desc.vertex.bufferCount = 1;
-    desc.vertex.buffers = &layout;
+    desc.vertex.bufferCount = instance_count > 0 ? 2 : 1;
+    desc.vertex.buffers = layouts;
   }
   desc.fragment = &fragment;
   if (flags & DF_PIPELINE_DEPTH) {
@@ -750,7 +758,8 @@ int32_t df_target(int32_t op, double a, double b, double c, double d, double e) 
 
 // Negative handles mean "none". first/count are indices with an index buffer (uint32), vertices otherwise.
 void df_draw(int32_t pipeline, int32_t bind_group, int32_t vertex_buffer, int32_t index_buffer, uint32_t first,
-             uint32_t count) {
+             uint32_t count, int32_t instance_buffer, uint32_t instances) {
+  if (instances == 0) instances = 1;
   if (!g_frame_pass || pipeline < 0 || pipeline >= g_pipeline_count) return;
   // A group released with its texture draws nothing rather than sampling freed memory.
   if (bind_group >= 0 && bind_group < g_bind_group_count && !g_bind_groups[bind_group]) return;
@@ -759,12 +768,14 @@ void df_draw(int32_t pipeline, int32_t bind_group, int32_t vertex_buffer, int32_
     wgpuRenderPassEncoderSetBindGroup(g_frame_pass, 0, g_bind_groups[bind_group], 0, NULL);
   if (vertex_buffer >= 0 && vertex_buffer < g_buffer_count)
     wgpuRenderPassEncoderSetVertexBuffer(g_frame_pass, 0, g_buffers[vertex_buffer], 0, WGPU_WHOLE_SIZE);
+  if (instance_buffer >= 0 && instance_buffer < g_buffer_count)
+    wgpuRenderPassEncoderSetVertexBuffer(g_frame_pass, 1, g_buffers[instance_buffer], 0, WGPU_WHOLE_SIZE);
   if (index_buffer >= 0 && index_buffer < g_buffer_count) {
     wgpuRenderPassEncoderSetIndexBuffer(g_frame_pass, g_buffers[index_buffer], WGPUIndexFormat_Uint32, 0,
                                         WGPU_WHOLE_SIZE);
-    wgpuRenderPassEncoderDrawIndexed(g_frame_pass, count, 1, first, 0, 0);
+    wgpuRenderPassEncoderDrawIndexed(g_frame_pass, count, instances, first, 0, 0);
   } else {
-    wgpuRenderPassEncoderDraw(g_frame_pass, count, 1, first, 0);
+    wgpuRenderPassEncoderDraw(g_frame_pass, count, instances, first, 0);
   }
 }
 

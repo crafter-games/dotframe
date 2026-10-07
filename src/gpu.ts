@@ -33,6 +33,9 @@ export interface PipelineOptions {
   depth: boolean;
   // Standard alpha blending, for 2D and transparent sprites.
   blend: boolean;
+  // A second vertex buffer stepped once per instance (Draw.instanceBuffer), for drawing one mesh many times.
+  instanceStride?: number;
+  instanceAttributes?: VertexAttribute[];
 }
 
 export interface Texture {
@@ -49,6 +52,9 @@ export interface Draw {
   indexBuffer: number;
   first: number;
   count: number;
+  // With a pipeline that has instance attributes: the per-instance buffer and how many instances to draw.
+  instanceBuffer?: number;
+  instances?: number;
 }
 
 // Synchronous rendering surface. Code that must also run in scriptc library mode (iOS), where promises are

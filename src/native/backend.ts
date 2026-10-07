@@ -49,14 +49,21 @@ export function createNativeRenderGpu(): RenderGpu {
     writeBuffer: (buffer: number, data: Uint8Array): void => dfBufferWrite(buffer, data),
     destroyBuffer: (buffer: number): void => dfBufferDestroy(buffer),
     createPipeline: (pipelineOptions: PipelineOptions): number => {
-      const attributes = new Uint32Array(pipelineOptions.attributes.length * 3);
-      for (let i = 0; i < pipelineOptions.attributes.length; i++) {
-        const attribute = pipelineOptions.attributes[i];
+      // Instance attributes follow the vertex ones; their count and stride ride in flags bits 8-15 and 16-31.
+      const instanceAttributes = pipelineOptions.instanceAttributes ?? [];
+      const all = pipelineOptions.attributes.concat(instanceAttributes);
+      const attributes = new Uint32Array(all.length * 3);
+      for (let i = 0; i < all.length; i++) {
+        const attribute = all[i];
         attributes[i * 3] = attribute.format;
         attributes[i * 3 + 1] = attribute.offset;
         attributes[i * 3 + 2] = attribute.location;
       }
-      const flags = (pipelineOptions.depth ? PIPELINE_DEPTH : 0) | (pipelineOptions.blend ? PIPELINE_BLEND : 0);
+      const flags =
+        (pipelineOptions.depth ? PIPELINE_DEPTH : 0) |
+        (pipelineOptions.blend ? PIPELINE_BLEND : 0) |
+        ((instanceAttributes.length & 255) << 8) |
+        (((pipelineOptions.instanceStride ?? 0) & 65535) << 16);
       const attributeBytes = new Uint8Array(attributes.buffer, attributes.byteOffset, attributes.byteLength);
       const pipeline = dfPipeline(pipelineOptions.wgsl, pipelineOptions.stride, attributeBytes, flags);
       if (pipeline < 0) throw new Error(`dfPipeline failed: ${pipeline}`);
@@ -91,7 +98,7 @@ export function createNativeRenderGpu(): RenderGpu {
           usesDepth = depth;
           dfPass(depth);
         }
-        dfDraw(draw.pipeline, draw.bindGroup, draw.vertexBuffer, draw.indexBuffer, draw.first, draw.count);
+        dfDraw(draw.pipeline, draw.bindGroup, draw.vertexBuffer, draw.indexBuffer, draw.first, draw.count, draw.instanceBuffer ?? -1, draw.instances ?? 1);
       }
       dfEnd();
     },

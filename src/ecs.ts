@@ -25,6 +25,15 @@ export interface MeshRef {
   triplanar?: boolean;
   // Joint matrices (16 floats per joint, from anim.jointMatrices) for a mesh added with addSkinnedMesh.
   joints?: Float32Array;
+  // Draws the mesh once per instance (Renderer.addInstances), placed inside this entity's transform.
+  instances?: Instances;
+  // Wind: instanced vertices bend by this much per unit of height, animated by Environment.time.
+  sway?: number;
+}
+
+export interface Instances {
+  buffer: number;
+  count: number;
 }
 
 export interface World {

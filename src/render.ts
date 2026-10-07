@@ -1,4 +1,4 @@
-import type { World } from "./ecs";
+import type { Instances, World } from "./ecs";
 import type { MeshData } from "./gltf";
 import { BufferUsage, type Color, type Draw, f32Bytes, type RenderGpu, type Texture, u32Bytes, VertexFormat } from "./gpu";
 import { compose, lookAt, multiply, perspective, type Vec3, vec3 } from "./math";
@@ -36,7 +36,12 @@ export interface Environment {
   spot?: SpotLight;
   // Turns on ACES filmic tonemapping at this exposure, so bright lights roll off instead of clipping to white.
   exposure?: number;
+  // Seconds, for wind on instanced meshes (MeshRef.sway). Pass simulation time so a frame renders the same twice.
+  time?: number;
 }
+
+// Floats per instance in addInstances: x, y, z, scale, yaw, sway phase, 0, 0.
+export const INSTANCE_FLOATS = 8;
 
 export const MAX_LIGHTS = 8;
 // Joints a skinned mesh can use; extra joints draw at rest.
@@ -54,6 +59,8 @@ export interface Renderer {
   addMesh: (data: MeshData) => number;
   // A mesh deformed by MeshRef.joints. data supplies indices and UVs; skin the bind-space geometry.
   addSkinnedMesh: (data: MeshData, skin: SkinnedData) => number;
+  // Uploads instances (INSTANCE_FLOATS each) for MeshRef.instances.
+  addInstances: (data: Float32Array) => Instances;
   // The scene's draws without presenting a frame, for Draw2D.scene() to put under a 2D HUD in Sim.render.
   draws: (world: World, camera: Camera, environment?: Environment) => Draw[];
   render: (world: World, camera: Camera, clear: Color, environment?: Environment) => void;
@@ -73,7 +80,10 @@ interface EntityBinding {
   texture: Texture;
 }
 
-const shader = (skinned: boolean): string => `
+// kind 0 static, 1 skinned, 2 instanced.
+const shader = (kind: number): string => {
+  const skinned = kind === 1;
+  return `
 struct Light {
   position: vec4f,
   color: vec4f,
@@ -106,7 +116,25 @@ struct VertexOut {
 }
 
 ${
-  skinned
+  kind === 2
+    ? `@vertex
+fn vs_main(@location(0) position: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2f, @location(3) place: vec4f, @location(4) spin: vec4f) -> VertexOut {
+  let c = cos(spin.x);
+  let s = sin(spin.x);
+  var local = vec3f(c * position.x + s * position.z, position.y, -s * position.x + c * position.z) * place.w;
+  // Wind bends the top more than the base.
+  let t = u.sunDir.w;
+  local.x += sin(t * 1.7 + spin.y) * u.material.w * position.y * place.w;
+  local.z += cos(t * 1.3 + spin.y * 1.3) * u.material.w * 0.5 * position.y * place.w;
+  let p = vec4f(local + place.xyz, 1.0);
+  var out: VertexOut;
+  out.position = u.mvp * p;
+  out.normal = (u.model * vec4f(c * normal.x + s * normal.z, normal.y, -s * normal.x + c * normal.z, 0.0)).xyz;
+  out.world = (u.model * p).xyz;
+  out.uv = uv;
+  return out;
+}`
+    : skinned
     ? `@vertex
 fn vs_main(@location(0) position: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2f, @location(3) joints: vec4f, @location(4) weights: vec4f) -> VertexOut {
   let skin = u.joints[u32(joints.x)] * weights.x + u.joints[u32(joints.y)] * weights.y + u.joints[u32(joints.z)] * weights.z + u.joints[u32(joints.w)] * weights.w;
@@ -182,6 +210,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
   return vec4f(color, 1.0);
 }
 `;
+};
 
 // Position, normal, uv; skinned meshes add four joint slots and four weights.
 const VERTEX_FLOATS = 8;
@@ -201,9 +230,10 @@ const BASE_ATTRIBUTES = [
 ];
 
 export function createRenderer(gpu: RenderGpu): Renderer {
-  const pipeline = gpu.createPipeline({ wgsl: shader(false), stride: VERTEX_FLOATS * 4, attributes: BASE_ATTRIBUTES, depth: true, blend: false });
-  // Created on the first skinned mesh, so games without one pay nothing.
+  const pipeline = gpu.createPipeline({ wgsl: shader(0), stride: VERTEX_FLOATS * 4, attributes: BASE_ATTRIBUTES, depth: true, blend: false });
+  // Created on the first skinned mesh or instance set, so games without one pay nothing.
   let skinnedPipeline = -1;
+  let instancedPipeline = -1;
   // The shader always samples, so untextured meshes bind one white pixel.
   const white = gpu.createTexture(1, 1, new Uint8Array([255, 255, 255, 255]), false);
   const meshes: GpuMesh[] = [];
@@ -242,7 +272,7 @@ export function createRenderer(gpu: RenderGpu): Renderer {
   const addSkinnedMesh = (data: MeshData, skin: SkinnedData): number => {
     if (skinnedPipeline < 0) {
       skinnedPipeline = gpu.createPipeline({
-        wgsl: shader(true),
+        wgsl: shader(1),
         stride: SKINNED_FLOATS * 4,
         attributes: [...BASE_ATTRIBUTES, { format: VertexFormat.Float32x4, offset: 32, location: 3 }, { format: VertexFormat.Float32x4, offset: 48, location: 4 }],
         depth: true,
@@ -295,6 +325,8 @@ export function createRenderer(gpu: RenderGpu): Renderer {
       put(3, env.sun.direction, 0);
       put(4, env.sun.color, 0);
     }
+    // sunDir.w carries the time, sun or not.
+    scene[15] = env.time ?? 0;
     if (env.spot) {
       put(5, env.spot.position, env.spot.range);
       put(6, env.spot.direction, Math.cos(env.spot.angle));
@@ -305,6 +337,24 @@ export function createRenderer(gpu: RenderGpu): Renderer {
       put(8 + i * 2, lights[i].position, lights[i].range);
       put(9 + i * 2, lights[i].color, 0);
     }
+  };
+
+  const addInstances = (data: Float32Array): Instances => {
+    if (instancedPipeline < 0) {
+      instancedPipeline = gpu.createPipeline({
+        wgsl: shader(2),
+        stride: VERTEX_FLOATS * 4,
+        attributes: BASE_ATTRIBUTES,
+        depth: true,
+        blend: false,
+        instanceStride: INSTANCE_FLOATS * 4,
+        instanceAttributes: [
+          { format: VertexFormat.Float32x4, offset: 0, location: 3 },
+          { format: VertexFormat.Float32x4, offset: 16, location: 4 },
+        ],
+      });
+    }
+    return { buffer: gpu.createBuffer(BufferUsage.Vertex, f32Bytes(data)), count: data.length / INSTANCE_FLOATS };
   };
 
   const draws = (world: World, camera: Camera, environment?: Environment): Draw[] => {
@@ -318,7 +368,8 @@ export function createRenderer(gpu: RenderGpu): Renderer {
       if (!transform || !mesh) continue;
 
       const texture = meshRef.texture ?? white;
-      const entityPipeline = mesh.skinned ? skinnedPipeline : pipeline;
+      const instances = meshRef.instances;
+      const entityPipeline = mesh.skinned ? skinnedPipeline : instances ? instancedPipeline : pipeline;
       const data = mesh.skinned ? skinnedUniforms : uniforms;
       let binding = bindings.get(entity);
       if (!binding || binding.texture !== texture) {
@@ -337,7 +388,7 @@ export function createRenderer(gpu: RenderGpu): Renderer {
       uniforms[36] = meshRef.tile ?? 1;
       uniforms[37] = !meshRef.texture ? 0 : mesh.uvs && !meshRef.triplanar ? 2 : 1;
       uniforms[38] = meshRef.alphaCutoff ?? 0;
-      uniforms[39] = 0;
+      uniforms[39] = meshRef.sway ?? 0;
       uniforms.set(scene, 40);
       if (mesh.skinned) {
         skinnedUniforms.set(uniforms, 0);
@@ -363,6 +414,8 @@ export function createRenderer(gpu: RenderGpu): Renderer {
         indexBuffer: mesh.indexBuffer,
         first: 0,
         count: mesh.count,
+        instanceBuffer: instances ? instances.buffer : -1,
+        instances: instances ? instances.count : 1,
       });
     }
     return out;
@@ -371,5 +424,5 @@ export function createRenderer(gpu: RenderGpu): Renderer {
   const render = (world: World, camera: Camera, clear: Color, environment?: Environment): void =>
     gpu.frame(clear, draws(world, camera, environment));
 
-  return { addMesh, addSkinnedMesh, draws, render };
+  return { addMesh, addSkinnedMesh, addInstances, draws, render };
 }

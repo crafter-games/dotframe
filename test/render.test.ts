@@ -3,7 +3,7 @@ import { createDraw2D } from "../src/draw2d";
 import { createWorld, spawn } from "../src/ecs";
 import type { Color, Draw, PipelineOptions, RenderGpu, Texture } from "../src/gpu";
 import { vec3 } from "../src/math";
-import { createRenderer, MAX_LIGHTS } from "../src/render";
+import { createRenderer, INSTANCE_FLOATS, MAX_LIGHTS } from "../src/render";
 import { createPostPass, POST_PARAMS } from "../src/post";
 import { box } from "../src/shapes";
 
@@ -145,4 +145,21 @@ test("a post pass renders into a target it recreates only on resize, and draws o
   expect([draw.vertexBuffer, draw.indexBuffer, draw.count]).toEqual([-1, -1, 3]);
   expect(pipelines[draw.pipeline].depth).toBe(false);
   expect(pipelines[draw.pipeline].wgsl).toContain("fn post(uv: vec2f");
+});
+
+test("instanced meshes draw once with an instance buffer, count and sway, on a pipeline with instance attributes", () => {
+  const { gpu, pipelines, writes } = recordingGpu();
+  const renderer = createRenderer(gpu);
+  const { world, entity } = oneBoxWorld();
+  const instances = renderer.addInstances(new Float32Array(INSTANCE_FLOATS * 3));
+  expect(instances.count).toBe(3);
+  world.meshes.set(entity, { mesh: renderer.addMesh(box()), color: vec3(1, 1, 1), instances, sway: 0.06 });
+  const [draw] = renderer.draws(world, { eye: vec3(0, 0, 0), target: vec3(0, 0, -1), fovY: 1 }, { ambient: vec3(0, 0, 0), time: 2.5 });
+  expect([draw.instanceBuffer, draw.instances]).toEqual([instances.buffer, 3]);
+  expect(pipelines[draw.pipeline].instanceStride).toBe(INSTANCE_FLOATS * 4);
+  expect(pipelines[draw.pipeline].instanceAttributes?.map((a) => a.location)).toEqual([3, 4]);
+  const u = writes[writes.length - 1];
+  // material.w is the sway; sunDir.w the time, with no sun set.
+  expect(u[39]).toBeCloseTo(0.06, 5);
+  expect(u[40 + 3 * 4 + 3]).toBe(2.5);
 });
