@@ -2,7 +2,7 @@
 // Everything here is synchronous so it also compiles in scriptc library mode, where promises are unavailable.
 import type { AudioPlayer } from "../audio";
 import type { Color, Draw, PipelineOptions, RenderGpu, Texture } from "../gpu";
-import { type Input, keyScancodes, type Pointer, sdlGamepadButtons, type Touch } from "../input";
+import { type Input, keyScancodes, type Look, type Pointer, sdlGamepadButtons, type Touch } from "../input";
 import {
   dfAudioOpen,
   dfBegin,
@@ -106,6 +106,7 @@ export function createNativeInput(): Input {
       return sdl >= 0 && dfGamepadButton(pad, sdl);
     },
     pointer: (): Pointer => ({ x: dfMouse(0), y: dfMouse(1), buttons: dfMouse(2) }),
+    look: (): Look => ({ x: 0, y: 0 }),
     touches: (): Touch[] => {
       const out: Touch[] = [];
       const count = dfTouchCount();

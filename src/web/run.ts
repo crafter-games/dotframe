@@ -9,7 +9,7 @@ import {
   type WindowOptions,
 } from "../gpu";
 import type { Audio } from "../audio";
-import { type Input, keyCodes, type Pointer, type Touch } from "../input";
+import { type Input, keyCodes, type Look, type Pointer, type Touch } from "../input";
 import type { Storage } from "../storage";
 
 // Engine buffers are always plain ArrayBuffer-backed; the casts below satisfy TS 5.9+ WebGPU typings, which reject
@@ -26,6 +26,8 @@ export interface RunOptions {
   // "fixed" (default): a canvas of the window options' size. "window": the canvas fills the browser window and
   // follows its size; gpu.aspect() reports the current shape.
   fit?: "fixed" | "window";
+  // Locks the mouse to the canvas on click, so input.look() reports movement past the window edge.
+  pointerLock?: boolean;
 }
 
 export async function run(options: WindowOptions, setup: Setup, runOptions: RunOptions = {}): Promise<void> {
@@ -184,35 +186,44 @@ export async function run(options: WindowOptions, setup: Setup, runOptions: RunO
     },
     frame: (clear: Color, draws: Draw[]): void => {
       const encoder = device.createCommandEncoder();
-      // Pipelines without depth cannot run in a pass with a depth attachment.
-      const usesDepth = draws.some((draw) => depthPipelines.has(draw.pipeline));
-      const pass = encoder.beginRenderPass({
-        colorAttachments: [
-          {
-            view: context.getCurrentTexture().createView(),
-            loadOp: "clear",
-            storeOp: "store",
-            clearValue: { r: clear.r, g: clear.g, b: clear.b, a: 1 },
-          },
-        ],
-        depthStencilAttachment: usesDepth
-          ? { view: depthTexture.createView(), depthLoadOp: "clear", depthStoreOp: "store", depthClearValue: 1 }
-          : undefined,
-      });
-      for (const draw of draws) {
-        const pipeline = pipelines[draw.pipeline];
-        if (!pipeline) continue;
-        pass.setPipeline(pipeline);
-        if (draw.bindGroup >= 0) pass.setBindGroup(0, bindGroups[draw.bindGroup]);
-        if (draw.vertexBuffer >= 0) pass.setVertexBuffer(0, buffers[draw.vertexBuffer]);
-        if (draw.indexBuffer >= 0) {
-          pass.setIndexBuffer(buffers[draw.indexBuffer], "uint32");
-          pass.drawIndexed(draw.count, 1, draw.first);
-        } else {
-          pass.draw(draw.count, 1, draw.first);
+      // Pipelines without depth cannot run in a pass with a depth attachment, so a frame that mixes them (a 3D
+      // scene under a 2D HUD) splits into consecutive passes: the first clears, the rest load what came before.
+      let from = 0;
+      let first = true;
+      while (from < draws.length || first) {
+        const usesDepth = from < draws.length && depthPipelines.has(draws[from].pipeline);
+        let to = from;
+        while (to < draws.length && depthPipelines.has(draws[to].pipeline) === usesDepth) to++;
+        const pass = encoder.beginRenderPass({
+          colorAttachments: [
+            {
+              view: context.getCurrentTexture().createView(),
+              loadOp: first ? "clear" : "load",
+              storeOp: "store",
+              clearValue: { r: clear.r, g: clear.g, b: clear.b, a: 1 },
+            },
+          ],
+          depthStencilAttachment: usesDepth
+            ? { view: depthTexture.createView(), depthLoadOp: "clear", depthStoreOp: "store", depthClearValue: 1 }
+            : undefined,
+        });
+        for (const draw of draws.slice(from, to)) {
+          const pipeline = pipelines[draw.pipeline];
+          if (!pipeline) continue;
+          pass.setPipeline(pipeline);
+          if (draw.bindGroup >= 0) pass.setBindGroup(0, bindGroups[draw.bindGroup]);
+          if (draw.vertexBuffer >= 0) pass.setVertexBuffer(0, buffers[draw.vertexBuffer]);
+          if (draw.indexBuffer >= 0) {
+            pass.setIndexBuffer(buffers[draw.indexBuffer], "uint32");
+            pass.drawIndexed(draw.count, 1, draw.first);
+          } else {
+            pass.draw(draw.count, 1, draw.first);
+          }
         }
+        pass.end();
+        first = false;
+        from = to;
       }
-      pass.end();
       device.queue.submit([encoder.finish()]);
     },
     aspect: (): number => canvas.width / Math.max(canvas.height, 1),
@@ -247,6 +258,13 @@ export async function run(options: WindowOptions, setup: Setup, runOptions: RunO
   };
   for (const type of ["pointerdown", "pointermove", "pointerup", "pointercancel"]) canvas.addEventListener(type, trackFinger as EventListener);
   canvas.style.touchAction = "none";
+  const look = { x: 0, y: 0 };
+  globalThis.addEventListener("mousemove", (event: MouseEvent) => {
+    if (document.pointerLockElement !== canvas) return;
+    look.x += event.movementX;
+    look.y += event.movementY;
+  });
+  if (runOptions.pointerLock) canvas.addEventListener("click", () => canvas.requestPointerLock());
   // Gamepad slots in connection order, matching the native backend.
   const gamepad = (pad: number): Gamepad | null => navigator.getGamepads?.().filter((g) => g !== null)[pad] ?? null;
   const input: Input = {
@@ -259,6 +277,12 @@ export async function run(options: WindowOptions, setup: Setup, runOptions: RunO
     button: (pad: number, button: number): boolean => gamepad(pad)?.buttons[button]?.pressed ?? false,
     pointer: (): Pointer => ({ x: pointer.x, y: pointer.y, buttons: pointer.buttons }),
     touches: (): Touch[] => [...fingers.values()],
+    look: (): Look => {
+      const moved = { x: look.x, y: look.y };
+      look.x = 0;
+      look.y = 0;
+      return moved;
+    },
   };
   const storagePrefix = `dotframe:${options.title}:`;
   const storage: Storage = {

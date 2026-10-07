@@ -33,7 +33,7 @@ const plan = ${JSON.stringify({ seed, options, inputs })};
 const done = (data) => { const el = document.createElement("pre"); el.id = data.error ? "dotframe-error" : "dotframe-ready"; el.style.display = "none"; el.textContent = JSON.stringify(data); document.body.appendChild(el); };
 run(sim.window, (p) => {
   const draw = createDraw2D(p.gpu, sim.window.width, sim.window.height);
-  const r = sim.create({ gpu: p.gpu, load: loadBytes, headless: false, draw });
+  const r = sim.create({ gpu: p.gpu, load: loadBytes, headless: false, draw, image: p.gpu.createImage });
   let ready = false;
   let shown = 0;
   r.ready.then(() => {
@@ -44,7 +44,7 @@ run(sim.window, (p) => {
   return () => {
     draw.begin();
     if (ready && r.render) r.render(draw);
-    draw.end({ r: 0, g: 0, b: 0 });
+    draw.end(sim.clear ?? { r: 0, g: 0, b: 0 });
     if (ready && ++shown === 3) done({ frame: plan.inputs.length, checksum: r.checksum(), state: r.state() });
     return true;
   };

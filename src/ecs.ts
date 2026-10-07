@@ -1,3 +1,4 @@
+import type { Texture } from "./gpu";
 import type { Vec3 } from "./math";
 
 // Minimal ECS: entities are numbers, each component kind lives in its own Map.
@@ -11,6 +12,12 @@ export interface Transform {
 export interface MeshRef {
   mesh: number;
   color: Vec3;
+  // Sampled in world space on the three axes (triplanar), so boxes and terrain need no UVs. Tinted by color.
+  texture?: Texture;
+  // World units per texture repeat; defaults to 1.
+  tile?: number;
+  // Adds color * emissive unlit, for bulbs, lamps and the moon.
+  emissive?: number;
 }
 
 export interface World {

@@ -9,6 +9,8 @@ export interface Draw2D {
   // Changes the logical canvas size (for a window that resizes); coordinates map onto the whole surface.
   resize: (width: number, height: number) => void;
   end: (clear: Color) => void;
+  // Queues draws from another renderer (a 3D scene) to run before this frame's 2D shapes, so the HUD lands on top.
+  scene: (draws: Draw[]) => void;
   save: () => void;
   restore: () => void;
   translate: (x: number, y: number) => void;
@@ -410,6 +412,7 @@ export function createDraw2D(gpu: RenderGpu, width: number, height: number): Dra
   let state = initialState();
   const stack: State[] = [];
   let vertexCount = 0;
+  const under: Draw[] = [];
   const batches: Batch[] = [];
   // Current path, in path (untransformed) space: every point of every subpath in one flat x,y buffer. Points
   // are only ever appended to the last subpath, so subpath s spans [starts[s], starts[s + 1]) and the last one
@@ -665,6 +668,10 @@ export function createDraw2D(gpu: RenderGpu, width: number, height: number): Dra
       openCount = 0;
       state = initialState();
       stack.length = 0;
+      under.length = 0;
+    },
+    scene: (draws: Draw[]): void => {
+      for (const draw of draws) under.push(draw);
     },
     end: (clear: Color): void => {
       if (gpuCapacity < capacity) {
@@ -674,7 +681,7 @@ export function createDraw2D(gpu: RenderGpu, width: number, height: number): Dra
       }
       closeBatch();
       gpu.writeBuffer(vertexBuffer, new Uint8Array(vertices.buffer, 0, vertexCount * WORDS_PER_VERTEX * 4));
-      const draws: Draw[] = [];
+      const draws: Draw[] = [...under];
       for (const batch of batches) {
         draws.push({
           pipeline,
