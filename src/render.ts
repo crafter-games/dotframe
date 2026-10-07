@@ -12,6 +12,10 @@ export interface Camera {
   far?: number;
 }
 
+// Replaces the game's camera in every draws() call while set (snap --camera): eye, target and fovY; the game's
+// clip planes stay. Presentation only, so the simulation never sees it.
+export const cameraOverride: { camera: Camera | null } = { camera: null };
+
 export interface PointLight {
   position: Vec3;
   color: Vec3;
@@ -422,7 +426,9 @@ export function createRenderer(gpu: RenderGpu): Renderer {
     return { buffer: gpu.createBuffer(BufferUsage.Vertex, f32Bytes(data)), count: data.length / INSTANCE_FLOATS };
   };
 
-  const draws = (world: World, camera: Camera, environment?: Environment): Draw[] => {
+  const draws = (world: World, gameCamera: Camera, environment?: Environment): Draw[] => {
+    const forced = cameraOverride.camera;
+    const camera: Camera = forced ? { eye: forced.eye, target: forced.target, fovY: forced.fovY, near: gameCamera.near, far: gameCamera.far } : gameCamera;
     const view = lookAt(camera.eye, camera.target, vec3(0, 1, 0));
     const viewProjection = multiply(perspective(camera.fovY, gpu.aspect(), camera.near ?? 0.1, camera.far ?? 100), view);
     writeScene(camera, environment ?? DEFAULT_ENVIRONMENT);

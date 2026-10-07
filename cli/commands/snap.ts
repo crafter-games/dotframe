@@ -10,7 +10,7 @@ const ENGINE = resolve(import.meta.dir, "../../src");
 // Renders frames with the real WebGPU renderer: bundles a page that steps the sim to each --frame with the given
 // inputs, serves the game root, and screenshots it with agent-browser. --frame 90,330,900 shoots several frames of
 // one run in one browser session (animation checks), writing --out with {frame} replaced, or -<frame> added.
-export async function snap(ctx: Ctx, args: PlayArgs & { frame?: string; out?: string }): Promise<void> {
+export async function snap(ctx: Ctx, args: PlayArgs & { frame?: string; out?: string; camera?: string }): Promise<void> {
   const config = loadConfig();
   const sim = await loadSim(config);
   if (args.frame === undefined) throw new CliError("MISSING_ARG", "snap needs --frame <n>", "dotframe snap --frame 300 --mash 7");
@@ -25,6 +25,13 @@ export async function snap(ctx: Ctx, args: PlayArgs & { frame?: string; out?: st
   const seed = num("seed", args.seed, 1);
   const options = parseOptions(sim, args.options);
   const source = inputSource(sim, config.root, args.inputs, args.mash);
+  // --camera ex,ey,ez,tx,ty,tz[,fov degrees]: a 3D game's camera for this snap (cameraOverride in src/render).
+  let camera: { eye: number[]; target: number[]; fovY: number } | null = null;
+  if (args.camera !== undefined) {
+    const c = args.camera.split(",").map((v: string): number => Number(v.trim()));
+    if ((c.length !== 6 && c.length !== 7) || c.some((v: number): boolean => !Number.isFinite(v))) throw new CliError("BAD_ARG", `--camera wants ex,ey,ez,tx,ty,tz[,fov], got ${args.camera}`, "dotframe snap --frame 300 --camera -2.5,1.6,-7.6,-2.5,1.3,-6.2,40");
+    camera = { eye: c.slice(0, 3), target: c.slice(3, 6), fovY: ((c[6] ?? 60) * Math.PI) / 180 };
+  }
   const inputs = Array.from({ length: frame }, (_: unknown, f: number): number[] => source.at(f));
   if (!which("agent-browser")) throw new CliError("TOOL_MISSING", "agent-browser not found (snap drives a real browser)", "npm i -g agent-browser && agent-browser install");
 
@@ -36,7 +43,9 @@ export async function snap(ctx: Ctx, args: PlayArgs & { frame?: string; out?: st
     `import sim from ${JSON.stringify(simPath(config))};
 import { createDraw2D } from ${JSON.stringify(join(ENGINE, "draw2d"))};
 import { loadBytes, run } from ${JSON.stringify(join(ENGINE, "web/run"))};
-const plan = ${JSON.stringify({ seed, options, inputs, frames })};
+import { cameraOverride } from ${JSON.stringify(join(ENGINE, "render"))};
+const plan = ${JSON.stringify({ seed, options, inputs, frames, camera })};
+if (plan.camera) cameraOverride.camera = { eye: { x: plan.camera.eye[0], y: plan.camera.eye[1], z: plan.camera.eye[2] }, target: { x: plan.camera.target[0], y: plan.camera.target[1], z: plan.camera.target[2] }, fovY: plan.camera.fovY };
 const done = (data) => { const el = document.createElement("pre"); el.id = data.error ? "dotframe-error" : "dotframe-ready"; el.style.display = "none"; el.textContent = JSON.stringify(data); document.body.appendChild(el); };
 run(sim.window, (p) => {
   const draw = createDraw2D(p.gpu, sim.window.width, sim.window.height);
