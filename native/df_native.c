@@ -187,7 +187,12 @@ int32_t df_open(int32_t width, int32_t height, const uint8_t *title, size_t titl
   device_cb.mode = WGPUCallbackMode_AllowSpontaneous;
   device_cb.callback = on_device;
   device_cb.userdata1 = &g_device;
-  wgpuAdapterRequestDevice(g_adapter, NULL, device_cb);
+  // Without required limits wgpu-native falls back to 16 KB uniform bindings on iOS; ask for what the adapter has.
+  WGPULimits limits = WGPU_LIMITS_INIT;
+  wgpuAdapterGetLimits(g_adapter, &limits);
+  WGPUDeviceDescriptor device_desc = WGPU_DEVICE_DESCRIPTOR_INIT;
+  device_desc.requiredLimits = &limits;
+  wgpuAdapterRequestDevice(g_adapter, &device_desc, device_cb);
   if (!g_device) return -5;
   g_queue = wgpuDeviceGetQueue(g_device);
   // Nearest filtering keeps pixel art crisp.
