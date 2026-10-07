@@ -40,6 +40,7 @@ export declare function dfAudioActive(): number;
 // Music and volume in one call (library mode caps host callbacks at 32): op 0 play track a, loop when b != 0, at
 // volume c; 1 stop; 2 pause when a != 0, else resume; 3 music volume a; 4 master volume a.
 export declare function dfMusic(op: number, a: number, b: number, c: number): number;
+export declare function dfVoice(op: number, a: number, b: number, c: number, d: number): number;
 // WebSocket client and share (df_ws_apple.m, df_ws_win.c), two calls because library mode caps host callbacks at
 // 32. dfWsText: op 0 open url, 1 send text on socket, 2 share text. dfWs: op 0 state, 1 next length, 2 byte, 3 pop,
 // 4 close. See native/relay.ts.

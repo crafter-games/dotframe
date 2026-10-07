@@ -319,7 +319,40 @@ export async function run(options: WindowOptions, setup: Setup, runOptions: RunO
   let musicWanted = false;
   let musicVolume = 1;
   let masterVolume = 0.8;
+  const voices = new Map<number, { source: AudioBufferSourceNode; gain: GainNode; panner: StereoPannerNode }>();
+  let nextVoice = 1;
   const audio: Audio = {
+    start: (sound: number, volume: number, rate: number, loop: boolean): number => {
+      const buffer = sounds[sound];
+      if (!buffer) return 0;
+      const source = audioContext.createBufferSource();
+      source.buffer = buffer;
+      source.loop = loop;
+      source.playbackRate.value = rate;
+      const gain = audioContext.createGain();
+      gain.gain.value = volume;
+      const panner = audioContext.createStereoPanner();
+      source.connect(gain).connect(panner).connect(master);
+      const id = nextVoice++;
+      voices.set(id, { source, gain, panner });
+      source.onended = (): void => {
+        voices.delete(id);
+      };
+      source.start();
+      return id;
+    },
+    setVoice: (voice: number, volume: number, pan: number): void => {
+      const v = voices.get(voice);
+      if (!v) return;
+      v.gain.gain.value = volume;
+      v.panner.pan.value = Math.max(-1, Math.min(1, pan));
+    },
+    stopVoice: (voice: number): void => {
+      const v = voices.get(voice);
+      if (!v) return;
+      v.source.stop();
+      voices.delete(voice);
+    },
     loadSound: async (mp3: Uint8Array): Promise<number> => {
       sounds.push(await audioContext.decodeAudioData(new Uint8Array(mp3).buffer));
       return sounds.length - 1;

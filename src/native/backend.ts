@@ -21,6 +21,7 @@ import {
   dfMouse,
   dfPipeline,
   dfMusic,
+  dfVoice,
   dfPlay,
   dfSound,
   dfTexture,
@@ -140,6 +141,9 @@ export function createNativeAudioPlayer(): AudioPlayer {
     pauseMusic: (paused: boolean): void => void dfMusic(2, paused ? 1 : 0, 0, 0),
     setMusicVolume: (volume: number): void => void dfMusic(3, volume, 0, 0),
     setMasterVolume: (volume: number): void => void dfMusic(4, volume, 0, 0),
+    start: (sound: number, volume: number, rate: number, loop: boolean): number => dfVoice(0, sound, volume, rate, loop ? 1 : 0),
+    setVoice: (voice: number, volume: number, pan: number): void => void dfVoice(1, voice, volume, pan, 0),
+    stopVoice: (voice: number): void => void dfVoice(2, voice, 0, 0, 0),
   };
 }
 

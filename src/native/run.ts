@@ -69,6 +69,9 @@ export async function run(options: WindowOptions, setup: Setup): Promise<void> {
     pauseMusic: player.pauseMusic,
     setMusicVolume: player.setMusicVolume,
     setMasterVolume: player.setMasterVolume,
+    start: player.start,
+    setVoice: player.setVoice,
+    stopVoice: player.stopVoice,
     loadSound: async (mp3: Uint8Array): Promise<number> => (audioReady ? decodeNativeSound(mp3) : -1),
     loadMusic: async (mp3: Uint8Array): Promise<number> => storeNativeTrack(mp3),
   };

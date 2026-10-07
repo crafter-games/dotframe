@@ -26,6 +26,12 @@ typedef struct {
   double position;
   double step;
   float volume;
+  // Balance gains from the pan: 1 and 1 in the center, one side fading to 0 at -1 or 1.
+  float left;
+  float right;
+  uint8_t loop;
+  // Handle for df_voice; 0 for fire-and-forget df_play voices.
+  int32_t id;
 } Voice;
 
 typedef struct {
@@ -47,6 +53,7 @@ static Sound g_sounds[MAX_SOUNDS];
 static int32_t g_sound_count;
 static Voice g_voices[MAX_VOICES];
 static int32_t g_voice_count;
+static int32_t g_next_voice = 1;
 static Tone g_tones[MAX_TONES];
 static int32_t g_tone_count;
 static Track g_tracks[MAX_TRACKS];
@@ -108,12 +115,17 @@ static void SDLCALL mix(void *userdata, SDL_AudioStream *stream, int additional,
       for (int f = 0; f < frames; f++) {
         uint64_t i = (uint64_t)voice->position;
         if (i + 1 >= sound->count) {
-          done = 1;
-          break;
+          if (voice->loop && sound->count > 1) {
+            voice->position -= (double)(sound->count - 1);
+            i = (uint64_t)voice->position;
+          } else {
+            done = 1;
+            break;
+          }
         }
         float t = (float)(voice->position - (double)i);
-        out[f * 2] += (sound->frames[i * 2] * (1 - t) + sound->frames[(i + 1) * 2] * t) * voice->volume;
-        out[f * 2 + 1] += (sound->frames[i * 2 + 1] * (1 - t) + sound->frames[(i + 1) * 2 + 1] * t) * voice->volume;
+        out[f * 2] += (sound->frames[i * 2] * (1 - t) + sound->frames[(i + 1) * 2] * t) * voice->volume * voice->left;
+        out[f * 2 + 1] += (sound->frames[i * 2 + 1] * (1 - t) + sound->frames[(i + 1) * 2 + 1] * t) * voice->volume * voice->right;
         voice->position += voice->step;
       }
       if (done) g_voices[v] = g_voices[--g_voice_count];
@@ -188,7 +200,7 @@ void df_play(int32_t sound, double volume, double rate) {
   SDL_LockMutex(g_lock);
   if (g_voice_count < MAX_VOICES) {
     g_voices[g_voice_count++] =
-        (Voice){sound, 0.0, (double)g_sounds[sound].rate / OUTPUT_RATE * rate, (float)volume};
+        (Voice){sound, 0.0, (double)g_sounds[sound].rate / OUTPUT_RATE * rate, (float)volume, 1.0f, 1.0f, 0, 0};
   }
   SDL_UnlockMutex(g_lock);
 }
@@ -263,6 +275,40 @@ void df_audio_close(void) {
   g_sound_count = g_track_count = g_voice_count = g_tone_count = 0;
   if (g_lock) SDL_DestroyMutex(g_lock);
   g_lock = NULL;
+}
+
+static Voice *find_voice(int32_t id) {
+  for (int32_t v = 0; v < g_voice_count; v++)
+    if (g_voices[v].id == id) return &g_voices[v];
+  return NULL;
+}
+
+// One host call for controllable voices (scriptc library mode caps a library at 32 callbacks).
+// op 0 starts sound a at volume b and rate c, looping when d != 0, and returns its id (0 when it cannot play).
+// op 1 sets voice a to volume b and pan c (-1 left, 1 right). op 2 stops voice a. A finished voice ignores 1 and 2.
+int32_t df_voice(int32_t op, double a, double b, double c, double d) {
+  if (!g_stream) return 0;
+  int32_t result = 0;
+  SDL_LockMutex(g_lock);
+  if (op == 0) {
+    int32_t sound = (int32_t)a;
+    if (sound >= 0 && sound < g_sound_count && g_voice_count < MAX_VOICES) {
+      result = g_next_voice++;
+      g_voices[g_voice_count++] = (Voice){sound, 0.0, (double)g_sounds[sound].rate / OUTPUT_RATE * c, (float)b, 1.0f, 1.0f, (uint8_t)(d != 0), result};
+    }
+  } else {
+    Voice *voice = find_voice((int32_t)a);
+    if (voice && op == 1) {
+      float pan = (float)(c < -1 ? -1 : c > 1 ? 1 : c);
+      voice->volume = (float)b;
+      voice->left = pan > 0 ? 1.0f - pan : 1.0f;
+      voice->right = pan < 0 ? 1.0f + pan : 1.0f;
+    } else if (voice && op == 2) {
+      *voice = g_voices[--g_voice_count];
+    }
+  }
+  SDL_UnlockMutex(g_lock);
+  return result;
 }
 
 // One host call for music and volume, because scriptc library mode (iOS) caps a library at 32 callbacks.

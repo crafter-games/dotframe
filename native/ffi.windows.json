@@ -294,6 +294,18 @@
         "f64"
       ],
       "returns": "i32"
+    },
+    {
+      "name": "dfVoice",
+      "symbol": "df_voice",
+      "params": [
+        "i32",
+        "f64",
+        "f64",
+        "f64",
+        "f64"
+      ],
+      "returns": "i32"
     }
   ],
   "libraries": [
