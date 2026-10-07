@@ -37,6 +37,7 @@ import {
 
 const PIPELINE_DEPTH = 1;
 const PIPELINE_BLEND = 4;
+const PIPELINE_NO_DEPTH_WRITE = 2;
 
 export function createNativeRenderGpu(): RenderGpu {
   const depthPipelines = new Set<number>();
@@ -62,6 +63,7 @@ export function createNativeRenderGpu(): RenderGpu {
       const flags =
         (pipelineOptions.depth ? PIPELINE_DEPTH : 0) |
         (pipelineOptions.blend ? PIPELINE_BLEND : 0) |
+        (pipelineOptions.depthWrite === false ? PIPELINE_NO_DEPTH_WRITE : 0) |
         ((instanceAttributes.length & 255) << 8) |
         (((pipelineOptions.instanceStride ?? 0) & 65535) << 16);
       const attributeBytes = new Uint8Array(attributes.buffer, attributes.byteOffset, attributes.byteLength);

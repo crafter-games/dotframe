@@ -21,7 +21,7 @@
 #define DF_MAX_BUFFERS 1024
 
 enum { DF_USAGE_VERTEX = 1, DF_USAGE_INDEX = 2, DF_USAGE_UNIFORM = 4 };
-enum { DF_PIPELINE_DEPTH = 1, DF_PIPELINE_BLEND = 4 };
+enum { DF_PIPELINE_DEPTH = 1, DF_PIPELINE_NO_DEPTH_WRITE = 2, DF_PIPELINE_BLEND = 4 };
 enum { DF_FORMAT_FLOAT32X2 = 0, DF_FORMAT_FLOAT32X3 = 1, DF_FORMAT_FLOAT32X4 = 2, DF_FORMAT_FLOAT32 = 3, DF_FORMAT_UNORM8X4 = 4 };
 
 static SDL_Window *g_window;
@@ -472,7 +472,7 @@ int32_t df_pipeline(const uint8_t *wgsl, size_t wgsl_len, uint32_t stride, const
 
   WGPUDepthStencilState depth = WGPU_DEPTH_STENCIL_STATE_INIT;
   depth.format = WGPUTextureFormat_Depth24Plus;
-  depth.depthWriteEnabled = WGPUOptionalBool_True;
+  depth.depthWriteEnabled = (flags & DF_PIPELINE_NO_DEPTH_WRITE) ? WGPUOptionalBool_False : WGPUOptionalBool_True;
   depth.depthCompare = WGPUCompareFunction_Less;
 
   WGPURenderPipelineDescriptor desc = WGPU_RENDER_PIPELINE_DESCRIPTOR_INIT;

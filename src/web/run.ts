@@ -187,7 +187,7 @@ export async function run(options: WindowOptions, setup: Setup, runOptions: RunO
           },
           primitive: pipelineOptions.depth ? { cullMode: "back" } : {},
           depthStencil: pipelineOptions.depth
-            ? { format: "depth24plus", depthWriteEnabled: true, depthCompare: "less" }
+            ? { format: "depth24plus", depthWriteEnabled: pipelineOptions.depthWrite ?? true, depthCompare: "less" }
             : undefined,
         }),
       );

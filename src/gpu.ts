@@ -31,6 +31,9 @@ export interface PipelineOptions {
   stride: number;
   attributes: VertexAttribute[];
   depth: boolean;
+  // With depth: whether it writes depth (default true). Transparent particles test against depth but do not write
+  // it, so they never hide each other.
+  depthWrite?: boolean;
   // Standard alpha blending, for 2D and transparent sprites.
   blend: boolean;
   // A second vertex buffer stepped once per instance (Draw.instanceBuffer), for drawing one mesh many times.

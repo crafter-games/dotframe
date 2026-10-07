@@ -2,6 +2,7 @@ import type { Instances, World } from "./ecs";
 import type { MeshData } from "./gltf";
 import { BufferUsage, type Color, type Draw, f32Bytes, type RenderGpu, type Texture, u32Bytes, VertexFormat } from "./gpu";
 import { compose, lookAt, multiply, perspective, type Vec3, vec3 } from "./math";
+import { PARTICLE_FLOATS } from "./particles";
 
 export interface Camera {
   eye: Vec3;
@@ -46,6 +47,9 @@ export interface Environment {
   exposure?: number;
   // Seconds, for wind on instanced meshes (MeshRef.sway). Pass simulation time so a frame renders the same twice.
   time?: number;
+  // Soft round billboards drawn after the scene, blended, tested against depth (src/particles: PARTICLE_FLOATS
+  // each, final colors, fogged here).
+  particles?: number[];
 }
 
 // Floats per instance in addInstances: x, y, z, scale, yaw, sway phase, 0, 0.
@@ -88,6 +92,44 @@ interface EntityBinding {
   bindGroup: number;
   texture: Texture;
 }
+
+// Camera-facing soft discs. corner is a quad corner in [-1, 1]; the camera's right and up span the billboard.
+const PARTICLE_SHADER = `
+struct Uniforms {
+  viewProjection: mat4x4f,
+  eye: vec4f,
+  right: vec4f,
+  up: vec4f,
+  fog: vec4f,
+}
+@group(0) @binding(0) var<uniform> u: Uniforms;
+struct Out {
+  @builtin(position) position: vec4f,
+  @location(0) corner: vec2f,
+  @location(1) color: vec4f,
+  @location(2) world: vec3f,
+}
+@vertex fn vs_main(@location(0) corner: vec2f, @location(1) center: vec4f, @location(2) color: vec4f) -> Out {
+  let world = center.xyz + (u.right.xyz * corner.x + u.up.xyz * corner.y) * center.w * 0.5;
+  var out: Out;
+  out.position = u.viewProjection * vec4f(world, 1.0);
+  out.corner = corner;
+  out.color = color;
+  out.world = world;
+  return out;
+}
+@fragment fn fs_main(in: Out) -> @location(0) vec4f {
+  let r2 = dot(in.corner, in.corner);
+  if (r2 >= 1.0) { discard; }
+  let soft = (1.0 - r2) * (1.0 - r2);
+  var color = in.color.rgb;
+  if (u.fog.w > 0.0) {
+    let d = distance(in.world, u.eye.xyz) * u.fog.w;
+    color = mix(u.fog.rgb, color, exp(-d * d));
+  }
+  return vec4f(color, clamp(in.color.a * soft, 0.0, 1.0));
+}
+`;
 
 // kind 0 static, 1 skinned, 2 instanced.
 const shader = (kind: number): string => {
@@ -426,6 +468,60 @@ export function createRenderer(gpu: RenderGpu): Renderer {
     return { buffer: gpu.createBuffer(BufferUsage.Vertex, f32Bytes(data)), count: data.length / INSTANCE_FLOATS };
   };
 
+  // Particles: one pipeline, quad and uniform buffer, made on first use; the instance buffer grows as needed.
+  const particle = { pipeline: -1, quad: -1, indices: -1, uniforms: -1, bindGroup: -1, instances: -1, capacity: 0 };
+  const particleUniforms = new Float32Array(32);
+  const particleDraw = (camera: Camera, viewProjection: Float32Array, view: Float32Array, env: Environment): Draw | null => {
+    const list = env.particles ?? [];
+    const count = Math.floor(list.length / PARTICLE_FLOATS);
+    if (count === 0) return null;
+    if (particle.pipeline < 0) {
+      particle.pipeline = gpu.createPipeline({
+        wgsl: PARTICLE_SHADER,
+        stride: 8,
+        attributes: [{ format: VertexFormat.Float32x2, offset: 0, location: 0 }],
+        depth: true,
+        depthWrite: false,
+        blend: true,
+        instanceStride: PARTICLE_FLOATS * 4,
+        instanceAttributes: [
+          { format: VertexFormat.Float32x4, offset: 0, location: 1 },
+          { format: VertexFormat.Float32x4, offset: 16, location: 2 },
+        ],
+      });
+      particle.quad = gpu.createBuffer(BufferUsage.Vertex, f32Bytes(new Float32Array([-1, -1, 1, -1, 1, 1, -1, 1])));
+      // Both windings, so back-face culling never drops the quad.
+      particle.indices = gpu.createBuffer(BufferUsage.Index, u32Bytes(new Uint32Array([0, 1, 2, 0, 2, 3, 0, 2, 1, 0, 3, 2])));
+      particle.uniforms = gpu.createBuffer(BufferUsage.Uniform, f32Bytes(particleUniforms));
+      particle.bindGroup = gpu.bind(particle.pipeline, particle.uniforms, -1);
+    }
+    // Back to front from the eye, so blending composes the nearer ones over the farther.
+    const order: number[] = [];
+    const depth: number[] = [];
+    for (let i = 0; i < count; i++) {
+      const dx = list[i * PARTICLE_FLOATS] - camera.eye.x;
+      const dy = list[i * PARTICLE_FLOATS + 1] - camera.eye.y;
+      const dz = list[i * PARTICLE_FLOATS + 2] - camera.eye.z;
+      order.push(i);
+      depth.push(dx * dx + dy * dy + dz * dz);
+    }
+    order.sort((a: number, b: number): number => depth[b] - depth[a]);
+    const sorted = new Float32Array(count * PARTICLE_FLOATS);
+    for (let i = 0; i < count; i++) for (let c = 0; c < PARTICLE_FLOATS; c++) sorted[i * PARTICLE_FLOATS + c] = list[order[i] * PARTICLE_FLOATS + c];
+    if (count > particle.capacity) {
+      if (particle.instances >= 0) gpu.destroyBuffer(particle.instances);
+      particle.capacity = Math.max(count, particle.capacity * 2, 256);
+      particle.instances = gpu.createBuffer(BufferUsage.Vertex, f32Bytes(new Float32Array(particle.capacity * PARTICLE_FLOATS)));
+    }
+    gpu.writeBuffer(particle.instances, f32Bytes(sorted));
+    particleUniforms.set(viewProjection, 0);
+    particleUniforms.set([camera.eye.x, camera.eye.y, camera.eye.z, 0, view[0], view[4], view[8], 0, view[1], view[5], view[9], 0], 16);
+    const fog = env.fog;
+    particleUniforms.set(fog ? [fog.color.x, fog.color.y, fog.color.z, fog.density] : [0, 0, 0, 0], 28);
+    gpu.writeBuffer(particle.uniforms, f32Bytes(particleUniforms));
+    return { pipeline: particle.pipeline, bindGroup: particle.bindGroup, vertexBuffer: particle.quad, indexBuffer: particle.indices, first: 0, count: 12, instanceBuffer: particle.instances, instances: count };
+  };
+
   const draws = (world: World, gameCamera: Camera, environment?: Environment): Draw[] => {
     const forced = cameraOverride.camera;
     const camera: Camera = forced ? { eye: forced.eye, target: forced.target, fovY: forced.fovY, near: gameCamera.near, far: gameCamera.far } : gameCamera;
@@ -512,6 +608,8 @@ export function createRenderer(gpu: RenderGpu): Renderer {
         instances: instances ? instances.count : 1,
       });
     }
+    const particles = particleDraw(camera, viewProjection, view, environment ?? DEFAULT_ENVIRONMENT);
+    if (particles) out.push(particles);
     return out;
   };
 
