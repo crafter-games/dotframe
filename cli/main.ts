@@ -9,6 +9,7 @@ import { desync, record, sim, verify } from "./commands/play";
 import { snap } from "./commands/snap";
 import { playOnline } from "./commands/online";
 import { skills } from "./commands/skills";
+import { assetsSlim } from "./commands/assets";
 import { create, dev } from "./commands/new";
 import { CliError, type Ctx, fail, num, print, useXcode } from "./lib";
 import { startRelay } from "./relay";
@@ -32,6 +33,7 @@ Build and ship
   relay    deploy [--region eze]        gated
   device   install <target>             gated
   device   logs <target>                newest crash report from the device, summarized
+  assets   slim <src> <out> [--no-jpeg]  ship-size copy: GLBs keep what loadGlb reads, opaque PNG textures become JPEG
   vendor   <macos|windows>              SDL3 + wgpu-native for native builds (~/.dotframe/vendor)
   doctor   [--fix] [--docker]           toolchain, vendor, links, config, sim render and math
   config   get [key] | set <key> <json>
@@ -118,6 +120,14 @@ dotframe device logs <target> [--json]
 install puts the built app on targets.<target>.device with devicectl (gated like deploy). logs copies the newest
 crash report of the app's process from the device into .dotframe/logs and prints the exception, termination and
 the crashed thread's frames (read-only on the device).`,
+  assets: `dotframe assets slim <src> <out> [--no-jpeg] [--json]
+
+Copies src to out. Every .glb keeps only what loadGlb reads: POSITION, NORMAL, TEXCOORD_0, JOINTS_0 and WEIGHTS_0,
+indices (narrowed to 16 bits when they fit), skins, animations and base color images. Normal, roughness and other
+maps go, and opaque PNG base colors become JPEG through ffmpeg. Sources stay untouched. A GLB with something the
+rewrite does not understand is copied as it is and noted. iOS builds slim their bundle the same way.
+
+  dotframe assets slim assets dist/web/assets`,
   vendor: `dotframe vendor <macos|windows> [--dry-run]
 
 Downloads wgpu-native and builds SDL3 for native targets into DOTFRAME_VENDOR (default ~/.dotframe/vendor), which
@@ -176,6 +186,7 @@ const { values, positionals } = parseArgs({
     template: { type: "string" },
     port: { type: "string" },
     "no-install": { type: "boolean" },
+    "no-jpeg": { type: "boolean" },
     "through-over": { type: "boolean" },
     docker: { type: "boolean" },
     online: { type: "boolean" },
@@ -216,6 +227,7 @@ try {
   else if (command === "device" && rest[0] === "install") await device(ctx, rest[1] ?? "ios");
   else if (command === "device" && rest[0] === "logs") await deviceLogs(ctx, rest[1] ?? "ios");
   else if (command === "vendor") await vendor(ctx, rest[0]);
+  else if (command === "assets" && rest[0] === "slim") assetsSlim(ctx, rest[1], rest[2], values["no-jpeg"] !== true);
   else if (command === "doctor") await doctor(ctx, values.fix === true, values.docker === true);
   else if (command === "config") await configCmd(ctx, rest);
   else if (command === "skills") await skills(ctx, rest, values.full === true, values.all === true);
