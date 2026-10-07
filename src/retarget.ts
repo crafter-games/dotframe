@@ -7,7 +7,8 @@ import { restPose, sampleAnimation, worldMatrices } from "./anim";
 import type { GlbAnimation, GlbChannel, GlbModel } from "./gltf";
 
 // Humanoid name -> [Mixamo, UAL, CC3] bone names.
-const HUMANOID: [string, string, string, string][] = [
+// string[][] rather than tuples: scriptc only indexes tuples with literal indices, and humanoidMap picks the column at run time.
+const HUMANOID: string[][] = [
   ["Hips", "Hips", "pelvis", "Hip"],
   ["Spine", "Spine", "spine_01", "Waist"],
   ["Chest", "Spine1", "spine_02", "Spine01"],
@@ -32,7 +33,7 @@ const HUMANOID: [string, string, string, string][] = [
   ["RightToes", "RightToeBase", "ball_r", "R_ToeBase"],
 ];
 // Finger -> [Mixamo, UAL, CC3] part of the bone name.
-const FINGERS: [string, string, string, string][] = [
+const FINGERS: string[][] = [
   ["Thumb", "Thumb", "thumb", "Thumb"],
   ["Index", "Index", "index", "Index"],
   ["Middle", "Middle", "middle", "Mid"],
