@@ -17,7 +17,7 @@ export interface MeshRef {
   texture?: Texture;
   // World units per texture repeat; defaults to 1.
   tile?: number;
-  // Adds color * emissive unlit, for bulbs, lamps and the moon.
+  // Adds the surface color (texture times color) times emissive, unlit: bulbs, lamps, a lit paper lantern.
   emissive?: number;
   // Texels with alpha below this are discarded (glTF alphaMode MASK: leaves, fences, paper). 0 keeps every texel.
   alphaCutoff?: number;

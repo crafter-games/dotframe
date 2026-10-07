@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- `MeshRef.emissive` glows with the texture (surface color times emissive), so a textured emitter keeps its pattern; untextured meshes look the same as before.
 - `fitFootprint(model, length)` in `src/model`: scales a flat prop by its longest horizontal side.
 - The template's gitignore ignores only snaps in the repo root (`/*.png`); `*.png` hid every PNG asset, so a fresh clone lost the HUD font and textures.
 
