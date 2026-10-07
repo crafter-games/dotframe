@@ -16,7 +16,7 @@ export interface SimPlatform {
   draw?: Draw2D;
   audio?: Audio;
   // Present when frames will be drawn: decodes PNG or JPEG bytes into a texture for the 3D renderer or Draw2D.
-  image?: (bytes: Uint8Array, smooth: boolean) => Promise<Texture>;
+  image?: (bytes: Uint8Array, smooth: boolean, mipmaps?: boolean) => Promise<Texture>;
 }
 
 export interface SimRun {

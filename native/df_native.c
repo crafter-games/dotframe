@@ -60,6 +60,8 @@ static int grow(void **array, int32_t *capacity, int32_t need, size_t size) {
 }
 static WGPUSampler g_sampler;
 static WGPUSampler g_sampler_linear;
+// Linear with mipmaps and repeat, for tiled 3D textures (texture mode 2).
+static WGPUSampler g_sampler_mips;
 static WGPUTexture g_depth_texture;
 static WGPUTextureView g_depth_view;
 // The depth view the current frame's passes use: the window's, or a render target's.
@@ -194,6 +196,11 @@ int32_t df_open(int32_t width, int32_t height, const uint8_t *title, size_t titl
   sampler.magFilter = WGPUFilterMode_Linear;
   sampler.minFilter = WGPUFilterMode_Linear;
   g_sampler_linear = wgpuDeviceCreateSampler(g_device, &sampler);
+  sampler.mipmapFilter = WGPUMipmapFilterMode_Linear;
+  sampler.addressModeU = WGPUAddressMode_Repeat;
+  sampler.addressModeV = WGPUAddressMode_Repeat;
+  sampler.maxAnisotropy = 8;
+  g_sampler_mips = wgpuDeviceCreateSampler(g_device, &sampler);
 
   WGPUSurfaceCapabilities caps = WGPU_SURFACE_CAPABILITIES_INIT;
   wgpuSurfaceGetCapabilities(g_surface, g_adapter, &caps);
@@ -316,7 +323,8 @@ void df_buffer_write(int32_t buffer, const uint8_t *data, size_t len) {
 }
 
 // smooth selects linear filtering (fonts, photos) instead of nearest (pixel art).
-int32_t df_texture(int32_t width, int32_t height, const uint8_t *rgba, size_t len, uint8_t smooth) {
+// smooth: 0 nearest, 1 linear, 2 linear with mipmaps and repeat.
+int32_t df_texture(int32_t width, int32_t height, const uint8_t *rgba, size_t len, int32_t smooth) {
   if (width <= 0 || height <= 0) return -1;
   int32_t capacity = g_texture_capacity;
   int32_t need = g_texture_count + 1;
@@ -329,28 +337,63 @@ int32_t df_texture(int32_t width, int32_t height, const uint8_t *rgba, size_t le
   if (!grow((void **)&g_texture_smooth, &capacity, need, sizeof *g_texture_smooth)) return -4;
   g_texture_capacity = capacity;
   if (len < (size_t)width * (size_t)height * 4) return -2;
+  // Mode 2 (smooth == 2) uploads a full mip chain, box-filtered on the CPU.
+  uint32_t levels = 1;
+  if (smooth == 2)
+    for (int32_t m = width > height ? width : height; m > 1; m /= 2) levels++;
   WGPUTextureDescriptor desc = WGPU_TEXTURE_DESCRIPTOR_INIT;
   desc.usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst;
   desc.size = (WGPUExtent3D){(uint32_t)width, (uint32_t)height, 1};
   desc.format = WGPUTextureFormat_RGBA8Unorm;
+  desc.mipLevelCount = levels;
   WGPUTexture texture = wgpuDeviceCreateTexture(g_device, &desc);
-  WGPUTexelCopyTextureInfo dst = WGPU_TEXEL_COPY_TEXTURE_INFO_INIT;
-  dst.texture = texture;
-  WGPUTexelCopyBufferLayout layout = WGPU_TEXEL_COPY_BUFFER_LAYOUT_INIT;
-  layout.bytesPerRow = (uint32_t)width * 4;
-  layout.rowsPerImage = (uint32_t)height;
-  wgpuQueueWriteTexture(g_queue, &dst, rgba, (size_t)width * (size_t)height * 4, &layout, &desc.size);
+  const uint8_t *level = rgba;
+  uint8_t *owned = NULL;
+  int32_t w = width;
+  int32_t h = height;
+  for (uint32_t l = 0; l < levels; l++) {
+    WGPUTexelCopyTextureInfo dst = WGPU_TEXEL_COPY_TEXTURE_INFO_INIT;
+    dst.texture = texture;
+    dst.mipLevel = l;
+    WGPUTexelCopyBufferLayout layout = WGPU_TEXEL_COPY_BUFFER_LAYOUT_INIT;
+    layout.bytesPerRow = (uint32_t)w * 4;
+    layout.rowsPerImage = (uint32_t)h;
+    WGPUExtent3D extent = {(uint32_t)w, (uint32_t)h, 1};
+    wgpuQueueWriteTexture(g_queue, &dst, level, (size_t)w * (size_t)h * 4, &layout, &extent);
+    if (l + 1 == levels) break;
+    int32_t nw = w > 1 ? w / 2 : 1;
+    int32_t nh = h > 1 ? h / 2 : 1;
+    uint8_t *next = malloc((size_t)nw * (size_t)nh * 4);
+    if (!next) break;
+    for (int32_t y = 0; y < nh; y++) {
+      for (int32_t x = 0; x < nw; x++) {
+        int32_t x0 = x * 2 < w ? x * 2 : w - 1, x1 = x * 2 + 1 < w ? x * 2 + 1 : w - 1;
+        int32_t y0 = y * 2 < h ? y * 2 : h - 1, y1 = y * 2 + 1 < h ? y * 2 + 1 : h - 1;
+        for (int c = 0; c < 4; c++) {
+          int sum = level[((size_t)y0 * w + x0) * 4 + c] + level[((size_t)y0 * w + x1) * 4 + c] + level[((size_t)y1 * w + x0) * 4 + c] +
+                    level[((size_t)y1 * w + x1) * 4 + c];
+          next[((size_t)y * nw + x) * 4 + c] = (uint8_t)((sum + 2) / 4);
+        }
+      }
+    }
+    free(owned);
+    owned = next;
+    level = next;
+    w = nw;
+    h = nh;
+  }
+  free(owned);
   int32_t id = g_texture_count++;
   g_textures[id] = texture;
   g_texture_views[id] = wgpuTextureCreateView(texture, NULL);
   g_texture_sizes[id][0] = width;
   g_texture_sizes[id][1] = height;
-  g_texture_smooth[id] = smooth;
+  g_texture_smooth[id] = (uint8_t)smooth;
   return id;
 }
 
 // Decodes PNG bytes into a texture.
-int32_t df_image(const uint8_t *png, size_t len, uint8_t smooth) {
+int32_t df_image(const uint8_t *png, size_t len, int32_t smooth) {
   int width, height, channels;
   stbi_uc *pixels = stbi_load_from_memory(png, (int)len, &width, &height, &channels, 4);
   if (!pixels) return -3;
@@ -470,7 +513,7 @@ int32_t df_bind(int32_t pipeline, int32_t buffer, int32_t texture) {
     count++;
     entries[count] = (WGPUBindGroupEntry)WGPU_BIND_GROUP_ENTRY_INIT;
     entries[count].binding = 2;
-    entries[count].sampler = g_texture_smooth[texture] ? g_sampler_linear : g_sampler;
+    entries[count].sampler = g_texture_smooth[texture] == 2 ? g_sampler_mips : g_texture_smooth[texture] ? g_sampler_linear : g_sampler;
     count++;
   }
   WGPUBindGroupDescriptor desc = WGPU_BIND_GROUP_DESCRIPTOR_INIT;
@@ -768,6 +811,7 @@ void df_close(void) {
   free(g_texture_smooth);
   if (g_sampler) wgpuSamplerRelease(g_sampler);
   if (g_sampler_linear) wgpuSamplerRelease(g_sampler_linear);
+  if (g_sampler_mips) wgpuSamplerRelease(g_sampler_mips);
   for (int32_t i = 0; i < g_pipeline_count; i++) wgpuRenderPipelineRelease(g_pipelines[i]);
   if (g_depth_view) wgpuTextureViewRelease(g_depth_view);
   if (g_depth_texture) wgpuTextureRelease(g_depth_texture);

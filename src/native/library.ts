@@ -26,7 +26,7 @@ export interface LibraryPlatform {
   // Surface size in pixels, to pick a logical resolution with the device's aspect ratio.
   width: number;
   height: number;
-  image: (png: Uint8Array, smooth: boolean) => Texture;
+  image: (png: Uint8Array, smooth: boolean, mipmaps?: boolean) => Texture;
   sound: (mp3: Uint8Array) => number;
   track: (mp3: Uint8Array) => number;
   readFile: (path: string) => Uint8Array;
@@ -54,7 +54,7 @@ export function openLibraryPlatform(options: WindowOptions): LibraryPlatform {
     storage: memoryStorage(),
     width: dfWidth(),
     height: dfHeight(),
-    image: (png: Uint8Array, smooth: boolean): Texture => createNativeImage(png, smooth),
+    image: (png: Uint8Array, smooth: boolean, mipmaps = false): Texture => createNativeImage(png, smooth, mipmaps),
     sound: (mp3: Uint8Array): number => (audioReady ? decodeNativeSound(mp3) : -1),
     track: (mp3: Uint8Array): number => storeNativeTrack(mp3),
     readFile: (path: string): Uint8Array => {

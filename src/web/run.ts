@@ -9,6 +9,7 @@ import {
   type WindowOptions,
 } from "../gpu";
 import type { Audio } from "../audio";
+import { mipChain } from "../mips";
 import { type Input, keyCodes, type Look, type Pointer, type Touch } from "../input";
 import type { Storage } from "../storage";
 
@@ -80,6 +81,21 @@ export async function run(options: WindowOptions, setup: Setup, runOptions: RunO
   // Nearest keeps pixel art crisp; linear suits fonts and photos.
   const nearest = device.createSampler({ magFilter: "nearest", minFilter: "nearest" });
   const linear = device.createSampler({ magFilter: "linear", minFilter: "linear" });
+  const mipmapped = device.createSampler({ magFilter: "linear", minFilter: "linear", mipmapFilter: "linear", addressModeU: "repeat", addressModeV: "repeat", maxAnisotropy: 8 });
+  const textureMips: boolean[] = [];
+  // Uploads a box-filtered mip chain (src/mips.ts, the same filter as the native backend).
+  const uploadMipmapped = (width: number, height: number, rgba: Uint8Array): Texture => {
+    const levels = mipChain(width, height, rgba);
+    const texture = device.createTexture({ size: [width, height], format: "rgba8unorm", mipLevelCount: levels.length, usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
+    levels.forEach((l, i: number): void => {
+      device.queue.writeTexture({ texture, mipLevel: i }, l.data as Uint8Array<ArrayBuffer>, { bytesPerRow: l.width * 4, rowsPerImage: l.height }, [l.width, l.height]);
+    });
+    textures.push(texture);
+    textureViews.push(texture.createView());
+    textureSmooth.push(true);
+    textureMips[textureViews.length - 1] = true;
+    return { id: textureViews.length - 1, width, height };
+  };
   const uploadTexture = (
     width: number,
     height: number,
@@ -175,7 +191,7 @@ export async function run(options: WindowOptions, setup: Setup, runOptions: RunO
       if (buffer >= 0) entries.push({ binding: 0, resource: { buffer: buffers[buffer] } });
       if (texture >= 0) {
         entries.push({ binding: 1, resource: textureViews[texture] });
-        entries.push({ binding: 2, resource: textureSmooth[texture] ? linear : nearest });
+        entries.push({ binding: 2, resource: textureMips[texture] ? mipmapped : textureSmooth[texture] ? linear : nearest });
       }
       bindGroups.push(device.createBindGroup({ layout: pipelines[pipeline].getBindGroupLayout(0), entries }));
       return bindGroups.length - 1;
@@ -186,12 +202,22 @@ export async function run(options: WindowOptions, setup: Setup, runOptions: RunO
       targetDepths.get(texture.id)?.destroy();
       targetDepths.delete(texture.id);
     },
-    createTexture: (width: number, height: number, rgba: Uint8Array, smooth: boolean): Texture =>
-      uploadTexture(width, height, smooth, (texture) =>
+    createTexture: (width: number, height: number, rgba: Uint8Array, smooth: boolean, mipmaps = false): Texture =>
+      mipmaps ? uploadMipmapped(width, height, rgba) : uploadTexture(width, height, smooth, (texture) =>
         device.queue.writeTexture({ texture }, rgba as Uint8Array<ArrayBuffer>, { bytesPerRow: width * 4, rowsPerImage: height }, [width, height]),
       ),
-    createImage: async (png: Uint8Array, smooth: boolean): Promise<Texture> => {
+    createImage: async (png: Uint8Array, smooth: boolean, mipmaps = false): Promise<Texture> => {
       const bitmap = await createImageBitmap(new Blob([new Uint8Array(png)], { type: "image/png" }), { premultiplyAlpha: "none" });
+      if (mipmaps) {
+        // The pixels are needed on the CPU to build the chain.
+        const canvas2d = new OffscreenCanvas(bitmap.width, bitmap.height);
+        const ctx = canvas2d.getContext("2d");
+        if (ctx) {
+          ctx.drawImage(bitmap, 0, 0);
+          const pixels = ctx.getImageData(0, 0, bitmap.width, bitmap.height).data;
+          return uploadMipmapped(bitmap.width, bitmap.height, new Uint8Array(pixels.buffer, pixels.byteOffset, pixels.byteLength));
+        }
+      }
       return uploadTexture(bitmap.width, bitmap.height, smooth, (texture) =>
         device.queue.copyExternalImageToTexture({ source: bitmap }, { texture }, [bitmap.width, bitmap.height]),
       );

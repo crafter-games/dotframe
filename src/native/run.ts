@@ -56,7 +56,7 @@ export async function run(options: WindowOptions, setup: Setup): Promise<void> {
     createTarget: render.createTarget,
     frame: render.frame,
     aspect: render.aspect,
-    createImage: async (png: Uint8Array, smooth: boolean): Promise<Texture> => createNativeImage(png, smooth),
+    createImage: async (png: Uint8Array, smooth: boolean, mipmaps = false): Promise<Texture> => createNativeImage(png, smooth, mipmaps),
   };
   const input = createNativeInput();
   const storage = openStorage(options.title);

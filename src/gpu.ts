@@ -60,8 +60,9 @@ export interface RenderGpu {
   createPipeline: (options: PipelineOptions) => number;
   // Group 0: binding 0 uniform buffer, binding 1 texture, binding 2 nearest sampler; -1 skips one.
   bind: (pipeline: number, buffer: number, texture: number) => number;
-  // smooth: linear filtering (fonts, photos); otherwise nearest (pixel art).
-  createTexture: (width: number, height: number, rgba: Uint8Array, smooth: boolean) => Texture;
+  // smooth: linear filtering (fonts, photos); otherwise nearest (pixel art). mipmaps (implies smooth): a full mip
+  // chain and a repeating sampler, for textures tiled across 3D surfaces, so they do not shimmer at distance.
+  createTexture: (width: number, height: number, rgba: Uint8Array, smooth: boolean, mipmaps?: boolean) => Texture;
   // Frees a texture (and, natively, the bind groups sampling it). Its id is never reused; do not draw it again.
   // Required, not optional: scriptc cannot call an optional function.
   destroyTexture: (texture: Texture) => void;
@@ -74,8 +75,8 @@ export interface RenderGpu {
 }
 
 export interface Gpu extends RenderGpu {
-  // Decodes PNG bytes.
-  createImage: (png: Uint8Array, smooth: boolean) => Promise<Texture>;
+  // Decodes PNG or JPEG bytes. mipmaps as in createTexture.
+  createImage: (png: Uint8Array, smooth: boolean, mipmaps?: boolean) => Promise<Texture>;
 }
 
 // Called every frame with elapsed seconds; return false to stop.

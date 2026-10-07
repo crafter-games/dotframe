@@ -68,8 +68,8 @@ export function createNativeRenderGpu(): RenderGpu {
       if (group < 0) throw new Error(`dfBind failed: ${group}`);
       return group;
     },
-    createTexture: (width: number, height: number, rgba: Uint8Array, smooth: boolean): Texture => {
-      const id = dfTexture(width, height, rgba, smooth);
+    createTexture: (width: number, height: number, rgba: Uint8Array, smooth: boolean, mipmaps = false): Texture => {
+      const id = dfTexture(width, height, rgba, mipmaps ? 2 : smooth ? 1 : 0);
       if (id < 0) throw new Error(`dfTexture failed: ${id}`);
       return { id, width, height };
     },
@@ -100,8 +100,8 @@ export function createNativeRenderGpu(): RenderGpu {
 }
 
 // Decodes PNG bytes into a texture immediately.
-export function createNativeImage(png: Uint8Array, smooth: boolean): Texture {
-  const id = dfImage(png, smooth);
+export function createNativeImage(png: Uint8Array, smooth: boolean, mipmaps = false): Texture {
+  const id = dfImage(png, mipmaps ? 2 : smooth ? 1 : 0);
   if (id < 0) throw new Error(`dfImage failed: ${id}`);
   return { id, width: dfTextureSize(id, 0), height: dfTextureSize(id, 1) };
 }

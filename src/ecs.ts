@@ -12,7 +12,8 @@ export interface Transform {
 export interface MeshRef {
   mesh: number;
   color: Vec3;
-  // Sampled in world space on the three axes (triplanar), so boxes and terrain need no UVs. Tinted by color.
+  // UV-mapped, or sampled in world space on the three axes (triplanar) when the mesh has no UVs. Tinted by color.
+  // Load tiled textures with mipmaps (createImage(bytes, true, true)): the sampler then repeats them.
   texture?: Texture;
   // World units per texture repeat; defaults to 1.
   tile?: number;

@@ -139,7 +139,8 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
   let n = normalize(in.normal);
   var albedo = u.color.rgb;
   // Sampled unconditionally (uniform control flow); material.y picks what to use: 0 none, 1 triplanar, 2 UVs.
-  let texel = textureSample(tex, samp, fract(in.uv));
+  // No fract: tiled textures use a repeating sampler (mipmaps), and fract's seams would pick the smallest mip.
+  let texel = textureSample(tex, samp, in.uv);
   if (u.material.y > 1.5) {
     if (texel.a < u.material.z) { discard; }
     albedo = albedo * texel.rgb;
@@ -148,9 +149,9 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
     let p = in.world / max(u.material.x, 0.001);
     var w = abs(n);
     w = w / (w.x + w.y + w.z);
-    let tx = textureSample(tex, samp, fract(p.zy)).rgb;
-    let ty = textureSample(tex, samp, fract(p.xz)).rgb;
-    let tz = textureSample(tex, samp, fract(p.xy)).rgb;
+    let tx = textureSample(tex, samp, p.zy).rgb;
+    let ty = textureSample(tex, samp, p.xz).rgb;
+    let tz = textureSample(tex, samp, p.xy).rgb;
     albedo = albedo * (tx * w.x + ty * w.y + tz * w.z);
   }
   var light = u.ambient.rgb;
