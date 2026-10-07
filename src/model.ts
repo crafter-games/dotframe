@@ -45,6 +45,11 @@ export function fitHeight(model: GlbModel, height: number): number {
   return height / Math.max(model.max[1] - model.min[1], 1e-6);
 }
 
+// Scale that makes the model's longest horizontal side this long (Godot _fit_footprint), for flat props like a futon.
+export function fitFootprint(model: GlbModel, length: number): number {
+  return length / Math.max(model.max[0] - model.min[0], model.max[2] - model.min[2], 1e-6);
+}
+
 export interface Placement {
   position: Vec3;
   // Euler radians, as Transform.rotation.

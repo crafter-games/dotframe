@@ -429,7 +429,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
     let cone = smoothstep(u.spotDir.w, u.spotColor.w, dot(-dir, normalize(u.spotDir.xyz)));
     light += u.spotColor.rgb * max(dot(n, dir), 0.0) * falloff(d, u.spotPos.w) * cone * spotShadow(in.world);
   }
-  var color = albedo * light + u.color.rgb * u.color.w;
+  var color = albedo * (light + vec3f(u.color.w));
   if (u.fog.w > 0.0) {
     let d = distance(in.world, u.eye.xyz) * u.fog.w;
     color = mix(u.fog.rgb, color, exp(-d * d));
