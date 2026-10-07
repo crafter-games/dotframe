@@ -18,6 +18,10 @@ export interface MeshRef {
   tile?: number;
   // Adds color * emissive unlit, for bulbs, lamps and the moon.
   emissive?: number;
+  // Texels with alpha below this are discarded (glTF alphaMode MASK: leaves, fences, paper). 0 keeps every texel.
+  alphaCutoff?: number;
+  // Forces world-space triplanar mapping on a UV-mapped mesh. Meshes without UVs are always triplanar.
+  triplanar?: boolean;
 }
 
 export interface World {

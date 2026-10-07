@@ -51,6 +51,7 @@ interface GpuMesh {
   vertexBuffer: number;
   indexBuffer: number;
   count: number;
+  uvs: boolean;
 }
 
 interface EntityBinding {
@@ -87,14 +88,16 @@ struct VertexOut {
   @builtin(position) position: vec4f,
   @location(0) normal: vec3f,
   @location(1) world: vec3f,
+  @location(2) uv: vec2f,
 }
 
 @vertex
-fn vs_main(@location(0) position: vec3f, @location(1) normal: vec3f) -> VertexOut {
+fn vs_main(@location(0) position: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2f) -> VertexOut {
   var out: VertexOut;
   out.position = u.mvp * vec4f(position, 1.0);
   out.normal = (u.model * vec4f(normal, 0.0)).xyz;
   out.world = (u.model * vec4f(position, 1.0)).xyz;
+  out.uv = uv;
   return out;
 }
 
@@ -107,7 +110,12 @@ fn falloff(d: f32, range: f32) -> f32 {
 fn fs_main(in: VertexOut) -> @location(0) vec4f {
   let n = normalize(in.normal);
   var albedo = u.color.rgb;
-  if (u.material.y > 0.5) {
+  // Sampled unconditionally (uniform control flow); material.y picks what to use: 0 none, 1 triplanar, 2 UVs.
+  let texel = textureSample(tex, samp, fract(in.uv));
+  if (u.material.y > 1.5) {
+    if (texel.a < u.material.z) { discard; }
+    albedo = albedo * texel.rgb;
+  } else if (u.material.y > 0.5) {
     // Triplanar: three planar projections blended by the normal, so meshes need no UVs.
     let p = in.world / max(u.material.x, 0.001);
     var w = abs(n);
@@ -146,6 +154,8 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
 }
 `;
 
+// Position, normal, uv.
+const VERTEX_FLOATS = 8;
 // mvp (16) + model (16) + 10 vec4 + MAX_LIGHTS * 2 vec4 floats.
 const UNIFORM_FLOATS = 32 + 10 * 4 + MAX_LIGHTS * 8;
 
@@ -157,10 +167,11 @@ const DEFAULT_ENVIRONMENT: Environment = {
 export function createRenderer(gpu: RenderGpu): Renderer {
   const pipeline = gpu.createPipeline({
     wgsl: shader,
-    stride: 24,
+    stride: VERTEX_FLOATS * 4,
     attributes: [
       { format: VertexFormat.Float32x3, offset: 0, location: 0 },
       { format: VertexFormat.Float32x3, offset: 12, location: 1 },
+      { format: VertexFormat.Float32x2, offset: 24, location: 2 },
     ],
     depth: true,
     blend: false,
@@ -174,19 +185,26 @@ export function createRenderer(gpu: RenderGpu): Renderer {
 
   const addMesh = (data: MeshData): number => {
     const vertexCount = data.positions.length / 3;
-    const interleaved = new Float32Array(vertexCount * 6);
+    const interleaved = new Float32Array(vertexCount * VERTEX_FLOATS);
+    const uvs = data.uvs;
     for (let i = 0; i < vertexCount; i++) {
-      interleaved[i * 6] = data.positions[i * 3];
-      interleaved[i * 6 + 1] = data.positions[i * 3 + 1];
-      interleaved[i * 6 + 2] = data.positions[i * 3 + 2];
-      interleaved[i * 6 + 3] = data.normals[i * 3];
-      interleaved[i * 6 + 4] = data.normals[i * 3 + 1];
-      interleaved[i * 6 + 5] = data.normals[i * 3 + 2];
+      const o = i * VERTEX_FLOATS;
+      interleaved[o] = data.positions[i * 3];
+      interleaved[o + 1] = data.positions[i * 3 + 1];
+      interleaved[o + 2] = data.positions[i * 3 + 2];
+      interleaved[o + 3] = data.normals[i * 3];
+      interleaved[o + 4] = data.normals[i * 3 + 1];
+      interleaved[o + 5] = data.normals[i * 3 + 2];
+      if (uvs) {
+        interleaved[o + 6] = uvs[i * 2];
+        interleaved[o + 7] = uvs[i * 2 + 1];
+      }
     }
     meshes.push({
       vertexBuffer: gpu.createBuffer(BufferUsage.Vertex, f32Bytes(interleaved)),
       indexBuffer: gpu.createBuffer(BufferUsage.Index, u32Bytes(data.indices)),
       count: data.indices.length,
+      uvs: uvs !== undefined,
     });
     return meshes.length - 1;
   };
@@ -245,8 +263,8 @@ export function createRenderer(gpu: RenderGpu): Renderer {
       uniforms[34] = meshRef.color.z;
       uniforms[35] = meshRef.emissive ?? 0;
       uniforms[36] = meshRef.tile ?? 1;
-      uniforms[37] = meshRef.texture ? 1 : 0;
-      uniforms[38] = 0;
+      uniforms[37] = !meshRef.texture ? 0 : mesh.uvs && !meshRef.triplanar ? 2 : 1;
+      uniforms[38] = meshRef.alphaCutoff ?? 0;
       uniforms[39] = 0;
       uniforms.set(scene, 40);
       gpu.writeBuffer(binding.uniformBuffer, f32Bytes(uniforms));
