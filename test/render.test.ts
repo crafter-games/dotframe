@@ -4,6 +4,7 @@ import { createWorld, spawn } from "../src/ecs";
 import type { Color, Draw, PipelineOptions, RenderGpu, Texture } from "../src/gpu";
 import { vec3 } from "../src/math";
 import { createRenderer, MAX_LIGHTS } from "../src/render";
+import { createPostPass, POST_PARAMS } from "../src/post";
 import { box } from "../src/shapes";
 
 // Records pipelines, uniform writes and frames instead of drawing.
@@ -22,6 +23,8 @@ function recordingGpu() {
     createPipeline: (options: PipelineOptions): number => pipelines.push(options) - 1,
     bind: (): number => 0,
     createTexture: (width: number, height: number): Texture => ({ id: textures++, width, height }),
+    createTarget: (width: number, height: number): Texture => ({ id: textures++, width, height }),
+    destroyTexture: (): void => {},
     frame: (clear: Color, draws: Draw[]): void => {
       frames.push({ clear, draws });
     },
@@ -115,4 +118,31 @@ test("box() is side 1, from -0.5 to 0.5", () => {
   const p = box().positions;
   expect(Math.min(...p)).toBe(-0.5);
   expect(Math.max(...p)).toBe(0.5);
+});
+
+test("a post pass renders into a target it recreates only on resize, and draws one full-screen triangle", () => {
+  const { gpu, pipelines } = recordingGpu();
+  const made: Texture[] = [];
+  const destroyed: number[] = [];
+  gpu.createTarget = (width: number, height: number): Texture => {
+    const t = { id: 100 + made.length, width, height };
+    made.push(t);
+    return t;
+  };
+  gpu.destroyTexture = (t: Texture): void => {
+    destroyed.push(t.id);
+  };
+  const post = createPostPass(gpu, "fn post(uv: vec2f, pixel: vec2f) -> vec4f { return textureSample(src, samp, uv) * u.params[0]; }");
+  expect(post.target()).toBeUndefined();
+  post.resize(1280, 720);
+  post.resize(1280, 720);
+  expect(made.length).toBe(1);
+  post.resize(960, 720);
+  expect(made.length).toBe(2);
+  expect(destroyed).toEqual([100]);
+  expect(post.target()).toEqual({ id: 101, width: 960, height: 720 });
+  const draw = post.draw(new Float32Array(POST_PARAMS));
+  expect([draw.vertexBuffer, draw.indexBuffer, draw.count]).toEqual([-1, -1, 3]);
+  expect(pipelines[draw.pipeline].depth).toBe(false);
+  expect(pipelines[draw.pipeline].wgsl).toContain("fn post(uv: vec2f");
 });

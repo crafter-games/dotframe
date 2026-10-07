@@ -6,6 +6,10 @@ From porting The Ones (Godot, first-person 3D horror) to dotframe.
 
 - 3D under a 2D HUD in one frame: `Renderer.draws()` returns a scene's draws without presenting, `Draw2D.scene(draws)` queues them before the 2D batch, and both backends split a frame into passes when depth and non-depth pipelines mix (native: `df_pass`). `Sim.render(draw)` is unchanged, so `snap` and `doctor` work for 3D games.
 - Renderer: triplanar textures (`MeshRef.texture`, `tile`), `emissive`, and an optional `Environment` (ambient, sun, up to 8 point lights, a spot light, fog, ACES `exposure`); `Camera.near`/`far`. Without an environment the old look is kept.
+- glTF: `loadGlb` loads whole models (nodes, materials, embedded images, alpha modes, rest-pose skins); `src/model.ts` uploads and spawns them fitted to a height.
+- Skeletal animation: `src/anim.ts` (clip sampling with crossfade weights, joint matrices) and a GPU-skinned pipeline (`addSkinnedMesh`, `MeshRef.joints`).
+- Audio: steerable looping voices (`start`, `setVoice`, `stopVoice`) and `spatial()`.
+- Post-processing: `gpu.createTarget` and `gpu.frame(clear, draws, target)` render into textures; `src/post.ts` runs a full-screen pass with your WGSL. `RenderGpu.createTarget` and `destroyTexture` are now required (scriptc cannot call optional functions): custom stub GPUs need both.
 - `Input.look()` with `run(..., { pointerLock: true })` on the web, for first-person cameras.
 - `SimPlatform.image` (decode for snap) and `Sim.clear` (snap's clear color).
 - Native decodes JPEG (stb_image was PNG-only).

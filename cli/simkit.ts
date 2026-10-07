@@ -16,6 +16,8 @@ export const stubGpu: RenderGpu = {
   createPipeline: (): number => 0,
   bind: (): number => 0,
   createTexture: (width: number, height: number): Texture => ({ id: nextTexture++, width, height }) as Texture,
+  createTarget: (width: number, height: number): Texture => ({ id: nextTexture++, width, height }) as Texture,
+  destroyTexture: (): void => {},
   frame: (): void => {},
   aspect: (): number => 16 / 9,
 } as RenderGpu;

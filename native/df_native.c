@@ -62,6 +62,15 @@ static WGPUSampler g_sampler;
 static WGPUSampler g_sampler_linear;
 static WGPUTexture g_depth_texture;
 static WGPUTextureView g_depth_view;
+// The depth view the current frame's passes use: the window's, or a render target's.
+static WGPUTextureView g_pass_depth;
+// 1 while drawing into a render target: df_end submits without presenting.
+static int g_target_frame;
+#define DF_MAX_TARGETS 16
+static int32_t g_target_ids[DF_MAX_TARGETS];
+static WGPUTexture g_target_depth_textures[DF_MAX_TARGETS];
+static WGPUTextureView g_target_depths[DF_MAX_TARGETS];
+static int32_t g_target_count;
 static int g_width, g_height;
 static WGPUPresentMode g_present_mode = WGPUPresentMode_Fifo;
 #define DF_MAX_GAMEPADS 4
@@ -579,6 +588,8 @@ int32_t df_begin(double r, double g, double b, uint8_t use_depth) {
   }
   g_frame_view = wgpuTextureCreateView(g_frame_texture.texture, NULL);
   g_frame_encoder = wgpuDeviceCreateCommandEncoder(g_device, NULL);
+  g_pass_depth = g_depth_view;
+  g_target_frame = 0;
 
   WGPURenderPassColorAttachment color = WGPU_RENDER_PASS_COLOR_ATTACHMENT_INIT;
   color.view = g_frame_view;
@@ -609,7 +620,7 @@ void df_pass(uint8_t use_depth) {
   color.loadOp = WGPULoadOp_Load;
   color.storeOp = WGPUStoreOp_Store;
   WGPURenderPassDepthStencilAttachment depth = WGPU_RENDER_PASS_DEPTH_STENCIL_ATTACHMENT_INIT;
-  depth.view = g_depth_view;
+  depth.view = g_pass_depth;
   depth.depthLoadOp = WGPULoadOp_Clear;
   depth.depthStoreOp = WGPUStoreOp_Store;
   depth.depthClearValue = 1.0f;
@@ -618,6 +629,80 @@ void df_pass(uint8_t use_depth) {
   pass_desc.colorAttachments = &color;
   if (use_depth) pass_desc.depthStencilAttachment = &depth;
   g_frame_pass = wgpuCommandEncoderBeginRenderPass(g_frame_encoder, &pass_desc);
+}
+
+static int32_t target_slot(int32_t texture) {
+  for (int32_t i = 0; i < g_target_count; i++)
+    if (g_target_ids[i] == texture) return i;
+  return -1;
+}
+
+// One host call for render targets (scriptc library mode caps a library at 32 callbacks).
+// op 0 creates an a x b target in the surface format, with its own depth, and returns its texture id (negative on
+// failure). op 1 begins a frame into target a cleared to (b, c, d), with depth when e != 0; draw with df_draw and
+// df_pass, then df_end submits it without presenting. Returns 0, or 1 when the frame could not begin.
+int32_t df_target(int32_t op, double a, double b, double c, double d, double e) {
+  if (op == 0) {
+    int32_t width = (int32_t)a;
+    int32_t height = (int32_t)b;
+    if (width <= 0 || height <= 0 || g_target_count >= DF_MAX_TARGETS) return -1;
+    int32_t capacity = g_texture_capacity;
+    int32_t need = g_texture_count + 1;
+    if (!grow((void **)&g_textures, &capacity, need, sizeof *g_textures)) return -4;
+    capacity = g_texture_capacity;
+    if (!grow((void **)&g_texture_views, &capacity, need, sizeof *g_texture_views)) return -4;
+    capacity = g_texture_capacity;
+    if (!grow((void **)&g_texture_sizes, &capacity, need, sizeof *g_texture_sizes)) return -4;
+    capacity = g_texture_capacity;
+    if (!grow((void **)&g_texture_smooth, &capacity, need, sizeof *g_texture_smooth)) return -4;
+    g_texture_capacity = capacity;
+    WGPUTextureDescriptor desc = WGPU_TEXTURE_DESCRIPTOR_INIT;
+    desc.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding;
+    desc.size = (WGPUExtent3D){(uint32_t)width, (uint32_t)height, 1};
+    desc.format = g_format;
+    WGPUTexture texture = wgpuDeviceCreateTexture(g_device, &desc);
+    int32_t id = g_texture_count++;
+    g_textures[id] = texture;
+    g_texture_views[id] = wgpuTextureCreateView(texture, NULL);
+    g_texture_sizes[id][0] = width;
+    g_texture_sizes[id][1] = height;
+    g_texture_smooth[id] = 1;
+    WGPUTextureDescriptor depth_desc = WGPU_TEXTURE_DESCRIPTOR_INIT;
+    depth_desc.usage = WGPUTextureUsage_RenderAttachment;
+    depth_desc.size = desc.size;
+    depth_desc.format = WGPUTextureFormat_Depth24Plus;
+    g_target_ids[g_target_count] = id;
+    g_target_depth_textures[g_target_count] = wgpuDeviceCreateTexture(g_device, &depth_desc);
+    g_target_depths[g_target_count] = wgpuTextureCreateView(g_target_depth_textures[g_target_count], NULL);
+    g_target_count++;
+    return id;
+  }
+  if (op == 1) {
+    int32_t texture = (int32_t)a;
+    int32_t slot = target_slot(texture);
+    if (slot < 0 || g_frame_pass || !g_textures[texture]) return 1;
+    g_frame_view = g_texture_views[texture];
+    g_frame_encoder = wgpuDeviceCreateCommandEncoder(g_device, NULL);
+    g_pass_depth = g_target_depths[slot];
+    g_target_frame = 1;
+    WGPURenderPassColorAttachment color = WGPU_RENDER_PASS_COLOR_ATTACHMENT_INIT;
+    color.view = g_frame_view;
+    color.loadOp = WGPULoadOp_Clear;
+    color.storeOp = WGPUStoreOp_Store;
+    color.clearValue = (WGPUColor){b, c, d, 1.0};
+    WGPURenderPassDepthStencilAttachment depth = WGPU_RENDER_PASS_DEPTH_STENCIL_ATTACHMENT_INIT;
+    depth.view = g_pass_depth;
+    depth.depthLoadOp = WGPULoadOp_Clear;
+    depth.depthStoreOp = WGPUStoreOp_Store;
+    depth.depthClearValue = 1.0f;
+    WGPURenderPassDescriptor pass_desc = WGPU_RENDER_PASS_DESCRIPTOR_INIT;
+    pass_desc.colorAttachmentCount = 1;
+    pass_desc.colorAttachments = &color;
+    if (e != 0) pass_desc.depthStencilAttachment = &depth;
+    g_frame_pass = wgpuCommandEncoderBeginRenderPass(g_frame_encoder, &pass_desc);
+    return 0;
+  }
+  return 1;
 }
 
 // Negative handles mean "none". first/count are indices with an index buffer (uint32), vertices otherwise.
@@ -647,6 +732,14 @@ void df_end(void) {
   g_frame_pass = NULL;
   WGPUCommandBuffer commands = wgpuCommandEncoderFinish(g_frame_encoder, NULL);
   wgpuQueueSubmit(g_queue, 1, &commands);
+  if (g_target_frame) {
+    // A render target keeps its view (owned by the texture) and presents nothing.
+    wgpuCommandBufferRelease(commands);
+    wgpuCommandEncoderRelease(g_frame_encoder);
+    g_frame_view = NULL;
+    g_target_frame = 0;
+    return;
+  }
   wgpuSurfacePresent(g_surface);
   wgpuCommandBufferRelease(commands);
   wgpuCommandEncoderRelease(g_frame_encoder);

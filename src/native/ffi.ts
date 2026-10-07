@@ -28,6 +28,7 @@ export declare function dfDraw(
   first: number,
   count: number,
 ): void;
+export declare function dfTarget(op: number, a: number, b: number, c: number, d: number, e: number): number;
 export declare function dfPass(depth: boolean): void;
 export declare function dfEnd(): void;
 export declare function dfClose(): void;

@@ -63,9 +63,13 @@ export interface RenderGpu {
   // smooth: linear filtering (fonts, photos); otherwise nearest (pixel art).
   createTexture: (width: number, height: number, rgba: Uint8Array, smooth: boolean) => Texture;
   // Frees a texture (and, natively, the bind groups sampling it). Its id is never reused; do not draw it again.
-  // Optional so stub GPUs in tests need not implement it.
-  destroyTexture?: (texture: Texture) => void;
-  frame: (clear: Color, draws: Draw[]) => void;
+  // Required, not optional: scriptc cannot call an optional function.
+  destroyTexture: (texture: Texture) => void;
+  // Draws a frame. With target (from createTarget), it renders into that texture with its own depth and presents
+  // nothing, so a later frame can sample it (post-processing).
+  frame: (clear: Color, draws: Draw[], target?: Texture) => void;
+  // A texture pipelines can render into and shaders can sample, in the surface's format. Free it with destroyTexture.
+  createTarget: (width: number, height: number) => Texture;
   aspect: () => number;
 }
 

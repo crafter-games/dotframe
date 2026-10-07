@@ -13,6 +13,7 @@ import {
   dfDraw,
   dfEnd,
   dfPass,
+  dfTarget,
   dfGamepadAxis,
   dfGamepadButton,
   dfHeight,
@@ -73,11 +74,17 @@ export function createNativeRenderGpu(): RenderGpu {
       return { id, width, height };
     },
     destroyTexture: (texture: Texture): void => dfTextureDestroy(texture.id),
-    frame: (clear: Color, draws: Draw[]): void => {
+    createTarget: (width: number, height: number): Texture => {
+      const id = dfTarget(0, width, height, 0, 0, 0);
+      if (id < 0) throw new Error(`dfTarget failed: ${id}`);
+      return { id, width, height };
+    },
+    frame: (clear: Color, draws: Draw[], target?: Texture): void => {
       // Pipelines without depth cannot run in a pass with a depth attachment, so a frame that mixes them (a 3D
       // scene under a 2D HUD) opens a new pass, keeping what was drawn, each time the kind changes.
       let usesDepth = draws.length > 0 && depthPipelines.has(draws[0].pipeline);
-      if (dfBegin(clear.r, clear.g, clear.b, usesDepth) !== 0) return;
+      const began = target ? dfTarget(1, target.id, clear.r, clear.g, clear.b, usesDepth ? 1 : 0) : dfBegin(clear.r, clear.g, clear.b, usesDepth);
+      if (began !== 0) return;
       for (const draw of draws) {
         const depth = depthPipelines.has(draw.pipeline);
         if (depth !== usesDepth) {

@@ -98,8 +98,18 @@ export async function run(options: WindowOptions, setup: Setup, runOptions: RunO
     return { id: textureViews.length - 1, width, height };
   };
   const depthPipelines = new Set<number>();
+  const targetDepths = new Map<number, GPUTexture>();
 
   const gpu: Gpu = {
+    createTarget: (width: number, height: number): Texture => {
+      const texture = device.createTexture({ size: [width, height], format, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
+      textures.push(texture);
+      textureViews.push(texture.createView());
+      textureSmooth.push(true);
+      const id = textureViews.length - 1;
+      targetDepths.set(id, device.createTexture({ size: [width, height], format: "depth24plus", usage: GPUTextureUsage.RENDER_ATTACHMENT }));
+      return { id, width, height };
+    },
     createBuffer: (usage: number, data: Uint8Array): number => {
       let flags = GPUBufferUsage.COPY_DST;
       if (usage & BufferUsage.Vertex) flags |= GPUBufferUsage.VERTEX;
@@ -173,6 +183,8 @@ export async function run(options: WindowOptions, setup: Setup, runOptions: RunO
     destroyTexture: (texture: Texture): void => {
       textures[texture.id]?.destroy();
       textures[texture.id] = null;
+      targetDepths.get(texture.id)?.destroy();
+      targetDepths.delete(texture.id);
     },
     createTexture: (width: number, height: number, rgba: Uint8Array, smooth: boolean): Texture =>
       uploadTexture(width, height, smooth, (texture) =>
@@ -184,8 +196,10 @@ export async function run(options: WindowOptions, setup: Setup, runOptions: RunO
         device.queue.copyExternalImageToTexture({ source: bitmap }, { texture }, [bitmap.width, bitmap.height]),
       );
     },
-    frame: (clear: Color, draws: Draw[]): void => {
+    frame: (clear: Color, draws: Draw[], target?: Texture): void => {
       const encoder = device.createCommandEncoder();
+      const colorView = target ? textureViews[target.id] : context.getCurrentTexture().createView();
+      const depthView = target ? (targetDepths.get(target.id) ?? depthTexture).createView() : depthTexture.createView();
       // Pipelines without depth cannot run in a pass with a depth attachment, so a frame that mixes them (a 3D
       // scene under a 2D HUD) splits into consecutive passes: the first clears, the rest load what came before.
       let from = 0;
@@ -197,14 +211,14 @@ export async function run(options: WindowOptions, setup: Setup, runOptions: RunO
         const pass = encoder.beginRenderPass({
           colorAttachments: [
             {
-              view: context.getCurrentTexture().createView(),
+              view: colorView,
               loadOp: first ? "clear" : "load",
               storeOp: "store",
               clearValue: { r: clear.r, g: clear.g, b: clear.b, a: 1 },
             },
           ],
           depthStencilAttachment: usesDepth
-            ? { view: depthTexture.createView(), depthLoadOp: "clear", depthStoreOp: "store", depthClearValue: 1 }
+            ? { view: depthView, depthLoadOp: "clear", depthStoreOp: "store", depthClearValue: 1 }
             : undefined,
         });
         for (const draw of draws.slice(from, to)) {

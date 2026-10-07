@@ -53,6 +53,7 @@ export async function run(options: WindowOptions, setup: Setup): Promise<void> {
     bind: render.bind,
     createTexture: render.createTexture,
     destroyTexture: render.destroyTexture,
+    createTarget: render.createTarget,
     frame: render.frame,
     aspect: render.aspect,
     createImage: async (png: Uint8Array, smooth: boolean): Promise<Texture> => createNativeImage(png, smooth),

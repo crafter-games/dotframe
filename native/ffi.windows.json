@@ -197,6 +197,19 @@
       "returns": "void"
     },
     {
+      "name": "dfTarget",
+      "symbol": "df_target",
+      "params": [
+        "i32",
+        "f64",
+        "f64",
+        "f64",
+        "f64",
+        "f64"
+      ],
+      "returns": "i32"
+    },
+    {
       "name": "dfPass",
       "symbol": "df_pass",
       "params": [
