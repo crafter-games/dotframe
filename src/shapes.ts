@@ -1,6 +1,6 @@
 import type { MeshData } from "./gltf";
 
-// Unit cube centered at the origin (extent 1 on each axis), with per-face normals.
+// Unit cube centered at the origin: side 1, from -0.5 to 0.5 on each axis, so scale is the full size. Per-face normals.
 export function box(): MeshData {
   const faces = [
     { n: [1, 0, 0], u: [0, 0, -1], v: [0, 1, 0] },

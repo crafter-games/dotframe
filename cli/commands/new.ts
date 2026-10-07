@@ -3,6 +3,8 @@ import { join, resolve } from "node:path";
 import { CliError, type Ctx, exec, loadConfig, print, runSteps, target } from "../lib";
 
 const TEMPLATES = resolve(import.meta.dir, "../../templates");
+// A game scaffolded by this CLI depends on this same engine version.
+const VERSION: string = JSON.parse(readFileSync(resolve(import.meta.dir, "../../package.json"), "utf8")).version;
 
 export async function create(ctx: Ctx, name: string | undefined, template: string, install = true): Promise<void> {
   if (!name || !/^[a-z0-9][a-z0-9-]*$/.test(name)) throw new CliError("BAD_NAME", "new needs a lowercase name (letters, digits, dashes)", "dotframe new my-game --template fighter", "game-design");
@@ -22,7 +24,7 @@ export async function create(ctx: Ctx, name: string | undefined, template: strin
   }
   for (const [from, to] of files) {
     mkdirSync(join(dir, to, ".."), { recursive: true });
-    writeFileSync(join(dir, to), readFileSync(from, "utf8").replaceAll("__NAME__", name).replaceAll("__SCOPE__", "your-vercel-team"));
+    writeFileSync(join(dir, to), readFileSync(from, "utf8").replaceAll("__NAME__", name).replaceAll("__SCOPE__", "your-vercel-team").replaceAll("__VERSION__", VERSION));
   }
   mkdirSync(join(dir, ".agents/skills/dotframe"), { recursive: true });
   cpSync(resolve(import.meta.dir, "../../skills/dotframe/SKILL.md"), join(dir, ".agents/skills/dotframe/SKILL.md"));
@@ -55,7 +57,7 @@ export async function dev(ctx: Ctx, port: number): Promise<void> {
   if (!t.out) throw new CliError("NO_OUT", "the web target needs an out dir", "", "export-web");
   const out = resolve(config.root, t.out);
   await runSteps(ctx, config.root, t.steps ?? [], "export-web");
-  const server = Bun.serve({
+  const serve = (): ReturnType<typeof Bun.serve> => Bun.serve({
     port,
     fetch: (req: Request): Response => {
       const path = decodeURIComponent(new URL(req.url).pathname);
@@ -66,6 +68,13 @@ export async function dev(ctx: Ctx, port: number): Promise<void> {
       return new Response(Bun.file(file), { headers });
     },
   });
+  let server: ReturnType<typeof Bun.serve>;
+  try {
+    server = serve();
+  } catch (error) {
+    if (!/in use|EADDRINUSE/i.test(error instanceof Error ? `${error.message} ${(error as { code?: string }).code}` : String(error))) throw error;
+    throw new CliError("PORT_IN_USE", `port ${port} is in use`, `dotframe dev --port ${port + 1}`, "export-web");
+  }
   console.error(`serving ${out} at http://localhost:${server.port}`);
   let pending: ReturnType<typeof setTimeout> | null = null;
   watch(config.root, { recursive: true }, (_event, file): void => {

@@ -212,4 +212,13 @@ export interface Input {
   pointer: () => Pointer;
   // Fingers currently down, in no particular order.
   touches: () => Touch[];
+  // Mouse movement in CSS pixels since the last call, for first-person look. On the web it needs pointer lock
+  // (run(..., { pointerLock: true }) locks on click). Natively, reading look arms capture: a click in the window
+  // captures the mouse (SDL relative mode) and Escape or losing focus releases it.
+  look: () => Look;
+}
+
+export interface Look {
+  x: number;
+  y: number;
 }

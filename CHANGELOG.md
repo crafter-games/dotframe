@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+From porting The Ones (Godot, first-person 3D horror) to dotframe.
+
+- `deploy` links the build folder to `deploy.project` before deploying, so vercel 60 no longer uploads the repo root or links a project named after the folder. The template's `build-web.ts` keeps `dist/web/.vercel`.
+- `doctor`: `native-traps:<target>` warns on code that aborts natively while web passes (unguarded `Record` reads into a variable or argument, `obj && expr` as a value; silence a line with `// dotframe-allow-native`). `tool:xcodebuild` runs `xcodebuild -version`. `build`, `device` and `doctor` use Xcode when xcode-select points at Command Line Tools.
+- `snap` fails with the WGSL error and line instead of a black frame (`gpuErrors` in `web/run`), uses one browser session per run (back-to-back snaps timed out), and a timeout prints the page console.
+- Native mouse look: reading `input.look()` arms capture; a click enters relative mode, Escape or focus loss releases.
+- iOS launch screen: `launchColor` and an optional `launch` image, shown while `init` loads.
+- `dev` reports `PORT_IN_USE`; `desync` on a single-player sim points at `doctor`; Windows builds name the runtime pack version mismatch and the `macos` skill; `src/native` is type-checked in CI.
+
+- 3D under a 2D HUD in one frame: `Renderer.draws()` returns a scene's draws without presenting, `Draw2D.scene(draws)` queues them before the 2D batch, and both backends split a frame into passes when depth and non-depth pipelines mix (native: `df_pass`). `Sim.render(draw)` is unchanged, so `snap` and `doctor` work for 3D games.
+- Renderer: triplanar textures (`MeshRef.texture`, `tile`), `emissive`, and an optional `Environment` (ambient, sun, up to 8 point lights, a spot light, fog, ACES `exposure`); `Camera.near`/`far`. Without an environment the old look is kept.
+- glTF: `loadGlb` loads whole models (nodes, materials, embedded images, alpha modes, rest-pose skins); `src/model.ts` uploads and spawns them fitted to a height.
+- Skeletal animation: `src/anim.ts` (clip sampling with crossfade weights, joint matrices) and a GPU-skinned pipeline (`addSkinnedMesh`, `MeshRef.joints`).
+- Audio: steerable looping voices (`start`, `setVoice`, `stopVoice`) and `spatial()`.
+- Post-processing: `gpu.createTarget` and `gpu.frame(clear, draws, target)` render into textures; `src/post.ts` runs a full-screen pass with your WGSL. `RenderGpu.createTarget` and `destroyTexture` are now required (scriptc cannot call optional functions): custom stub GPUs need both.
+- Mipmaps (`createTexture`/`createImage` `mipmaps` flag), instancing (`addInstances`, `MeshRef.instances`, `sway`, `Environment.time`) and spot light shadows (`SpotLight.shadows`, a 1024 shadow map with 4-tap PCF). `bind` takes an optional second texture (bindings 3 and 4).
+- `src/retarget.ts`: humanoid retargeting across Mixamo, Quaternius UAL and Character Creator 3 skeletons (ported from The Ones).
+- Fixed: `worldMatrices` composed the wrong local matrix when a child node came before its parent in the file (UAL's Head is node 0), which skewed animated poses of such models.
+- `Input.look()` with `run(..., { pointerLock: true })` on the web, for first-person cameras.
+- `SimPlatform.image` (decode for snap) and `Sim.clear` (snap's clear color).
+- Native decodes JPEG (stb_image was PNG-only).
+- `dotframe new` depends on the CLI's own engine version (it pinned `^0.1.0`), and templates ship a `discord` target.
+
 ## 0.2.0
 
 From Craft Ones' asks (rounds 7 and 8).

@@ -1,6 +1,6 @@
 import type { Audio } from "./audio";
 import type { Draw2D } from "./draw2d";
-import type { RenderGpu, WindowOptions } from "./gpu";
+import type { Color, RenderGpu, Texture, WindowOptions } from "./gpu";
 
 // The contract a game exposes to the dotframe CLI (sim, snap, replay, desync). A game exports one Sim as the
 // default export of the module named by "sim" in dotframe.json.
@@ -15,6 +15,8 @@ export interface SimPlatform {
   // Present when frames will be drawn (snap): the Draw2D render() receives, so fonts can be registered on it.
   draw?: Draw2D;
   audio?: Audio;
+  // Present when frames will be drawn: decodes PNG or JPEG bytes into a texture for the 3D renderer or Draw2D.
+  image?: (bytes: Uint8Array, smooth: boolean, mipmaps?: boolean) => Promise<Texture>;
 }
 
 export interface SimRun {
@@ -42,6 +44,8 @@ export interface SimRun {
 export interface Sim {
   players: number;
   window: WindowOptions;
+  // Clear color for frames drawn by snap; black when left out. A 3D game sets its sky or fog color.
+  clear?: Color;
   // Default options merged under --options.
   options: Record<string, unknown>;
   // Turns a JSON input (game-defined object) into the number passed to step.

@@ -11,9 +11,10 @@ export declare function dfBuffer(usage: number, data: Uint8Array): number;
 export declare function dfBufferWrite(buffer: number, data: Uint8Array): void;
 export declare function dfBufferDestroy(buffer: number): void;
 export declare function dfPipeline(wgsl: string, stride: number, attributes: Uint8Array, flags: number): number;
-export declare function dfBind(pipeline: number, buffer: number, texture: number): number;
-export declare function dfTexture(width: number, height: number, rgba: Uint8Array, smooth: boolean): number;
-export declare function dfImage(png: Uint8Array, smooth: boolean): number;
+export declare function dfBind(pipeline: number, buffer: number, texture: number, texture2: number): number;
+// mode: 0 nearest, 1 linear, 2 linear with mipmaps and repeat.
+export declare function dfTexture(width: number, height: number, rgba: Uint8Array, mode: number): number;
+export declare function dfImage(png: Uint8Array, mode: number): number;
 export declare function dfTextureDestroy(texture: number): void;
 export declare function dfTextureSize(texture: number, axis: number): number;
 export declare function dfPoll(): boolean;
@@ -27,7 +28,11 @@ export declare function dfDraw(
   indexBuffer: number,
   first: number,
   count: number,
+  instanceBuffer: number,
+  instances: number,
 ): void;
+export declare function dfTarget(op: number, a: number, b: number, c: number, d: number, e: number): number;
+export declare function dfPass(depth: boolean): void;
 export declare function dfEnd(): void;
 export declare function dfClose(): void;
 export declare function dfAudioOpen(): number;
@@ -39,6 +44,7 @@ export declare function dfAudioActive(): number;
 // Music and volume in one call (library mode caps host callbacks at 32): op 0 play track a, loop when b != 0, at
 // volume c; 1 stop; 2 pause when a != 0, else resume; 3 music volume a; 4 master volume a.
 export declare function dfMusic(op: number, a: number, b: number, c: number): number;
+export declare function dfVoice(op: number, a: number, b: number, c: number, d: number): number;
 // WebSocket client and share (df_ws_apple.m, df_ws_win.c), two calls because library mode caps host callbacks at
 // 32. dfWsText: op 0 open url, 1 send text on socket, 2 share text. dfWs: op 0 state, 1 next length, 2 byte, 3 pop,
 // 4 close. See native/relay.ts.

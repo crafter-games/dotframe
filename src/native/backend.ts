@@ -2,7 +2,7 @@
 // Everything here is synchronous so it also compiles in scriptc library mode, where promises are unavailable.
 import type { AudioPlayer } from "../audio";
 import type { Color, Draw, PipelineOptions, RenderGpu, Texture } from "../gpu";
-import { type Input, keyScancodes, type Pointer, sdlGamepadButtons, type Touch } from "../input";
+import { type Input, keyScancodes, type Look, type Pointer, sdlGamepadButtons, type Touch } from "../input";
 import {
   dfAudioOpen,
   dfBegin,
@@ -12,6 +12,8 @@ import {
   dfBufferWrite,
   dfDraw,
   dfEnd,
+  dfPass,
+  dfTarget,
   dfGamepadAxis,
   dfGamepadButton,
   dfHeight,
@@ -20,6 +22,7 @@ import {
   dfMouse,
   dfPipeline,
   dfMusic,
+  dfVoice,
   dfPlay,
   dfSound,
   dfTexture,
@@ -34,6 +37,7 @@ import {
 
 const PIPELINE_DEPTH = 1;
 const PIPELINE_BLEND = 4;
+const PIPELINE_NO_DEPTH_WRITE = 2;
 
 export function createNativeRenderGpu(): RenderGpu {
   const depthPipelines = new Set<number>();
@@ -46,38 +50,57 @@ export function createNativeRenderGpu(): RenderGpu {
     writeBuffer: (buffer: number, data: Uint8Array): void => dfBufferWrite(buffer, data),
     destroyBuffer: (buffer: number): void => dfBufferDestroy(buffer),
     createPipeline: (pipelineOptions: PipelineOptions): number => {
-      const attributes = new Uint32Array(pipelineOptions.attributes.length * 3);
-      for (let i = 0; i < pipelineOptions.attributes.length; i++) {
-        const attribute = pipelineOptions.attributes[i];
+      // Instance attributes follow the vertex ones; their count and stride ride in flags bits 8-15 and 16-31.
+      const instanceAttributes = pipelineOptions.instanceAttributes ?? [];
+      const all = pipelineOptions.attributes.concat(instanceAttributes);
+      const attributes = new Uint32Array(all.length * 3);
+      for (let i = 0; i < all.length; i++) {
+        const attribute = all[i];
         attributes[i * 3] = attribute.format;
         attributes[i * 3 + 1] = attribute.offset;
         attributes[i * 3 + 2] = attribute.location;
       }
-      const flags = (pipelineOptions.depth ? PIPELINE_DEPTH : 0) | (pipelineOptions.blend ? PIPELINE_BLEND : 0);
+      const flags =
+        (pipelineOptions.depth ? PIPELINE_DEPTH : 0) |
+        (pipelineOptions.blend ? PIPELINE_BLEND : 0) |
+        (pipelineOptions.depthWrite === false ? PIPELINE_NO_DEPTH_WRITE : 0) |
+        ((instanceAttributes.length & 255) << 8) |
+        (((pipelineOptions.instanceStride ?? 0) & 65535) << 16);
       const attributeBytes = new Uint8Array(attributes.buffer, attributes.byteOffset, attributes.byteLength);
       const pipeline = dfPipeline(pipelineOptions.wgsl, pipelineOptions.stride, attributeBytes, flags);
       if (pipeline < 0) throw new Error(`dfPipeline failed: ${pipeline}`);
       if (pipelineOptions.depth) depthPipelines.add(pipeline);
       return pipeline;
     },
-    bind: (pipeline: number, buffer: number, texture: number): number => {
-      const group = dfBind(pipeline, buffer, texture);
+    bind: (pipeline: number, buffer: number, texture: number, texture2 = -1): number => {
+      const group = dfBind(pipeline, buffer, texture, texture2);
       if (group < 0) throw new Error(`dfBind failed: ${group}`);
       return group;
     },
-    createTexture: (width: number, height: number, rgba: Uint8Array, smooth: boolean): Texture => {
-      const id = dfTexture(width, height, rgba, smooth);
+    createTexture: (width: number, height: number, rgba: Uint8Array, smooth: boolean, mipmaps = false): Texture => {
+      const id = dfTexture(width, height, rgba, mipmaps ? 2 : smooth ? 1 : 0);
       if (id < 0) throw new Error(`dfTexture failed: ${id}`);
       return { id, width, height };
     },
     destroyTexture: (texture: Texture): void => dfTextureDestroy(texture.id),
-    frame: (clear: Color, draws: Draw[]): void => {
-      // Pipelines without depth cannot run in a pass with a depth attachment.
-      let usesDepth = false;
-      for (const draw of draws) if (depthPipelines.has(draw.pipeline)) usesDepth = true;
-      if (dfBegin(clear.r, clear.g, clear.b, usesDepth) !== 0) return;
+    createTarget: (width: number, height: number): Texture => {
+      const id = dfTarget(0, width, height, 0, 0, 0);
+      if (id < 0) throw new Error(`dfTarget failed: ${id}`);
+      return { id, width, height };
+    },
+    frame: (clear: Color, draws: Draw[], target?: Texture): void => {
+      // Pipelines without depth cannot run in a pass with a depth attachment, so a frame that mixes them (a 3D
+      // scene under a 2D HUD) opens a new pass, keeping what was drawn, each time the kind changes.
+      let usesDepth = draws.length > 0 && depthPipelines.has(draws[0].pipeline);
+      const began = target ? dfTarget(1, target.id, clear.r, clear.g, clear.b, usesDepth ? 1 : 0) : dfBegin(clear.r, clear.g, clear.b, usesDepth);
+      if (began !== 0) return;
       for (const draw of draws) {
-        dfDraw(draw.pipeline, draw.bindGroup, draw.vertexBuffer, draw.indexBuffer, draw.first, draw.count);
+        const depth = depthPipelines.has(draw.pipeline);
+        if (depth !== usesDepth) {
+          usesDepth = depth;
+          dfPass(depth);
+        }
+        dfDraw(draw.pipeline, draw.bindGroup, draw.vertexBuffer, draw.indexBuffer, draw.first, draw.count, draw.instanceBuffer ?? -1, draw.instances ?? 1);
       }
       dfEnd();
     },
@@ -86,8 +109,8 @@ export function createNativeRenderGpu(): RenderGpu {
 }
 
 // Decodes PNG bytes into a texture immediately.
-export function createNativeImage(png: Uint8Array, smooth: boolean): Texture {
-  const id = dfImage(png, smooth);
+export function createNativeImage(png: Uint8Array, smooth: boolean, mipmaps = false): Texture {
+  const id = dfImage(png, mipmaps ? 2 : smooth ? 1 : 0);
   if (id < 0) throw new Error(`dfImage failed: ${id}`);
   return { id, width: dfTextureSize(id, 0), height: dfTextureSize(id, 1) };
 }
@@ -106,6 +129,8 @@ export function createNativeInput(): Input {
       return sdl >= 0 && dfGamepadButton(pad, sdl);
     },
     pointer: (): Pointer => ({ x: dfMouse(0), y: dfMouse(1), buttons: dfMouse(2) }),
+    // Reading look arms mouse capture: a click in the window captures the mouse, Escape releases it.
+    look: (): Look => ({ x: dfMouse(3), y: dfMouse(4) }),
     touches: (): Touch[] => {
       const out: Touch[] = [];
       const count = dfTouchCount();
@@ -133,6 +158,9 @@ export function createNativeAudioPlayer(): AudioPlayer {
     pauseMusic: (paused: boolean): void => void dfMusic(2, paused ? 1 : 0, 0, 0),
     setMusicVolume: (volume: number): void => void dfMusic(3, volume, 0, 0),
     setMasterVolume: (volume: number): void => void dfMusic(4, volume, 0, 0),
+    start: (sound: number, volume: number, rate: number, loop: boolean): number => dfVoice(0, sound, volume, rate, loop ? 1 : 0),
+    setVoice: (voice: number, volume: number, pan: number): void => void dfVoice(1, voice, volume, pan, 0),
+    stopVoice: (voice: number): void => void dfVoice(2, voice, 0, 0, 0),
   };
 }
 

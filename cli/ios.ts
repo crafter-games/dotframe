@@ -17,6 +17,10 @@ export interface IosTarget {
   assets?: string;
   // Home screen name; defaults to the game name.
   displayName?: string;
+  // Launch screen shown while init loads (native loading is synchronous): a PNG centered on launchColor.
+  launch?: string;
+  // Launch screen background, "#rrggbb"; defaults to black.
+  launchColor?: string;
 }
 
 const SKILL = "ios";
@@ -113,7 +117,7 @@ void scr_promise_settled_void(void) { SDL_assert_always(!"scriptc promise in lib
 `;
 }
 
-function infoPlist(display: string, orientation: "landscape" | "portrait"): string {
+function infoPlist(display: string, orientation: "landscape" | "portrait", launchImage: boolean): string {
   const orientations =
     orientation === "portrait"
       ? ["UIInterfaceOrientationPortrait"]
@@ -133,7 +137,10 @@ function infoPlist(display: string, orientation: "landscape" | "portrait"): stri
   <key>UIRequiresFullScreen</key><true/>
   <key>UIStatusBarHidden</key><true/>
   <key>UIViewControllerBasedStatusBarAppearance</key><false/>
-  <key>UILaunchScreen</key><dict/>
+  <key>UILaunchScreen</key>
+  <dict>
+    <key>UIColorName</key><string>LaunchBackground</string>
+${launchImage ? "    <key>UIImageName</key><string>Launch</string>\n    <key>UIImageRespectsSafeAreaInsets</key><false/>\n" : ""}  </dict>
   <key>UISupportedInterfaceOrientations</key>
   <array>
 ${orientations.map((o) => `    <string>${o}</string>`).join("\n")}
@@ -141,6 +148,13 @@ ${orientations.map((o) => `    <string>${o}</string>`).join("\n")}
 </dict>
 </plist>
 `;
+}
+
+function launchColorJson(hex: string): string {
+  const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex);
+  if (!m) throw new CliError("BAD_CONFIG", `launchColor ${hex} is not #rrggbb`, 'dotframe config set targets.ios.native.launchColor \'"#000000"\'', SKILL);
+  const [r, g, b] = m.slice(1).map((c: string): string => (parseInt(c, 16) / 255).toFixed(3));
+  return `${JSON.stringify({ colors: [{ color: { "color-space": "srgb", components: { red: r, green: g, blue: b, alpha: "1.000" } }, idiom: "universal" }], info: { author: "xcode", version: 1 } })}\n`;
 }
 
 function projectYml(o: { name: string; id: string; bundleId: string; team: string; vendor: string; sdl: string; lib: string; icon: boolean }): string {
@@ -162,7 +176,8 @@ targets:
       - path: game
         type: folder
         buildPhase: resources
-${o.icon ? "      - path: Assets.xcassets\n" : ""}    settings:
+      - path: Assets.xcassets
+    settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ${o.bundleId}
         DEVELOPMENT_TEAM: ${o.team}
@@ -269,7 +284,7 @@ export function frame(time: number): boolean {
     JSON.stringify({ name: id, entry: relative(stage, wrapper), exports: [{ export: "init", params: ["string"], returns: "void" }, { export: "frame", params: ["f64"], returns: "bool" }] }, null, 2),
   );
   writeFileSync(join(stage, "host", "main.c"), hostC(id, display));
-  writeFileSync(join(stage, "host", "Info.plist"), infoPlist(display, t.orientation ?? "landscape"));
+  writeFileSync(join(stage, "host", "Info.plist"), infoPlist(display, t.orientation ?? "landscape", !!t.launch && !check));
   // Bundle resources: the game's assets and the engine fonts, under <app>/game.
   const bundle = join(stage, "game");
   mkdirSync(bundle, { recursive: true });
@@ -278,10 +293,21 @@ export function frame(time: number): boolean {
   cpSync(join(ENGINE, "assets", "fonts"), join(bundle, "dotframe", "assets", "fonts"), { recursive: true });
 
   const steps: { label: string; argv: string[]; cwd?: string; env?: Record<string, string> }[] = [];
+  // The launch screen hides the black window while init loads synchronously (F-042).
+  const xcassets = join(stage, "Assets.xcassets");
+  const background = join(xcassets, "LaunchBackground.colorset");
+  mkdirSync(background, { recursive: true });
+  writeFileSync(join(xcassets, "Contents.json"), '{"info":{"author":"xcode","version":1}}\n');
+  writeFileSync(join(background, "Contents.json"), launchColorJson(t.launchColor ?? "#000000"));
+  if (t.launch && !check) {
+    const image = join(xcassets, "Launch.imageset");
+    mkdirSync(image, { recursive: true });
+    writeFileSync(join(image, "Contents.json"), '{"images":[{"filename":"launch.png","idiom":"universal"}],"info":{"author":"xcode","version":1}}\n');
+    cpSync(resolve(root, t.launch), join(image, "launch.png"));
+  }
   if (t.icon && !check) {
-    const icons = join(stage, "Assets.xcassets", "AppIcon.appiconset");
+    const icons = join(xcassets, "AppIcon.appiconset");
     mkdirSync(icons, { recursive: true });
-    writeFileSync(join(stage, "Assets.xcassets", "Contents.json"), '{"info":{"author":"xcode","version":1}}\n');
     writeFileSync(join(icons, "Contents.json"), '{"images":[{"filename":"icon-1024.png","idiom":"universal","platform":"ios","size":"1024x1024"}],"info":{"author":"xcode","version":1}}\n');
     steps.push({ label: "icon", argv: ["sips", "-z", "1024", "1024", resolve(root, t.icon), "--out", join(icons, "icon-1024.png")] });
   }

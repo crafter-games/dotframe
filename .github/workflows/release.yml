@@ -58,6 +58,7 @@ jobs:
           bun test
           bun x tsc -p tsconfig.json
           bun x tsc -p cli/tsconfig.json
+          bun x tsc -p src/native/tsconfig.json
 
       - name: Publish to npm
         if: steps.version.outputs.changed == 'true'

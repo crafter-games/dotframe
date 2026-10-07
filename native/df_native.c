@@ -13,6 +13,7 @@
 
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_PNG
+#define STBI_ONLY_JPEG
 #define STBI_NO_STDIO
 #include "third_party/stb_image.h"
 
@@ -20,7 +21,7 @@
 #define DF_MAX_BUFFERS 1024
 
 enum { DF_USAGE_VERTEX = 1, DF_USAGE_INDEX = 2, DF_USAGE_UNIFORM = 4 };
-enum { DF_PIPELINE_DEPTH = 1, DF_PIPELINE_BLEND = 4 };
+enum { DF_PIPELINE_DEPTH = 1, DF_PIPELINE_NO_DEPTH_WRITE = 2, DF_PIPELINE_BLEND = 4 };
 enum { DF_FORMAT_FLOAT32X2 = 0, DF_FORMAT_FLOAT32X3 = 1, DF_FORMAT_FLOAT32X4 = 2, DF_FORMAT_FLOAT32 = 3, DF_FORMAT_UNORM8X4 = 4 };
 
 static SDL_Window *g_window;
@@ -59,8 +60,19 @@ static int grow(void **array, int32_t *capacity, int32_t need, size_t size) {
 }
 static WGPUSampler g_sampler;
 static WGPUSampler g_sampler_linear;
+// Linear with mipmaps and repeat, for tiled 3D textures (texture mode 2).
+static WGPUSampler g_sampler_mips;
 static WGPUTexture g_depth_texture;
 static WGPUTextureView g_depth_view;
+// The depth view the current frame's passes use: the window's, or a render target's.
+static WGPUTextureView g_pass_depth;
+// 1 while drawing into a render target: df_end submits without presenting.
+static int g_target_frame;
+#define DF_MAX_TARGETS 16
+static int32_t g_target_ids[DF_MAX_TARGETS];
+static WGPUTexture g_target_depth_textures[DF_MAX_TARGETS];
+static WGPUTextureView g_target_depths[DF_MAX_TARGETS];
+static int32_t g_target_count;
 static int g_width, g_height;
 static WGPUPresentMode g_present_mode = WGPUPresentMode_Fifo;
 #define DF_MAX_GAMEPADS 4
@@ -175,7 +187,12 @@ int32_t df_open(int32_t width, int32_t height, const uint8_t *title, size_t titl
   device_cb.mode = WGPUCallbackMode_AllowSpontaneous;
   device_cb.callback = on_device;
   device_cb.userdata1 = &g_device;
-  wgpuAdapterRequestDevice(g_adapter, NULL, device_cb);
+  // Without required limits wgpu-native falls back to 16 KB uniform bindings on iOS; ask for what the adapter has.
+  WGPULimits limits = WGPU_LIMITS_INIT;
+  wgpuAdapterGetLimits(g_adapter, &limits);
+  WGPUDeviceDescriptor device_desc = WGPU_DEVICE_DESCRIPTOR_INIT;
+  device_desc.requiredLimits = &limits;
+  wgpuAdapterRequestDevice(g_adapter, &device_desc, device_cb);
   if (!g_device) return -5;
   g_queue = wgpuDeviceGetQueue(g_device);
   // Nearest filtering keeps pixel art crisp.
@@ -184,6 +201,11 @@ int32_t df_open(int32_t width, int32_t height, const uint8_t *title, size_t titl
   sampler.magFilter = WGPUFilterMode_Linear;
   sampler.minFilter = WGPUFilterMode_Linear;
   g_sampler_linear = wgpuDeviceCreateSampler(g_device, &sampler);
+  sampler.mipmapFilter = WGPUMipmapFilterMode_Linear;
+  sampler.addressModeU = WGPUAddressMode_Repeat;
+  sampler.addressModeV = WGPUAddressMode_Repeat;
+  sampler.maxAnisotropy = 8;
+  g_sampler_mips = wgpuDeviceCreateSampler(g_device, &sampler);
 
   WGPUSurfaceCapabilities caps = WGPU_SURFACE_CAPABILITIES_INIT;
   wgpuSurfaceGetCapabilities(g_surface, g_adapter, &caps);
@@ -242,8 +264,25 @@ static void mouse_relative(double *nx, double *ny) {
   *ny = h > 0 ? (gy - wy) / h : 0.0;
 }
 
-// Field 0 x, 1 y (normalized), 2 buttons (bit 0 left, bit 1 middle, bit 2 right).
+// Mouse look, like the web's pointer lock: a game that reads look arms it; a click in the window then captures the
+// mouse (relative mode) and motion accumulates until read. Escape or losing focus releases it.
+static int g_look_armed = 0;
+static double g_look_x = 0, g_look_y = 0;
+
+static void look_release(void) {
+  if (g_window && SDL_GetWindowRelativeMouseMode(g_window)) SDL_SetWindowRelativeMouseMode(g_window, false);
+}
+
+// Field 0 x, 1 y (normalized), 2 buttons (bit 0 left, bit 1 middle, bit 2 right), 3 and 4 look movement in pixels
+// since the last read of that field.
 double df_mouse(int32_t field) {
+  if (field == 3 || field == 4) {
+    g_look_armed = 1;
+    double v = field == 3 ? g_look_x : g_look_y;
+    if (field == 3) g_look_x = 0;
+    else g_look_y = 0;
+    return v;
+  }
   if (field == 2) {
     // Clicks in other apps must not reach the game: buttons count only while the window has input focus.
     if (!(SDL_GetWindowFlags(g_window) & SDL_WINDOW_INPUT_FOCUS)) return 0;
@@ -306,7 +345,8 @@ void df_buffer_write(int32_t buffer, const uint8_t *data, size_t len) {
 }
 
 // smooth selects linear filtering (fonts, photos) instead of nearest (pixel art).
-int32_t df_texture(int32_t width, int32_t height, const uint8_t *rgba, size_t len, uint8_t smooth) {
+// smooth: 0 nearest, 1 linear, 2 linear with mipmaps and repeat.
+int32_t df_texture(int32_t width, int32_t height, const uint8_t *rgba, size_t len, int32_t smooth) {
   if (width <= 0 || height <= 0) return -1;
   int32_t capacity = g_texture_capacity;
   int32_t need = g_texture_count + 1;
@@ -319,28 +359,63 @@ int32_t df_texture(int32_t width, int32_t height, const uint8_t *rgba, size_t le
   if (!grow((void **)&g_texture_smooth, &capacity, need, sizeof *g_texture_smooth)) return -4;
   g_texture_capacity = capacity;
   if (len < (size_t)width * (size_t)height * 4) return -2;
+  // Mode 2 (smooth == 2) uploads a full mip chain, box-filtered on the CPU.
+  uint32_t levels = 1;
+  if (smooth == 2)
+    for (int32_t m = width > height ? width : height; m > 1; m /= 2) levels++;
   WGPUTextureDescriptor desc = WGPU_TEXTURE_DESCRIPTOR_INIT;
   desc.usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst;
   desc.size = (WGPUExtent3D){(uint32_t)width, (uint32_t)height, 1};
   desc.format = WGPUTextureFormat_RGBA8Unorm;
+  desc.mipLevelCount = levels;
   WGPUTexture texture = wgpuDeviceCreateTexture(g_device, &desc);
-  WGPUTexelCopyTextureInfo dst = WGPU_TEXEL_COPY_TEXTURE_INFO_INIT;
-  dst.texture = texture;
-  WGPUTexelCopyBufferLayout layout = WGPU_TEXEL_COPY_BUFFER_LAYOUT_INIT;
-  layout.bytesPerRow = (uint32_t)width * 4;
-  layout.rowsPerImage = (uint32_t)height;
-  wgpuQueueWriteTexture(g_queue, &dst, rgba, (size_t)width * (size_t)height * 4, &layout, &desc.size);
+  const uint8_t *level = rgba;
+  uint8_t *owned = NULL;
+  int32_t w = width;
+  int32_t h = height;
+  for (uint32_t l = 0; l < levels; l++) {
+    WGPUTexelCopyTextureInfo dst = WGPU_TEXEL_COPY_TEXTURE_INFO_INIT;
+    dst.texture = texture;
+    dst.mipLevel = l;
+    WGPUTexelCopyBufferLayout layout = WGPU_TEXEL_COPY_BUFFER_LAYOUT_INIT;
+    layout.bytesPerRow = (uint32_t)w * 4;
+    layout.rowsPerImage = (uint32_t)h;
+    WGPUExtent3D extent = {(uint32_t)w, (uint32_t)h, 1};
+    wgpuQueueWriteTexture(g_queue, &dst, level, (size_t)w * (size_t)h * 4, &layout, &extent);
+    if (l + 1 == levels) break;
+    int32_t nw = w > 1 ? w / 2 : 1;
+    int32_t nh = h > 1 ? h / 2 : 1;
+    uint8_t *next = malloc((size_t)nw * (size_t)nh * 4);
+    if (!next) break;
+    for (int32_t y = 0; y < nh; y++) {
+      for (int32_t x = 0; x < nw; x++) {
+        int32_t x0 = x * 2 < w ? x * 2 : w - 1, x1 = x * 2 + 1 < w ? x * 2 + 1 : w - 1;
+        int32_t y0 = y * 2 < h ? y * 2 : h - 1, y1 = y * 2 + 1 < h ? y * 2 + 1 : h - 1;
+        for (int c = 0; c < 4; c++) {
+          int sum = level[((size_t)y0 * w + x0) * 4 + c] + level[((size_t)y0 * w + x1) * 4 + c] + level[((size_t)y1 * w + x0) * 4 + c] +
+                    level[((size_t)y1 * w + x1) * 4 + c];
+          next[((size_t)y * nw + x) * 4 + c] = (uint8_t)((sum + 2) / 4);
+        }
+      }
+    }
+    free(owned);
+    owned = next;
+    level = next;
+    w = nw;
+    h = nh;
+  }
+  free(owned);
   int32_t id = g_texture_count++;
   g_textures[id] = texture;
   g_texture_views[id] = wgpuTextureCreateView(texture, NULL);
   g_texture_sizes[id][0] = width;
   g_texture_sizes[id][1] = height;
-  g_texture_smooth[id] = smooth;
+  g_texture_smooth[id] = (uint8_t)smooth;
   return id;
 }
 
 // Decodes PNG bytes into a texture.
-int32_t df_image(const uint8_t *png, size_t len, uint8_t smooth) {
+int32_t df_image(const uint8_t *png, size_t len, int32_t smooth) {
   int width, height, channels;
   stbi_uc *pixels = stbi_load_from_memory(png, (int)len, &width, &height, &channels, 4);
   if (!pixels) return -3;
@@ -382,6 +457,10 @@ int32_t df_pipeline(const uint8_t *wgsl, size_t wgsl_len, uint32_t stride, const
   WGPUVertexAttribute attributes[16];
   size_t attribute_count = attrs_len / 12;
   if (attribute_count > 16) attribute_count = 16;
+  // flags bits 8-15: how many of the attributes (the last ones) step per instance; bits 16-31: their stride.
+  size_t instance_count = (flags >> 8) & 255;
+  if (instance_count > attribute_count) instance_count = attribute_count;
+  uint32_t instance_stride = flags >> 16;
   for (size_t i = 0; i < attribute_count; i++) {
     const uint32_t *t = (const uint32_t *)(attrs + i * 12);
     static const WGPUVertexFormat formats[] = {WGPUVertexFormat_Float32x2, WGPUVertexFormat_Float32x3,
@@ -392,10 +471,14 @@ int32_t df_pipeline(const uint8_t *wgsl, size_t wgsl_len, uint32_t stride, const
     attributes[i].offset = t[1];
     attributes[i].shaderLocation = t[2];
   }
-  WGPUVertexBufferLayout layout = WGPU_VERTEX_BUFFER_LAYOUT_INIT;
-  layout.arrayStride = stride;
-  layout.attributeCount = attribute_count;
-  layout.attributes = attributes;
+  WGPUVertexBufferLayout layouts[2] = {WGPU_VERTEX_BUFFER_LAYOUT_INIT, WGPU_VERTEX_BUFFER_LAYOUT_INIT};
+  layouts[0].arrayStride = stride;
+  layouts[0].attributeCount = attribute_count - instance_count;
+  layouts[0].attributes = attributes;
+  layouts[1].arrayStride = instance_stride;
+  layouts[1].stepMode = WGPUVertexStepMode_Instance;
+  layouts[1].attributeCount = instance_count;
+  layouts[1].attributes = attributes + (attribute_count - instance_count);
 
   WGPUBlendState blend = WGPU_BLEND_STATE_INIT;
   blend.color = (WGPUBlendComponent){WGPUBlendOperation_Add, WGPUBlendFactor_SrcAlpha, WGPUBlendFactor_OneMinusSrcAlpha};
@@ -411,15 +494,15 @@ int32_t df_pipeline(const uint8_t *wgsl, size_t wgsl_len, uint32_t stride, const
 
   WGPUDepthStencilState depth = WGPU_DEPTH_STENCIL_STATE_INIT;
   depth.format = WGPUTextureFormat_Depth24Plus;
-  depth.depthWriteEnabled = WGPUOptionalBool_True;
+  depth.depthWriteEnabled = (flags & DF_PIPELINE_NO_DEPTH_WRITE) ? WGPUOptionalBool_False : WGPUOptionalBool_True;
   depth.depthCompare = WGPUCompareFunction_Less;
 
   WGPURenderPipelineDescriptor desc = WGPU_RENDER_PIPELINE_DESCRIPTOR_INIT;
   desc.vertex.module = module;
   desc.vertex.entryPoint = (WGPUStringView){"vs_main", WGPU_STRLEN};
   if (stride > 0) {
-    desc.vertex.bufferCount = 1;
-    desc.vertex.buffers = &layout;
+    desc.vertex.bufferCount = instance_count > 0 ? 2 : 1;
+    desc.vertex.buffers = layouts;
   }
   desc.fragment = &fragment;
   if (flags & DF_PIPELINE_DEPTH) {
@@ -435,7 +518,8 @@ int32_t df_pipeline(const uint8_t *wgsl, size_t wgsl_len, uint32_t stride, const
 
 // Group 0 of the pipeline's auto layout: binding 0 uniform buffer, binding 1 texture, binding 2 sampler.
 // Pass -1 for a resource the shader does not declare.
-int32_t df_bind(int32_t pipeline, int32_t buffer, int32_t texture) {
+// texture2, when not negative, binds at 3 (view) and 4 (linear clamp sampler): a second map such as a shadow map.
+int32_t df_bind(int32_t pipeline, int32_t buffer, int32_t texture, int32_t texture2) {
   if (pipeline < 0 || pipeline >= g_pipeline_count) return -1;
   int32_t capacity = g_bind_group_capacity;
   if (!grow((void **)&g_bind_groups, &capacity, g_bind_group_count + 1, sizeof *g_bind_groups)) return -2;
@@ -444,7 +528,8 @@ int32_t df_bind(int32_t pipeline, int32_t buffer, int32_t texture) {
   g_bind_group_capacity = capacity;
   // A destroyed texture cannot be bound again.
   if (texture >= 0 && texture < g_texture_count && !g_textures[texture]) return -3;
-  WGPUBindGroupEntry entries[3];
+  if (texture2 >= 0 && texture2 < g_texture_count && !g_textures[texture2]) return -3;
+  WGPUBindGroupEntry entries[5];
   size_t count = 0;
   if (buffer >= 0 && buffer < g_buffer_count) {
     entries[count] = (WGPUBindGroupEntry)WGPU_BIND_GROUP_ENTRY_INIT;
@@ -460,7 +545,17 @@ int32_t df_bind(int32_t pipeline, int32_t buffer, int32_t texture) {
     count++;
     entries[count] = (WGPUBindGroupEntry)WGPU_BIND_GROUP_ENTRY_INIT;
     entries[count].binding = 2;
-    entries[count].sampler = g_texture_smooth[texture] ? g_sampler_linear : g_sampler;
+    entries[count].sampler = g_texture_smooth[texture] == 2 ? g_sampler_mips : g_texture_smooth[texture] ? g_sampler_linear : g_sampler;
+    count++;
+  }
+  if (texture2 >= 0 && texture2 < g_texture_count) {
+    entries[count] = (WGPUBindGroupEntry)WGPU_BIND_GROUP_ENTRY_INIT;
+    entries[count].binding = 3;
+    entries[count].textureView = g_texture_views[texture2];
+    count++;
+    entries[count] = (WGPUBindGroupEntry)WGPU_BIND_GROUP_ENTRY_INIT;
+    entries[count].binding = 4;
+    entries[count].sampler = g_sampler_linear;
     count++;
   }
   WGPUBindGroupDescriptor desc = WGPU_BIND_GROUP_DESCRIPTOR_INIT;
@@ -516,6 +611,21 @@ void df_handle_event(const SDL_Event *event) {
       break;
     case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
       configure_surface();
+      break;
+    case SDL_EVENT_MOUSE_BUTTON_DOWN:
+      if (g_look_armed && event->button.which != SDL_TOUCH_MOUSEID && !SDL_GetWindowRelativeMouseMode(g_window)) SDL_SetWindowRelativeMouseMode(g_window, true);
+      break;
+    case SDL_EVENT_MOUSE_MOTION:
+      if (event->motion.which != SDL_TOUCH_MOUSEID && SDL_GetWindowRelativeMouseMode(g_window)) {
+        g_look_x += event->motion.xrel;
+        g_look_y += event->motion.yrel;
+      }
+      break;
+    case SDL_EVENT_KEY_DOWN:
+      if (event->key.key == SDLK_ESCAPE) look_release();
+      break;
+    case SDL_EVENT_WINDOW_FOCUS_LOST:
+      look_release();
       break;
     case SDL_EVENT_FINGER_DOWN:
     case SDL_EVENT_FINGER_MOTION:
@@ -578,6 +688,8 @@ int32_t df_begin(double r, double g, double b, uint8_t use_depth) {
   }
   g_frame_view = wgpuTextureCreateView(g_frame_texture.texture, NULL);
   g_frame_encoder = wgpuDeviceCreateCommandEncoder(g_device, NULL);
+  g_pass_depth = g_depth_view;
+  g_target_frame = 0;
 
   WGPURenderPassColorAttachment color = WGPU_RENDER_PASS_COLOR_ATTACHMENT_INIT;
   color.view = g_frame_view;
@@ -597,9 +709,106 @@ int32_t df_begin(double r, double g, double b, uint8_t use_depth) {
   return 0;
 }
 
+// Ends the current pass and opens another on the same frame that keeps what was drawn (loadOp Load). A frame that
+// mixes depth and non-depth pipelines (a 3D scene under a 2D HUD) needs one pass per run of either kind.
+void df_pass(uint8_t use_depth) {
+  if (!g_frame_pass) return;
+  wgpuRenderPassEncoderEnd(g_frame_pass);
+  wgpuRenderPassEncoderRelease(g_frame_pass);
+  WGPURenderPassColorAttachment color = WGPU_RENDER_PASS_COLOR_ATTACHMENT_INIT;
+  color.view = g_frame_view;
+  color.loadOp = WGPULoadOp_Load;
+  color.storeOp = WGPUStoreOp_Store;
+  WGPURenderPassDepthStencilAttachment depth = WGPU_RENDER_PASS_DEPTH_STENCIL_ATTACHMENT_INIT;
+  depth.view = g_pass_depth;
+  depth.depthLoadOp = WGPULoadOp_Clear;
+  depth.depthStoreOp = WGPUStoreOp_Store;
+  depth.depthClearValue = 1.0f;
+  WGPURenderPassDescriptor pass_desc = WGPU_RENDER_PASS_DESCRIPTOR_INIT;
+  pass_desc.colorAttachmentCount = 1;
+  pass_desc.colorAttachments = &color;
+  if (use_depth) pass_desc.depthStencilAttachment = &depth;
+  g_frame_pass = wgpuCommandEncoderBeginRenderPass(g_frame_encoder, &pass_desc);
+}
+
+static int32_t target_slot(int32_t texture) {
+  for (int32_t i = 0; i < g_target_count; i++)
+    if (g_target_ids[i] == texture) return i;
+  return -1;
+}
+
+// One host call for render targets (scriptc library mode caps a library at 32 callbacks).
+// op 0 creates an a x b target in the surface format, with its own depth, and returns its texture id (negative on
+// failure). op 1 begins a frame into target a cleared to (b, c, d), with depth when e != 0; draw with df_draw and
+// df_pass, then df_end submits it without presenting. Returns 0, or 1 when the frame could not begin.
+int32_t df_target(int32_t op, double a, double b, double c, double d, double e) {
+  if (op == 0) {
+    int32_t width = (int32_t)a;
+    int32_t height = (int32_t)b;
+    if (width <= 0 || height <= 0 || g_target_count >= DF_MAX_TARGETS) return -1;
+    int32_t capacity = g_texture_capacity;
+    int32_t need = g_texture_count + 1;
+    if (!grow((void **)&g_textures, &capacity, need, sizeof *g_textures)) return -4;
+    capacity = g_texture_capacity;
+    if (!grow((void **)&g_texture_views, &capacity, need, sizeof *g_texture_views)) return -4;
+    capacity = g_texture_capacity;
+    if (!grow((void **)&g_texture_sizes, &capacity, need, sizeof *g_texture_sizes)) return -4;
+    capacity = g_texture_capacity;
+    if (!grow((void **)&g_texture_smooth, &capacity, need, sizeof *g_texture_smooth)) return -4;
+    g_texture_capacity = capacity;
+    WGPUTextureDescriptor desc = WGPU_TEXTURE_DESCRIPTOR_INIT;
+    desc.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding;
+    desc.size = (WGPUExtent3D){(uint32_t)width, (uint32_t)height, 1};
+    desc.format = g_format;
+    WGPUTexture texture = wgpuDeviceCreateTexture(g_device, &desc);
+    int32_t id = g_texture_count++;
+    g_textures[id] = texture;
+    g_texture_views[id] = wgpuTextureCreateView(texture, NULL);
+    g_texture_sizes[id][0] = width;
+    g_texture_sizes[id][1] = height;
+    g_texture_smooth[id] = 1;
+    WGPUTextureDescriptor depth_desc = WGPU_TEXTURE_DESCRIPTOR_INIT;
+    depth_desc.usage = WGPUTextureUsage_RenderAttachment;
+    depth_desc.size = desc.size;
+    depth_desc.format = WGPUTextureFormat_Depth24Plus;
+    g_target_ids[g_target_count] = id;
+    g_target_depth_textures[g_target_count] = wgpuDeviceCreateTexture(g_device, &depth_desc);
+    g_target_depths[g_target_count] = wgpuTextureCreateView(g_target_depth_textures[g_target_count], NULL);
+    g_target_count++;
+    return id;
+  }
+  if (op == 1) {
+    int32_t texture = (int32_t)a;
+    int32_t slot = target_slot(texture);
+    if (slot < 0 || g_frame_pass || !g_textures[texture]) return 1;
+    g_frame_view = g_texture_views[texture];
+    g_frame_encoder = wgpuDeviceCreateCommandEncoder(g_device, NULL);
+    g_pass_depth = g_target_depths[slot];
+    g_target_frame = 1;
+    WGPURenderPassColorAttachment color = WGPU_RENDER_PASS_COLOR_ATTACHMENT_INIT;
+    color.view = g_frame_view;
+    color.loadOp = WGPULoadOp_Clear;
+    color.storeOp = WGPUStoreOp_Store;
+    color.clearValue = (WGPUColor){b, c, d, 1.0};
+    WGPURenderPassDepthStencilAttachment depth = WGPU_RENDER_PASS_DEPTH_STENCIL_ATTACHMENT_INIT;
+    depth.view = g_pass_depth;
+    depth.depthLoadOp = WGPULoadOp_Clear;
+    depth.depthStoreOp = WGPUStoreOp_Store;
+    depth.depthClearValue = 1.0f;
+    WGPURenderPassDescriptor pass_desc = WGPU_RENDER_PASS_DESCRIPTOR_INIT;
+    pass_desc.colorAttachmentCount = 1;
+    pass_desc.colorAttachments = &color;
+    if (e != 0) pass_desc.depthStencilAttachment = &depth;
+    g_frame_pass = wgpuCommandEncoderBeginRenderPass(g_frame_encoder, &pass_desc);
+    return 0;
+  }
+  return 1;
+}
+
 // Negative handles mean "none". first/count are indices with an index buffer (uint32), vertices otherwise.
 void df_draw(int32_t pipeline, int32_t bind_group, int32_t vertex_buffer, int32_t index_buffer, uint32_t first,
-             uint32_t count) {
+             uint32_t count, int32_t instance_buffer, uint32_t instances) {
+  if (instances == 0) instances = 1;
   if (!g_frame_pass || pipeline < 0 || pipeline >= g_pipeline_count) return;
   // A group released with its texture draws nothing rather than sampling freed memory.
   if (bind_group >= 0 && bind_group < g_bind_group_count && !g_bind_groups[bind_group]) return;
@@ -608,12 +817,14 @@ void df_draw(int32_t pipeline, int32_t bind_group, int32_t vertex_buffer, int32_
     wgpuRenderPassEncoderSetBindGroup(g_frame_pass, 0, g_bind_groups[bind_group], 0, NULL);
   if (vertex_buffer >= 0 && vertex_buffer < g_buffer_count)
     wgpuRenderPassEncoderSetVertexBuffer(g_frame_pass, 0, g_buffers[vertex_buffer], 0, WGPU_WHOLE_SIZE);
+  if (instance_buffer >= 0 && instance_buffer < g_buffer_count)
+    wgpuRenderPassEncoderSetVertexBuffer(g_frame_pass, 1, g_buffers[instance_buffer], 0, WGPU_WHOLE_SIZE);
   if (index_buffer >= 0 && index_buffer < g_buffer_count) {
     wgpuRenderPassEncoderSetIndexBuffer(g_frame_pass, g_buffers[index_buffer], WGPUIndexFormat_Uint32, 0,
                                         WGPU_WHOLE_SIZE);
-    wgpuRenderPassEncoderDrawIndexed(g_frame_pass, count, 1, first, 0, 0);
+    wgpuRenderPassEncoderDrawIndexed(g_frame_pass, count, instances, first, 0, 0);
   } else {
-    wgpuRenderPassEncoderDraw(g_frame_pass, count, 1, first, 0);
+    wgpuRenderPassEncoderDraw(g_frame_pass, count, instances, first, 0);
   }
 }
 
@@ -624,6 +835,14 @@ void df_end(void) {
   g_frame_pass = NULL;
   WGPUCommandBuffer commands = wgpuCommandEncoderFinish(g_frame_encoder, NULL);
   wgpuQueueSubmit(g_queue, 1, &commands);
+  if (g_target_frame) {
+    // A render target keeps its view (owned by the texture) and presents nothing.
+    wgpuCommandBufferRelease(commands);
+    wgpuCommandEncoderRelease(g_frame_encoder);
+    g_frame_view = NULL;
+    g_target_frame = 0;
+    return;
+  }
   wgpuSurfacePresent(g_surface);
   wgpuCommandBufferRelease(commands);
   wgpuCommandEncoderRelease(g_frame_encoder);
@@ -652,6 +871,7 @@ void df_close(void) {
   free(g_texture_smooth);
   if (g_sampler) wgpuSamplerRelease(g_sampler);
   if (g_sampler_linear) wgpuSamplerRelease(g_sampler_linear);
+  if (g_sampler_mips) wgpuSamplerRelease(g_sampler_mips);
   for (int32_t i = 0; i < g_pipeline_count; i++) wgpuRenderPipelineRelease(g_pipelines[i]);
   if (g_depth_view) wgpuTextureViewRelease(g_depth_view);
   if (g_depth_texture) wgpuTextureRelease(g_depth_texture);

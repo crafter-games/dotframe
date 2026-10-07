@@ -21,7 +21,7 @@ dotframe device install ios --yes    # after the human approves; phone unlocked 
          "device": "<udid from xcrun devicectl list devices>" }
 ```
 
-The CLI stages the entry's import graph (like macOS), generates the library glue and profile, builds the scriptc library, generates the SDL3 host (`main.c`), `Info.plist` and `project.yml`, scales `icon` to 1024 px (iOS derives every other size; without `icon` the app has none), copies `assets` to `<app>/game/<assets>` and the engine fonts to `<app>/game/dotframe/assets/fonts`, and runs xcodegen and xcodebuild. Everything generated lives in `.dotframe/native/ios/`; nothing to commit.
+The CLI stages the entry's import graph (like macOS), generates the library glue and profile, builds the scriptc library, generates the SDL3 host (`main.c`), `Info.plist` and `project.yml`, scales `icon` to 1024 px (iOS derives every other size; without `icon` the app has none), copies `assets` to `<app>/game/<assets>` and the engine fonts to `<app>/game/dotframe/assets/fonts`, and runs xcodegen and xcodebuild. The launch screen is `launchColor` (`"#rrggbb"`, default black) with an optional centered `launch` PNG; it stays up while `init` loads, since native loading is synchronous. Everything generated lives in `.dotframe/native/ios/`; nothing to commit.
 
 ## The entry
 
@@ -58,3 +58,6 @@ Templates ship this as `main.ios.ts` over the same `src/setup.ts` web and macOS 
 - Signing is automatic with `team`; a locked password manager can fail signing with `failed to fill whole buffer`: ask the human to unlock it and retry.
 - `build ios --release` refuses assets marked local-only (see `assets`).
 - Confirm on the device by asking the human. A successful install is not a working game.
+- Xcode, not Command Line Tools: xcodebuild and devicectl need Xcode. When `xcode-select -p` points at CommandLineTools and `/Applications/Xcode.app` exists, `build`, `device` and `doctor` set `DEVELOPER_DIR` to Xcode for their own run; other shells need `export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer` (or `sudo xcode-select -s` once). doctor runs `xcodebuild -version` and fails when it does.
+- Free (personal) teams: provisioning lasts 7 days, so reinstall weekly, and a device holds at most 3 apps signed by a free team; the 4th install fails until one is deleted from the phone. A paid team whose Account Holder has not accepted the latest Program License Agreement on developer.apple.com fails in xcodebuild; only the Account Holder can accept it.
+- The console of a throw (`init threw: ...`) shows with `xcrun devicectl device process launch --console --terminate-existing --device <id> <bundleId>`.

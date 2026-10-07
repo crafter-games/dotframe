@@ -1,6 +1,6 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, symlinkSync, unlinkSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
-import { CliError, type Config, type Ctx, findRoot, home, loadConfig, print, type Target, which } from "../lib";
+import { CliError, type Config, type Ctx, findRoot, home, loadConfig, print, type Target, which, XCODE_DEVELOPER } from "../lib";
 import type { Draw2D } from "../../src/draw2d";
 import type { Sim } from "../../src/sim";
 import { buildNative, importGraph, vendorFix, vendorStatus } from "../native";
@@ -22,6 +22,16 @@ const tool = (bin: string, why: string, fix: string, skill: string): Check => {
   const path = which(bin);
   return { check: `tool:${bin}`, ok: path !== null, detail: path ?? `missing (${why})`, fix: path ? "" : fix, skill };
 };
+
+// /usr/bin/xcodebuild exists with only Command Line Tools, and fails when run, so run it.
+function xcodeCheck(): Check {
+  const base = { check: "tool:xcodebuild", skill: "ios" };
+  const r = Bun.spawnSync(["xcodebuild", "-version"], { env: process.env });
+  const out = (r.stdout.toString() + r.stderr.toString()).trim();
+  if (r.exitCode === 0) return { ...base, ok: true, detail: `${out.split("\n")[0]}${process.env.DEVELOPER_DIR ? ` (DEVELOPER_DIR=${process.env.DEVELOPER_DIR})` : ""}`, fix: "" };
+  const fix = existsSync(XCODE_DEVELOPER) ? `sudo xcode-select -s ${XCODE_DEVELOPER}, or export DEVELOPER_DIR=${XCODE_DEVELOPER}` : "install Xcode from the App Store";
+  return { ...base, ok: false, detail: out.split("\n")[0] || "xcodebuild failed", fix };
+}
 
 export async function doctor(ctx: Ctx, fix: boolean, docker = false): Promise<void> {
   const checks: Check[] = [tool("bun", "runs the CLI and the web build", "curl -fsSL https://bun.sh/install | bash", "core")];
@@ -60,6 +70,7 @@ export async function doctor(ctx: Ctx, fix: boolean, docker = false): Promise<vo
     for (const [name, t] of Object.entries(config.targets)) {
       if (!t.native) continue;
       checks.push(await nativeCheck(ctx, config, name, t.native));
+      checks.push(nativeTrapCheck(resolve(config.root, t.native.entry), name, t.native.platform));
       const v = vendorStatus(t.native.platform);
       checks.push({ check: `vendor:${name}`, ok: v.missing.length === 0, detail: v.missing.length === 0 ? `${v.dir} (${v.sdl})` : `missing in ${v.dir}: ${v.missing.join(", ")}`, fix: v.missing.length === 0 ? "" : vendorFix(t.native.platform), skill: t.native.platform });
       checks.push(tool("scriptc", "native builds", "npm i -g scriptc", t.native.platform));
@@ -80,7 +91,7 @@ export async function doctor(ctx: Ctx, fix: boolean, docker = false): Promise<vo
       checks.push(tool("vercel", "deploy web", "npm i -g vercel", "export-web"), tool("agent-browser", "dotframe snap", "npm i -g agent-browser && agent-browser install", "core"));
     }
     if (targets.includes("ios") || targets.includes("macos")) checks.push(tool("scriptc", "native builds", "npm i -g scriptc", "macos"));
-    if (targets.includes("ios")) checks.push(tool("xcodegen", "iOS project", "brew install xcodegen", "ios"), tool("xcodebuild", "iOS build", "install Xcode", "ios"));
+    if (targets.includes("ios")) checks.push(tool("xcodegen", "iOS project", "brew install xcodegen", "ios"), xcodeCheck());
     if (config.relay) checks.push(config.relay.provider === "fly" ? tool("fly", "relay deploy", "brew install flyctl && fly auth login", "relay") : tool("vps", "relay deploy", "install the vps CLI and log in to the crafter profile", "relay"));
     for (const link of config.links ?? []) {
       const path = resolve(config.root, link.path);
@@ -216,4 +227,60 @@ async function nativeCheck(ctx: Ctx, config: Config, name: string, native: NonNu
     const first = error.message.split("\n").find((l: string): boolean => /error SC\d+/.test(l)) ?? error.message.split("\n")[0];
     return { ...base, ok: false, detail: `scriptc rejects ${native.entry}: ${first.replace(/^.*?\.dotframe\/check\/[^/]+\/(game|tree)\//, "")}`, fix: `read ${error.log}; the macos skill lists what scriptc rejects` };
   }
+}
+
+// Code scriptc compiles but that aborts at run time, where JS yields undefined (F-039, F-040, reproduced with scriptc
+// 0.2.3): a missing Record key read into a variable or an argument ("record has no key"; inline `R[k] ?? x`,
+// `R[k] !== undefined` and `R[k] ? a : b` are fine), and `obj && expr` as a value (the object leaks into the union).
+// Only string- and number-keyed Records: a Record over a closed union of keys is exhaustive.
+const RECORD_DECL = /\b(\w+)\s*\??:\s*(?:Readonly<)?(?:Record<\s*(?:string|number)\s*,|\{\s*\[\w+:\s*(?:string|number)\]\s*:)/g;
+const AND_VALUE = /\b(?:const|let)\s+\w+\s*(?::[^=]+)?=\s*[\w.]+\s*&&\s*(?![^?]*\?)(?![\w.]+\s*(?:[=!]==?|[<>]=?)\s)[\w.]+[.(]/;
+
+function bracketEnd(code: string, open: number): number {
+  for (let i = open, depth = 0; i < code.length; i++) {
+    if (code[i] === "[") depth++;
+    else if (code[i] === "]" && --depth === 0) return i;
+  }
+  return -1;
+}
+
+// guard: the line and the few before it, where an `if (!(k in R)) return` or `k in R ? k : d` usually sits.
+function recordReads(code: string, guard: string, names: Set<string>): boolean {
+  for (const m of code.matchAll(/\b(\w+)\[/g)) {
+    if (!names.has(m[1])) continue;
+    const open = (m.index ?? 0) + m[1].length;
+    const end = bracketEnd(code, open);
+    if (end < 0) continue;
+    const key = code.slice(open + 1, end).trim();
+    if (/^\d+$|^["'`]/.test(key)) continue;
+    // A chain (`P[a].clips[k]`) takes its context from what precedes the whole chain.
+    const before = code.slice(0, m.index).replace(/[\w.[\]]*\.$/, "").trimEnd();
+    const after = code.slice(end + 1).trimStart();
+    // Guarded on the line, read inline in a test, dereferenced (throws in JS too), or written.
+    if (guard.includes(` in ${m[1]}`) || /^(\?\?|[!=]==?\s*undefined|\?(?![.?])|[.[]|=(?!=)|\+=|-=)/.test(after)) continue;
+    if (/(=|\(|,|return|\?|:|\[)$/.test(before)) return true;
+  }
+  return false;
+}
+
+function nativeTrapCheck(entry: string, name: string, platform: string): Check {
+  const base = { check: `native-traps:${name}`, skill: platform === "windows" ? "macos" : platform };
+  const engine = new Map<string, boolean>();
+  const files = importGraph(entry).files.filter((f: string): boolean => /\.ts$/.test(f) && !f.includes(`${sep}node_modules${sep}`) && !engineFile(f, engine));
+  const texts = files.map((f: string): string[] => readFileSync(f, "utf8").split("\n").map((l: string): string => l.replace(/\/\/.*$/, "").replace(/(["'`])(?:\\.|(?!\1).)*\1/g, '""')));
+  const records = new Set<string>();
+  for (const lines of texts) for (const line of lines) for (const m of line.matchAll(RECORD_DECL)) records.add(m[1]);
+  const hits: string[] = [];
+  files.forEach((file: string, f: number): void => {
+    const raw = readFileSync(file, "utf8").split("\n");
+    texts[f].forEach((code: string, i: number): void => {
+      if (raw[i].includes("dotframe-allow-native")) return;
+      const where = `${relative(process.cwd(), file)}:${i + 1}`;
+      if (recordReads(code, texts[f].slice(Math.max(0, i - 4), i + 1).join("\n"), records)) hits.push(`${where} Record read that aborts natively if the key is missing: \`key in R ? R[key] : fallback\``);
+      else if (AND_VALUE.test(code)) hits.push(`${where} \`obj && expr\` as a value traps natively: \`obj ? expr : fallback\``);
+    });
+  });
+  if (hits.length === 0) return { ...base, ok: true, detail: `no unguarded Record reads or && values in the native code (${records.size} Record names)`, fix: "" };
+  const shown = hits.slice(0, 8).join("; ") + (hits.length > 8 ? `; and ${hits.length - 8} more` : "");
+  return { ...base, ok: false, warn: true, detail: `${hits.length} line(s) that abort natively while web passes: ${shown}`, fix: "rewrite each as its hit says; mark a line that is safe with // dotframe-allow-native" };
 }

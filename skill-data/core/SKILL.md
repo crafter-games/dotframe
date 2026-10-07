@@ -56,6 +56,23 @@ Prove a check can fail before trusting its green: make render change one field o
 
 Pass `--json` and read `ok`. Errors look like `{"ok": false, "error": {"code", "message", "fix", "skill"}}`. Apply `fix`, and when it is not obvious run `dotframe skills get <skill>`. Exit codes: 0 ok, 1 failure, 2 approval required. Full list: `dotframe skills get core --full`.
 
+## 3D games
+
+`render(draw)` stays the one entry point. Build the 3D scene in `create(platform)` with `createRenderer(platform.gpu)` (it also works on the headless stub GPU, so `doctor`'s purity check runs the 3D path), then in render queue it under the HUD:
+
+```ts
+render: (draw) => {
+  draw.scene(renderer.draws(world, camera, environment)); // 3D first, same frame
+  drawHud(game, draw);                                    // 2D on top
+},
+```
+
+- `Environment`: ambient, a directional `sun`, up to `MAX_LIGHTS` point `lights`, one `spot`, `fog` and `exposure` (ACES). `MeshRef.texture` maps triplanar in world space (`tile` = units per repeat), so boxes and terrain need no UVs; `emissive` adds unlit color.
+- `box()` is side 1 (-0.5..0.5): scale is the full size.
+- Textures for snap: `platform.image(bytes, smooth)` decodes PNG and JPEG when frames are drawn; set `clear` on the Sim to your sky color.
+- First person: `input.look()` gives mouse movement; `run(..., { pointerLock: true })` on the web. Native returns zero for now.
+- iOS has no promises: give the scene a sync loader for `main.ios.ts` (see the `ios` skill).
+
 ## Engine modules agents reach for
 
 - `dotframe/src/detmath`: deterministic sin, cos, tan, atan, atan2, exp, log, pow, hypot for simulation code.

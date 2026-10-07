@@ -110,6 +110,7 @@
       "params": [
         "i32",
         "i32",
+        "i32",
         "i32"
       ],
       "returns": "i32"
@@ -121,7 +122,7 @@
         "i32",
         "i32",
         "bytes",
-        "bool"
+        "i32"
       ],
       "returns": "i32"
     },
@@ -130,7 +131,7 @@
       "symbol": "df_image",
       "params": [
         "bytes",
-        "bool"
+        "i32"
       ],
       "returns": "i32"
     },
@@ -192,7 +193,30 @@
         "i32",
         "i32",
         "u32",
+        "u32",
+        "i32",
         "u32"
+      ],
+      "returns": "void"
+    },
+    {
+      "name": "dfTarget",
+      "symbol": "df_target",
+      "params": [
+        "i32",
+        "f64",
+        "f64",
+        "f64",
+        "f64",
+        "f64"
+      ],
+      "returns": "i32"
+    },
+    {
+      "name": "dfPass",
+      "symbol": "df_pass",
+      "params": [
+        "bool"
       ],
       "returns": "void"
     },
@@ -281,6 +305,18 @@
       "symbol": "df_music",
       "params": [
         "i32",
+        "f64",
+        "f64",
+        "f64"
+      ],
+      "returns": "i32"
+    },
+    {
+      "name": "dfVoice",
+      "symbol": "df_voice",
+      "params": [
+        "i32",
+        "f64",
         "f64",
         "f64",
         "f64"

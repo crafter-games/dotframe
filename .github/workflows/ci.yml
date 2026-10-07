@@ -16,7 +16,7 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun test
       - name: Typecheck engine and CLI
-        run: bun x tsc -p tsconfig.json && bun x tsc -p cli/tsconfig.json
+        run: bun x tsc -p tsconfig.json && bun x tsc -p cli/tsconfig.json && bun x tsc -p src/native/tsconfig.json
       - name: Skill frontmatter is valid YAML
         run: |
           for f in skills/*/SKILL.md skill-data/*/SKILL.md; do

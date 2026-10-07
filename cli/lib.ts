@@ -108,6 +108,17 @@ export function which(bin: string): string | null {
   return Bun.which(bin);
 }
 
+export const XCODE_DEVELOPER = "/Applications/Xcode.app/Contents/Developer";
+
+// xcodebuild and devicectl need Xcode, but xcode-select often points at Command Line Tools. When it does and Xcode
+// is installed, use Xcode for this process and its children (what DEVELOPER_DIR does, without sudo xcode-select).
+export function useXcode(): string | null {
+  if (process.platform !== "darwin" || process.env.DEVELOPER_DIR) return process.env.DEVELOPER_DIR ?? null;
+  const selected = Bun.spawnSync(["xcode-select", "-p"]).stdout.toString().trim();
+  if (selected.includes("CommandLineTools") && existsSync(XCODE_DEVELOPER)) process.env.DEVELOPER_DIR = XCODE_DEVELOPER;
+  return process.env.DEVELOPER_DIR ?? (selected || null);
+}
+
 export interface RunResult {
   label: string;
   code: number;

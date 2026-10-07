@@ -137,7 +137,7 @@ export interface DesyncArgs extends PlayArgs {
 export async function desync(ctx: Ctx, args: DesyncArgs): Promise<void> {
   const config = loadConfig();
   const sim = await loadSim(config);
-  if (sim.players !== 2) throw new CliError("UNSUPPORTED", "desync simulates two peers; this sim has " + sim.players + " players", "", "netplay");
+  if (sim.players !== 2) throw new CliError("UNSUPPORTED", "desync simulates two peers; this sim has " + sim.players + " players", "dotframe doctor (its sim:render check proves render purity for any player count); dotframe replay verify for determinism", "netplay");
   const frames = num("frames", args.frames, 1800, 1);
   const seed = num("seed", args.seed, 1);
   const latency = frames60("latency", args.latency, 100);

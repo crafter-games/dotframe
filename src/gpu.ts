@@ -31,8 +31,14 @@ export interface PipelineOptions {
   stride: number;
   attributes: VertexAttribute[];
   depth: boolean;
+  // With depth: whether it writes depth (default true). Transparent particles test against depth but do not write
+  // it, so they never hide each other.
+  depthWrite?: boolean;
   // Standard alpha blending, for 2D and transparent sprites.
   blend: boolean;
+  // A second vertex buffer stepped once per instance (Draw.instanceBuffer), for drawing one mesh many times.
+  instanceStride?: number;
+  instanceAttributes?: VertexAttribute[];
 }
 
 export interface Texture {
@@ -49,6 +55,9 @@ export interface Draw {
   indexBuffer: number;
   first: number;
   count: number;
+  // With a pipeline that has instance attributes: the per-instance buffer and how many instances to draw.
+  instanceBuffer?: number;
+  instances?: number;
 }
 
 // Synchronous rendering surface. Code that must also run in scriptc library mode (iOS), where promises are
@@ -58,20 +67,26 @@ export interface RenderGpu {
   writeBuffer: (buffer: number, data: Uint8Array) => void;
   destroyBuffer: (buffer: number) => void;
   createPipeline: (options: PipelineOptions) => number;
-  // Group 0: binding 0 uniform buffer, binding 1 texture, binding 2 nearest sampler; -1 skips one.
-  bind: (pipeline: number, buffer: number, texture: number) => number;
-  // smooth: linear filtering (fonts, photos); otherwise nearest (pixel art).
-  createTexture: (width: number, height: number, rgba: Uint8Array, smooth: boolean) => Texture;
+  // Group 0: binding 0 uniform buffer, binding 1 texture, binding 2 its sampler; -1 skips one. texture2 binds at 3
+  // with a linear clamp sampler at 4, for a second map (a shadow map).
+  bind: (pipeline: number, buffer: number, texture: number, texture2?: number) => number;
+  // smooth: linear filtering (fonts, photos); otherwise nearest (pixel art). mipmaps (implies smooth): a full mip
+  // chain and a repeating sampler, for textures tiled across 3D surfaces, so they do not shimmer at distance.
+  createTexture: (width: number, height: number, rgba: Uint8Array, smooth: boolean, mipmaps?: boolean) => Texture;
   // Frees a texture (and, natively, the bind groups sampling it). Its id is never reused; do not draw it again.
-  // Optional so stub GPUs in tests need not implement it.
-  destroyTexture?: (texture: Texture) => void;
-  frame: (clear: Color, draws: Draw[]) => void;
+  // Required, not optional: scriptc cannot call an optional function.
+  destroyTexture: (texture: Texture) => void;
+  // Draws a frame. With target (from createTarget), it renders into that texture with its own depth and presents
+  // nothing, so a later frame can sample it (post-processing).
+  frame: (clear: Color, draws: Draw[], target?: Texture) => void;
+  // A texture pipelines can render into and shaders can sample, in the surface's format. Free it with destroyTexture.
+  createTarget: (width: number, height: number) => Texture;
   aspect: () => number;
 }
 
 export interface Gpu extends RenderGpu {
-  // Decodes PNG bytes.
-  createImage: (png: Uint8Array, smooth: boolean) => Promise<Texture>;
+  // Decodes PNG or JPEG bytes. mipmaps as in createTexture.
+  createImage: (png: Uint8Array, smooth: boolean, mipmaps?: boolean) => Promise<Texture>;
 }
 
 // Called every frame with elapsed seconds; return false to stop.
