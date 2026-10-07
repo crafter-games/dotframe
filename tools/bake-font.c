@@ -1,6 +1,7 @@
 // Bakes a TTF into a signed-distance-field atlas (PNG, distance in alpha) plus JSON metrics.
 // Build: cc -O2 tools/bake-font.c -o build/bake-font -lm
-// Usage: build/bake-font <font.ttf> <out.png> <out.json> [pixel_height]
+// Usage: build/bake-font <font.ttf> <out.png> <out.json> [pixel_height] [chars.txt]
+// chars.txt (UTF-8) adds its characters to printable ASCII and the Latin set, for CJK or other scripts.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,7 +20,7 @@ static const int extra[] = {0xE1, 0xE9, 0xED, 0xF3, 0xFA, 0xC1, 0xC9, 0xCD, 0xD3
 
 int main(int argc, char **argv) {
   if (argc < 4) {
-    fprintf(stderr, "usage: %s <font.ttf> <out.png> <out.json> [pixel_height]\n", argv[0]);
+    fprintf(stderr, "usage: %s <font.ttf> <out.png> <out.json> [pixel_height] [chars.txt]\n", argv[0]);
     return 2;
   }
   float pixel_height = argc > 4 ? (float)atof(argv[4]) : 64.0f;
@@ -38,10 +39,27 @@ int main(int argc, char **argv) {
   int ascent, descent, line_gap;
   stbtt_GetFontVMetrics(&font, &ascent, &descent, &line_gap);
 
-  int codepoints[256];
+  static int codepoints[4096];
   int count = 0;
   for (int c = 32; c < 127; c++) codepoints[count++] = c;
   for (size_t i = 0; i < sizeof extra / sizeof extra[0]; i++) codepoints[count++] = extra[i];
+  if (argc > 5) {
+    FILE *chars = fopen(argv[5], "rb");
+    if (!chars) return 1;
+    int b;
+    while ((b = fgetc(chars)) != EOF && count < 4096) {
+      int cp = b, more = 0;
+      if (b >= 0xF0) cp = b & 0x07, more = 3;
+      else if (b >= 0xE0) cp = b & 0x0F, more = 2;
+      else if (b >= 0xC0) cp = b & 0x1F, more = 1;
+      while (more-- > 0 && (b = fgetc(chars)) != EOF) cp = (cp << 6) | (b & 0x3F);
+      if (cp < 32) continue;
+      int seen = 0;
+      for (int i = 0; i < count && !seen; i++) seen = codepoints[i] == cp;
+      if (!seen) codepoints[count++] = cp;
+    }
+    fclose(chars);
+  }
 
   int atlas_height = 2048;
   unsigned char *atlas = calloc((size_t)ATLAS_WIDTH * atlas_height, 4);
