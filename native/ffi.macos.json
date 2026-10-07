@@ -197,6 +197,14 @@
       "returns": "void"
     },
     {
+      "name": "dfPass",
+      "symbol": "df_pass",
+      "params": [
+        "bool"
+      ],
+      "returns": "void"
+    },
+    {
       "name": "dfEnd",
       "symbol": "df_end",
       "params": [],

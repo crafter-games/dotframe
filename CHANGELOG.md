@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+From porting The Ones (Godot, first-person 3D horror) to dotframe.
+
+- 3D under a 2D HUD in one frame: `Renderer.draws()` returns a scene's draws without presenting, `Draw2D.scene(draws)` queues them before the 2D batch, and both backends split a frame into passes when depth and non-depth pipelines mix (native: `df_pass`). `Sim.render(draw)` is unchanged, so `snap` and `doctor` work for 3D games.
+- Renderer: triplanar textures (`MeshRef.texture`, `tile`), `emissive`, and an optional `Environment` (ambient, sun, up to 8 point lights, a spot light, fog, ACES `exposure`); `Camera.near`/`far`. Without an environment the old look is kept.
+- `Input.look()` with `run(..., { pointerLock: true })` on the web, for first-person cameras.
+- `SimPlatform.image` (decode for snap) and `Sim.clear` (snap's clear color).
+- Native decodes JPEG (stb_image was PNG-only).
+- `dotframe new` depends on the CLI's own engine version (it pinned `^0.1.0`), and templates ship a `discord` target.
+
 ## 0.2.0
 
 From Craft Ones' asks (rounds 7 and 8).

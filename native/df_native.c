@@ -13,6 +13,7 @@
 
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_PNG
+#define STBI_ONLY_JPEG
 #define STBI_NO_STDIO
 #include "third_party/stb_image.h"
 
@@ -595,6 +596,28 @@ int32_t df_begin(double r, double g, double b, uint8_t use_depth) {
   if (use_depth) pass_desc.depthStencilAttachment = &depth;
   g_frame_pass = wgpuCommandEncoderBeginRenderPass(g_frame_encoder, &pass_desc);
   return 0;
+}
+
+// Ends the current pass and opens another on the same frame that keeps what was drawn (loadOp Load). A frame that
+// mixes depth and non-depth pipelines (a 3D scene under a 2D HUD) needs one pass per run of either kind.
+void df_pass(uint8_t use_depth) {
+  if (!g_frame_pass) return;
+  wgpuRenderPassEncoderEnd(g_frame_pass);
+  wgpuRenderPassEncoderRelease(g_frame_pass);
+  WGPURenderPassColorAttachment color = WGPU_RENDER_PASS_COLOR_ATTACHMENT_INIT;
+  color.view = g_frame_view;
+  color.loadOp = WGPULoadOp_Load;
+  color.storeOp = WGPUStoreOp_Store;
+  WGPURenderPassDepthStencilAttachment depth = WGPU_RENDER_PASS_DEPTH_STENCIL_ATTACHMENT_INIT;
+  depth.view = g_depth_view;
+  depth.depthLoadOp = WGPULoadOp_Clear;
+  depth.depthStoreOp = WGPUStoreOp_Store;
+  depth.depthClearValue = 1.0f;
+  WGPURenderPassDescriptor pass_desc = WGPU_RENDER_PASS_DESCRIPTOR_INIT;
+  pass_desc.colorAttachmentCount = 1;
+  pass_desc.colorAttachments = &color;
+  if (use_depth) pass_desc.depthStencilAttachment = &depth;
+  g_frame_pass = wgpuCommandEncoderBeginRenderPass(g_frame_encoder, &pass_desc);
 }
 
 // Negative handles mean "none". first/count are indices with an index buffer (uint32), vertices otherwise.

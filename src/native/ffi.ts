@@ -28,6 +28,7 @@ export declare function dfDraw(
   first: number,
   count: number,
 ): void;
+export declare function dfPass(depth: boolean): void;
 export declare function dfEnd(): void;
 export declare function dfClose(): void;
 export declare function dfAudioOpen(): number;

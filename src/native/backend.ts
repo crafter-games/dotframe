@@ -12,6 +12,7 @@ import {
   dfBufferWrite,
   dfDraw,
   dfEnd,
+  dfPass,
   dfGamepadAxis,
   dfGamepadButton,
   dfHeight,
@@ -72,11 +73,16 @@ export function createNativeRenderGpu(): RenderGpu {
     },
     destroyTexture: (texture: Texture): void => dfTextureDestroy(texture.id),
     frame: (clear: Color, draws: Draw[]): void => {
-      // Pipelines without depth cannot run in a pass with a depth attachment.
-      let usesDepth = false;
-      for (const draw of draws) if (depthPipelines.has(draw.pipeline)) usesDepth = true;
+      // Pipelines without depth cannot run in a pass with a depth attachment, so a frame that mixes them (a 3D
+      // scene under a 2D HUD) opens a new pass, keeping what was drawn, each time the kind changes.
+      let usesDepth = draws.length > 0 && depthPipelines.has(draws[0].pipeline);
       if (dfBegin(clear.r, clear.g, clear.b, usesDepth) !== 0) return;
       for (const draw of draws) {
+        const depth = depthPipelines.has(draw.pipeline);
+        if (depth !== usesDepth) {
+          usesDepth = depth;
+          dfPass(depth);
+        }
         dfDraw(draw.pipeline, draw.bindGroup, draw.vertexBuffer, draw.indexBuffer, draw.first, draw.count);
       }
       dfEnd();
