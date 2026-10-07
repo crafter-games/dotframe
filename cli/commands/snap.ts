@@ -42,7 +42,7 @@ export async function snap(ctx: Ctx, args: PlayArgs & { frame?: string; out?: st
     entry,
     `import sim from ${JSON.stringify(simPath(config))};
 import { createDraw2D } from ${JSON.stringify(join(ENGINE, "draw2d"))};
-import { loadBytes, run } from ${JSON.stringify(join(ENGINE, "web/run"))};
+import { gpuErrors, loadBytes, run } from ${JSON.stringify(join(ENGINE, "web/run"))};
 import { cameraOverride } from ${JSON.stringify(join(ENGINE, "render"))};
 const plan = ${JSON.stringify({ seed, options, inputs, frames, camera })};
 if (plan.camera) cameraOverride.camera = { eye: { x: plan.camera.eye[0], y: plan.camera.eye[1], z: plan.camera.eye[2] }, target: { x: plan.camera.target[0], y: plan.camera.target[1], z: plan.camera.target[2] }, fovY: plan.camera.fovY };
@@ -73,7 +73,7 @@ run(sim.window, (p) => {
     draw.begin();
     if (ready && r.render) r.render(draw);
     draw.end(sim.clear ?? { r: 0, g: 0, b: 0 });
-    if (ready && ++shown === 3) done({ index, frame: stepped, checksum: r.checksum(), state: r.state() });
+    if (ready && ++shown === 3) done(gpuErrors.length > 0 ? { error: gpuErrors.join("\\n") } : { index, frame: stepped, checksum: r.checksum(), state: r.state() });
     return true;
   };
 }).catch((e) => done({ error: String(e) }));
@@ -93,7 +93,9 @@ run(sim.window, (p) => {
       return existsSync(file) ? new Response(Bun.file(file)) : new Response("not found", { status: 404 });
     },
   });
-  const ab = (...a: string[]) => exec({ ...ctx, json: true }, config.root, { label: `agent-browser ${a[0]}`, argv: ["agent-browser", "--session", "dotframe-snap", ...a] });
+  // One session per run: reusing a fixed name raced the previous run's close, and the next snap never loaded (F-012).
+  const session = `dotframe-snap-${process.pid}`;
+  const ab = (...a: string[]) => exec({ ...ctx, json: true }, config.root, { label: `agent-browser ${a[0]}`, argv: ["agent-browser", "--session", session, ...a] });
   try {
     const opened = await ab("open", `http://localhost:${server.port}/`);
     if (opened.code !== 0) throw new CliError("BROWSER_FAILED", opened.tail, "agent-browser install");
@@ -107,13 +109,21 @@ run(sim.window, (p) => {
       let result: { index?: number; frame?: number; checksum?: number; state?: unknown; error?: string } | null = null;
       for (let i = 0; i < 120 && !result; i++) {
         const r = await ab("eval", `(document.getElementById("dotframe-ready") || document.getElementById("dotframe-error") || {}).textContent || ""`);
-        const text = r.tail.trim().replace(/^"|"$/g, "").replace(/\\"/g, '"');
+        // eval prints the string JSON-quoted; decode it whole, since the payload can hold quotes and newlines.
+        const raw = r.tail.trim();
+        let text = raw;
+        try {
+          if (raw.startsWith('"')) text = JSON.parse(raw) as string;
+        } catch {}
         const parsed = text.startsWith("{") ? JSON.parse(text) : null;
         if (parsed && (parsed.error || parsed.index === k)) result = parsed;
         else await Bun.sleep(500);
       }
-      if (!result) throw new CliError("SNAP_TIMEOUT", `the page never reported frame ${frames[k]} after 60 s`, "open the page with agent-browser --headed and read the console; WebGPU may be unavailable", "core");
-      if (result.error) throw new CliError("SNAP_PAGE_ERROR", result.error, "WebGPU unavailable? try AGENT_BROWSER_ARGS=--enable-unsafe-webgpu", "core");
+      if (!result) {
+        const logs = [(await ab("errors")).tail, (await ab("console")).tail].filter(Boolean).join("\n").slice(-1500);
+        throw new CliError("SNAP_TIMEOUT", `the page never reported frame ${frames[k]} after 60 s${logs ? `\n${logs}` : ""}`, "open the page with agent-browser --headed and read the console; WebGPU may be unavailable", "core");
+      }
+      if (result.error) throw new CliError("SNAP_PAGE_ERROR", result.error, /WGSL|WebGPU:/.test(result.error) ? "fix the shader named in the message; the frame would render black" : "WebGPU unavailable? try AGENT_BROWSER_ARGS=--enable-unsafe-webgpu", "core");
       let shot = await ab("screenshot", out);
       if (shot.code !== 0) throw new CliError("BROWSER_FAILED", shot.tail);
       let size = pngSize(out);

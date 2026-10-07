@@ -63,14 +63,19 @@ export async function deploy(ctx: Ctx, name: string | undefined, prod: boolean):
   }
   if (!existsSync(join(out, "index.html"))) throw new CliError("NOT_BUILT", `${t.out}/index.html is missing`, `dotframe build ${name}`, skill);
   if (vercel.scope === "your-vercel-team") throw new CliError("CONFIG_PLACEHOLDER", `targets.${name}.deploy.scope is still the template placeholder`, `dotframe config set targets.${name}.deploy.scope '"<team>"'`, skill);
-  const argv = ["vercel", "deploy", ...(prod ? ["--prod"] : []), "--yes", "--scope", vercel.scope, "--name", vercel.project];
-  const plan = { target: name, provider: vercel.provider, project: `${vercel.scope}/${vercel.project}`, dir: out, production: prod, files: countFiles(out), command: argv.join(" ") };
+  // Link the build folder itself first: without a .vercel/project.json there, vercel 60 links the git root and
+  // uploads the repo, and matches a project by folder name ("web"). A per-directory link takes precedence.
+  const link = ["vercel", "link", "--yes", "--scope", vercel.scope, "--project", vercel.project];
+  const argv = ["vercel", "deploy", ...(prod ? ["--prod"] : []), "--yes", "--scope", vercel.scope, "--project", vercel.project];
+  const plan = { target: name, provider: vercel.provider, project: `${vercel.scope}/${vercel.project}`, dir: out, production: prod, files: countFiles(out), command: `${link.join(" ")} && ${argv.join(" ")}` };
   if (ctx.dryRun) {
     print(ctx, { dryRun: true, ...plan }, (): string => `would deploy ${out} to ${plan.project}${prod ? " (production)" : " (preview)"}\n  ${plan.command}`);
     return;
   }
   gate(ctx, `deploy ${name}${prod ? " to production" : ""}`, skill);
   if (!which("vercel")) throw new CliError("TOOL_MISSING", "vercel CLI not found", "npm i -g vercel", skill);
+  const l = await exec(ctx, config.root, { label: "vercel link", argv: link, cwd: out });
+  if (l.code !== 0) throw new CliError("DEPLOY_FAILED", l.tail, "vercel whoami; vercel switch " + vercel.scope, skill);
   const r = await exec(ctx, config.root, { label: "vercel deploy", argv, cwd: out });
   if (r.code !== 0) throw new CliError("DEPLOY_FAILED", r.tail, "vercel whoami; vercel switch " + vercel.scope, skill);
   const url = r.tail.match(/https:\/\/\S+\.vercel\.app/g)?.pop() ?? null;

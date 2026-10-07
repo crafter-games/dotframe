@@ -10,7 +10,7 @@ import { snap } from "./commands/snap";
 import { playOnline } from "./commands/online";
 import { skills } from "./commands/skills";
 import { create, dev } from "./commands/new";
-import { CliError, type Ctx, fail, num, print } from "./lib";
+import { CliError, type Ctx, fail, num, print, useXcode } from "./lib";
 import { startRelay } from "./relay";
 
 const HELP = `dotframe ${pkg.version}: build, test, and export dotframe games
@@ -191,6 +191,7 @@ const { values, positionals } = parseArgs({
 const ctx: Ctx = { json: values.json === true, yes: values.yes === true, dryRun: values["dry-run"] === true };
 const v = { ...(values as Record<string, string | undefined>), throughOver: values["through-over"] === true } as Record<string, string | undefined> & { throughOver: boolean };
 const [command, ...rest] = positionals;
+if (command === "build" || command === "device" || command === "doctor") useXcode();
 
 try {
   if (values.version) console.log(pkg.version);

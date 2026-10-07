@@ -4,6 +4,13 @@
 
 From porting The Ones (Godot, first-person 3D horror) to dotframe.
 
+- `deploy` links the build folder to `deploy.project` before deploying, so vercel 60 no longer uploads the repo root or links a project named after the folder. The template's `build-web.ts` keeps `dist/web/.vercel`.
+- `doctor`: `native-traps:<target>` warns on code that aborts natively while web passes (unguarded `Record` reads into a variable or argument, `obj && expr` as a value; silence a line with `// dotframe-allow-native`). `tool:xcodebuild` runs `xcodebuild -version`. `build`, `device` and `doctor` use Xcode when xcode-select points at Command Line Tools.
+- `snap` fails with the WGSL error and line instead of a black frame (`gpuErrors` in `web/run`), uses one browser session per run (back-to-back snaps timed out), and a timeout prints the page console.
+- Native mouse look: reading `input.look()` arms capture; a click enters relative mode, Escape or focus loss releases.
+- iOS launch screen: `launchColor` and an optional `launch` image, shown while `init` loads.
+- `dev` reports `PORT_IN_USE`; `desync` on a single-player sim points at `doctor`; Windows builds name the runtime pack version mismatch and the `macos` skill; `src/native` is type-checked in CI.
+
 - 3D under a 2D HUD in one frame: `Renderer.draws()` returns a scene's draws without presenting, `Draw2D.scene(draws)` queues them before the 2D batch, and both backends split a frame into passes when depth and non-depth pipelines mix (native: `df_pass`). `Sim.render(draw)` is unchanged, so `snap` and `doctor` work for 3D games.
 - Renderer: triplanar textures (`MeshRef.texture`, `tile`), `emissive`, and an optional `Environment` (ambient, sun, up to 8 point lights, a spot light, fog, ACES `exposure`); `Camera.near`/`far`. Without an environment the old look is kept.
 - glTF: `loadGlb` loads whole models (nodes, materials, embedded images, alpha modes, rest-pose skins); `src/model.ts` uploads and spawns them fitted to a height.

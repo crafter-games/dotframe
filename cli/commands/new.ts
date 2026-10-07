@@ -57,7 +57,7 @@ export async function dev(ctx: Ctx, port: number): Promise<void> {
   if (!t.out) throw new CliError("NO_OUT", "the web target needs an out dir", "", "export-web");
   const out = resolve(config.root, t.out);
   await runSteps(ctx, config.root, t.steps ?? [], "export-web");
-  const server = Bun.serve({
+  const serve = (): ReturnType<typeof Bun.serve> => Bun.serve({
     port,
     fetch: (req: Request): Response => {
       const path = decodeURIComponent(new URL(req.url).pathname);
@@ -68,6 +68,13 @@ export async function dev(ctx: Ctx, port: number): Promise<void> {
       return new Response(Bun.file(file), { headers });
     },
   });
+  let server: ReturnType<typeof Bun.serve>;
+  try {
+    server = serve();
+  } catch (error) {
+    if (!/in use|EADDRINUSE/i.test(error instanceof Error ? `${error.message} ${(error as { code?: string }).code}` : String(error))) throw error;
+    throw new CliError("PORT_IN_USE", `port ${port} is in use`, `dotframe dev --port ${port + 1}`, "export-web");
+  }
   console.error(`serving ${out} at http://localhost:${server.port}`);
   let pending: ReturnType<typeof setTimeout> | null = null;
   watch(config.root, { recursive: true }, (_event, file): void => {

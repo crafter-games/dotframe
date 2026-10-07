@@ -129,7 +129,8 @@ export function createNativeInput(): Input {
       return sdl >= 0 && dfGamepadButton(pad, sdl);
     },
     pointer: (): Pointer => ({ x: dfMouse(0), y: dfMouse(1), buttons: dfMouse(2) }),
-    look: (): Look => ({ x: 0, y: 0 }),
+    // Reading look arms mouse capture: a click in the window captures the mouse, Escape releases it.
+    look: (): Look => ({ x: dfMouse(3), y: dfMouse(4) }),
     touches: (): Touch[] => {
       const out: Touch[] = [];
       const count = dfTouchCount();

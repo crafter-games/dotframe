@@ -264,8 +264,25 @@ static void mouse_relative(double *nx, double *ny) {
   *ny = h > 0 ? (gy - wy) / h : 0.0;
 }
 
-// Field 0 x, 1 y (normalized), 2 buttons (bit 0 left, bit 1 middle, bit 2 right).
+// Mouse look, like the web's pointer lock: a game that reads look arms it; a click in the window then captures the
+// mouse (relative mode) and motion accumulates until read. Escape or losing focus releases it.
+static int g_look_armed = 0;
+static double g_look_x = 0, g_look_y = 0;
+
+static void look_release(void) {
+  if (g_window && SDL_GetWindowRelativeMouseMode(g_window)) SDL_SetWindowRelativeMouseMode(g_window, false);
+}
+
+// Field 0 x, 1 y (normalized), 2 buttons (bit 0 left, bit 1 middle, bit 2 right), 3 and 4 look movement in pixels
+// since the last read of that field.
 double df_mouse(int32_t field) {
+  if (field == 3 || field == 4) {
+    g_look_armed = 1;
+    double v = field == 3 ? g_look_x : g_look_y;
+    if (field == 3) g_look_x = 0;
+    else g_look_y = 0;
+    return v;
+  }
   if (field == 2) {
     // Clicks in other apps must not reach the game: buttons count only while the window has input focus.
     if (!(SDL_GetWindowFlags(g_window) & SDL_WINDOW_INPUT_FOCUS)) return 0;
@@ -594,6 +611,21 @@ void df_handle_event(const SDL_Event *event) {
       break;
     case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
       configure_surface();
+      break;
+    case SDL_EVENT_MOUSE_BUTTON_DOWN:
+      if (g_look_armed && event->button.which != SDL_TOUCH_MOUSEID && !SDL_GetWindowRelativeMouseMode(g_window)) SDL_SetWindowRelativeMouseMode(g_window, true);
+      break;
+    case SDL_EVENT_MOUSE_MOTION:
+      if (event->motion.which != SDL_TOUCH_MOUSEID && SDL_GetWindowRelativeMouseMode(g_window)) {
+        g_look_x += event->motion.xrel;
+        g_look_y += event->motion.yrel;
+      }
+      break;
+    case SDL_EVENT_KEY_DOWN:
+      if (event->key.key == SDLK_ESCAPE) look_release();
+      break;
+    case SDL_EVENT_WINDOW_FOCUS_LOST:
+      look_release();
       break;
     case SDL_EVENT_FINGER_DOWN:
     case SDL_EVENT_FINGER_MOTION:

@@ -154,7 +154,8 @@ export function stageGame(root: string, entry: string, tree: string, engineStage
 // check: compile the TypeScript only (scriptc --emit ir, no C, no link), for doctor.
 export async function buildNative(ctx: Ctx, root: string, gameName: string, targetName: string, t: NativeTarget, check = false): Promise<{ binary: string; log: string; steps: RunResult[] }> {
   const platform = t.platform;
-  const skill = platform;
+  // Windows is documented in the macos skill; there is no windows skill.
+  const skill = platform === "windows" ? "macos" : platform;
   const tools = platform === "macos" ? ["clang", "scriptc"] : ["zig", "scriptc"];
   for (const tool of tools) if (!which(tool)) throw new CliError("TOOL_MISSING", `${tool} not found`, tool === "scriptc" ? "npm i -g scriptc" : tool === "zig" ? "brew install zig" : "xcode-select --install", skill);
   const vendor = vendorStatus(platform);
@@ -196,8 +197,13 @@ export async function buildNative(ctx: Ctx, root: string, gameName: string, targ
   let env: Record<string, string> = {};
   if (platform === "windows") {
     // A devDependency of dotframe, so an npm install of dotframe does not bring it; the game can.
-    const pack = [ENGINE, root].map((dir: string): string => join(dir, "node_modules", "@scriptc", "runtime-win32-x64-msvc")).find((p: string): boolean => existsSync(p));
-    if (!pack) throw new CliError("TOOL_MISSING", "the scriptc Windows runtime pack is not installed", "bun add -d @scriptc/runtime-win32-x64-msvc", skill);
+    const pack = [root, ENGINE, join(homedir(), ".dotframe", "scriptc-windows")].map((dir: string): string => join(dir, "node_modules", "@scriptc", "runtime-win32-x64-msvc")).find((p: string): boolean => existsSync(join(p, "package.json")));
+    const want = Bun.spawnSync(["scriptc", "--version"]).stdout.toString().trim();
+    // Fresh scriptc releases trip bun's minimum release age, which then resolves an older pack.
+    const fix = `mkdir -p ~/.dotframe/scriptc-windows && cd ~/.dotframe/scriptc-windows && bun add @scriptc/runtime-win32-x64-msvc@${want} --minimum-release-age 0`;
+    if (!pack) throw new CliError("TOOL_MISSING", "the scriptc Windows runtime pack (@scriptc/runtime-win32-x64-msvc) is not installed", fix, skill);
+    const found = (JSON.parse(readFileSync(join(pack, "package.json"), "utf8")) as { version: string }).version;
+    if (want && found !== want) throw new CliError("TOOL_MISSING", `scriptc Windows runtime pack is ${found}, scriptc is ${want}`, fix, skill);
     env = { SCRIPTC_TARGET: "x86_64-windows-gnu", SCRIPTC_RUNTIME_PACK: pack };
   }
   const scriptc = {

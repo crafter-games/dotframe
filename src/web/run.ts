@@ -23,6 +23,16 @@ export async function loadBytes(path: string): Promise<Uint8Array> {
   return new Uint8Array(await response.arrayBuffer());
 }
 
+// WebGPU reports a bad shader only as an invalid pipeline that draws nothing. Compilation errors and uncaptured
+// validation errors land here (and in the console), so snap and games can fail loudly instead of rendering black.
+export const gpuErrors: string[] = [];
+const gpuError = (message: string): void => {
+  // An invalid pipeline errors on every draw: keep each message once, and a few of them.
+  if (gpuErrors.includes(message) || gpuErrors.length >= 20) return;
+  gpuErrors.push(message);
+  console.error(`dotframe: ${message}`);
+};
+
 export interface RunOptions {
   // "fixed" (default): a canvas of the window options' size. "window": the canvas fills the browser window and
   // follows its size; gpu.aspect() reports the current shape.
@@ -36,6 +46,7 @@ export async function run(options: WindowOptions, setup: Setup, runOptions: RunO
   const adapter = await navigator.gpu.requestAdapter();
   if (!adapter) throw new Error("No WebGPU adapter");
   const device = await adapter.requestDevice();
+  device.addEventListener("uncapturederror", (event: Event): void => gpuError(`WebGPU: ${(event as GPUUncapturedErrorEvent).error.message}`));
 
   document.title = options.title;
   const canvas = document.createElement("canvas");
@@ -145,6 +156,13 @@ export async function run(options: WindowOptions, setup: Setup, runOptions: RunO
     },
     createPipeline: (pipelineOptions: PipelineOptions): number => {
       const module = device.createShaderModule({ code: pipelineOptions.wgsl });
+      module.getCompilationInfo().then((info: GPUCompilationInfo): void => {
+        for (const m of info.messages) {
+          if (m.type !== "error") continue;
+          const line = pipelineOptions.wgsl.split("\n")[m.lineNum - 1]?.trim() ?? "";
+          gpuError(`WGSL error at line ${m.lineNum}:${m.linePos}: ${m.message}${line ? ` (${line})` : ""}`);
+        }
+      });
       const buffersLayout: GPUVertexBufferLayout[] =
         pipelineOptions.stride > 0
           ? [
