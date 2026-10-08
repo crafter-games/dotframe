@@ -7,6 +7,7 @@ import { deployInit } from "./commands/docker";
 import { configCmd } from "./commands/config";
 import { desync, rebase, record, sim, verify } from "./commands/play";
 import { compare } from "./commands/compare";
+import { perf } from "./commands/perf";
 import { snap } from "./commands/snap";
 import { playOnline } from "./commands/online";
 import { skills } from "./commands/skills";
@@ -23,6 +24,7 @@ Play (headless, deterministic)
   sim      [--inputs f.jsonl | --mash <seed>] [--frames 600] [--seed 1] [--options json] [--every n]
   compare  --frame <n> (--ref <png> | reference.command) [--camera ...] [--out dir]
   snap     --frame <n>[,<n>...] [--camera ex,ey,ez,tx,ty,tz[,fov]] [--out frame.png] [--inputs f | --mash <seed>] [--seed 1] [--options json]
+  perf     [--frame <n>] [--frames 300] [--camera ...] [--options json]   load and frame time in a real browser
   replay   record <file> | verify <file...> | rebase <file...>
   play     --online [room] [--frames 600] [--seeds 1,2]   two browsers, local relay, scripted match
   desync   [--latency 100ms] [--jitter 0ms] [--delay 2] [--frames 1800] [--renders 3]
@@ -68,6 +70,15 @@ camera, inputs) and {out} (the PNG to write), for example a Godot script that lo
 
   dotframe compare --frame 600 --ref captures/godot-600.png --out /tmp/cmp-600
   dotframe compare --frame 2108 --camera -2.5,1.7,-4.5,-2.5,1.4,-9.5,60 --inputs replays/inputs/night2-survive.jsonl`,
+  perf: `dotframe perf [--frame <n>] [--frames 300] [--camera ex,ey,ez,tx,ty,tz[,fov]] [--mash <seed> | --inputs f.jsonl] [--seed 1] [--options json] [--json]
+
+Serves the game like snap, steps the sim to --frame, then renders --frames frames, one sim step each, and reports
+load time (navigation to ready and to the first frame, bytes fetched from the local server), the
+requestAnimationFrame interval and the CPU time of step and render (p50, p95, max). The numbers are this machine's
+browser; a phone needs its own run.
+
+  dotframe perf --frames 600 --options '{"day":2,"night":2}'
+  dotframe perf --frame 300 --camera 0,1.6,-3,0,1.2,0`,
   snap: `dotframe snap --frame <n>[,<n>...] [--camera ex,ey,ez,tx,ty,tz[,fov]] [--out snap-{frame}.png] [--mash <seed> | --inputs f.jsonl] [--seed 1] [--options json] [--json]
 
 Steps the sim to frame n in a real browser (WebGPU, through agent-browser) and screenshots it. Open the PNG and look.
@@ -249,6 +260,7 @@ try {
   else if (command === "play" && values.online === true) await playOnline(ctx, rest[0], { frames: v.frames, out: v.out, seeds: v.seeds, native: values.native === true });
   else if (command === "sim") await sim(ctx, v);
   else if (command === "snap") await snap(ctx, v);
+  else if (command === "perf") await perf(ctx, v);
   else if (command === "replay" && rest[0] === "record") await record(ctx, rest[1], v);
   else if (command === "replay" && rest[0] === "verify") await verify(ctx, rest.slice(1));
   else if (command === "compare") await compare(ctx, v);

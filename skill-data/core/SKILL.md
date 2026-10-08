@@ -16,6 +16,8 @@ dotframe is a TypeScript game engine. One codebase runs on the web (WebGPU), in 
 5. For online games, `dotframe desync` (see `dotframe skills get netplay`).
 6. Only then `dotframe build <target>`.
 
+Performance: `dotframe perf --frames 600 --options '<json>'` reports load time, the requestAnimationFrame interval and the CPU time of step and render (p50, p95, max), plus any frame over 50 ms. It measures this machine's browser, capped at its vsync, so a phone needs its own run. Another agent-browser tab in front throttles the page to 1 fps: rerun before trusting a row of 1000 ms hitches.
+
 Never claim a visual change works from the JSON alone. Snap it and look.
 
 `sim` and `replay` stop when `over()` turns true. Pass `--through-over` to keep stepping into results and rematch flows.
