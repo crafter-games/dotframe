@@ -78,7 +78,8 @@ export async function compare(ctx: Ctx, args: PlayArgs & { frame?: string; camer
   const composite = join(dir, "compare.png");
   const f = spawnSync(ffmpeg, ["-v", "error", "-y", "-i", portPng, "-i", refPng, "-filter_complex", `[1:v]scale=${width}:${height}[r];[0:v]split[p0][p1];[r]split[r0][r1];[p1][r1]blend=all_mode=difference,lutrgb=r='val*4':g='val*4':b='val*4'[d];[p0][r0][d]hstack=3`, composite]);
   if (f.status !== 0) throw new CliError("COMPOSE_FAILED", String(f.stderr).trim(), "", "core");
-  const result = { dir, port: portPng, reference: refPng, compare: composite, ...m };
+  // The metrics carry their own port and reference (mean luminance), so the image paths go under images.
+  const result = { dir, images: { port: portPng, reference: refPng, compare: composite }, ...m };
   print(ctx, result, (): string =>
     [
       `${composite}  (port | reference | difference x4)`,
