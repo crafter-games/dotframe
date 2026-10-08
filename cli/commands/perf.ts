@@ -34,7 +34,8 @@ export function stats(values: number[]): Stats {
 }
 
 // Load time and frame time in a real browser: the game served from its root like snap, stepped to --frame, then
-// --frames frames rendered one sim step each, timed. Numbers are this machine's; a phone needs its own run.
+// --frames frames rendered one sim step each, timed, after 30 untimed frames at --frame (shader compiles). Numbers
+// are this machine's; a phone needs its own run.
 export async function perf(ctx: Ctx, args: PlayArgs & { frame?: string; camera?: string }): Promise<void> {
   const config = loadConfig();
   const sim = await loadSim(config);
@@ -69,6 +70,8 @@ run(sim.window, (p) => {
   let firstFrameMs = -1;
   let stepped = 0;
   let last = -1;
+  // Frames drawn untimed at --frame before measuring, while the browser compiles what that scene first needs.
+  let warm = 30;
   const interval = [], step = [], render = [];
   r.ready.then(() => {
     readyMs = performance.now();
@@ -79,7 +82,7 @@ run(sim.window, (p) => {
     if (readyMs < 0) return true;
     const now = performance.now();
     let s = 0;
-    if (firstFrameMs >= 0) {
+    if (firstFrameMs >= 0 && warm === 0) {
       const t = performance.now();
       r.step(plan.inputs[stepped++]);
       s = performance.now() - t;
@@ -89,7 +92,8 @@ run(sim.window, (p) => {
     if (r.render) r.render(draw);
     draw.end(sim.clear ?? { r: 0, g: 0, b: 0 });
     const d = performance.now() - t;
-    if (firstFrameMs < 0) { firstFrameMs = performance.now(); last = now; return true; }
+    if (firstFrameMs < 0) firstFrameMs = performance.now();
+    if (warm > 0) { warm -= 1; last = now; return true; }
     interval.push(now - last);
     last = now;
     step.push(s);
@@ -121,9 +125,13 @@ run(sim.window, (p) => {
   const session = `dotframe-perf-${process.pid}`;
   const ab = (...a: string[]) => exec({ ...ctx, json: true }, config.root, { label: `agent-browser ${a[0]}`, argv: ["agent-browser", "--session", session, ...a] });
   try {
+    // The viewport before the game page: resizing a page that is already rendering throttled its first frames to
+    // about one a second, which read as hitches.
+    const blank = await ab("open", "about:blank");
+    if (blank.code !== 0) throw new CliError("BROWSER_FAILED", blank.tail, "agent-browser install");
+    await ab("set", "viewport", String(sim.window.width), String(sim.window.height));
     const opened = await ab("open", `http://localhost:${server.port}/`);
     if (opened.code !== 0) throw new CliError("BROWSER_FAILED", opened.tail, "agent-browser install");
-    await ab("set", "viewport", String(sim.window.width), String(sim.window.height));
     let result: { error?: string; readyMs: number; firstFrameMs: number; bytes: number; files: number; interval: number[]; step: number[]; render: number[] } | null = null;
     for (let i = 0; i < 240 && !result; i++) {
       const r = await ab("eval", `(document.getElementById("dotframe-ready") || document.getElementById("dotframe-error") || {}).textContent || ""`);
