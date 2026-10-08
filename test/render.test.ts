@@ -98,8 +98,29 @@ test("the environment reaches the uniforms: emissive, texture tile, lights, spot
   expect(u[40 + 5 * 4 + 3]).toBe(22);
   expect(u[40 + 6 * 4 + 3]).toBeCloseTo(Math.cos(0.4), 5);
   // Lights past MAX_LIGHTS are dropped: the last slot holds light MAX_LIGHTS - 1.
-  expect(u.length).toBe(40 + 8 * 4 + MAX_LIGHTS * 8 + 20);
+  expect(u.length).toBe(40 + 8 * 4 + MAX_LIGHTS * 8 + 40 + MAX_LIGHTS * 8);
   expect(u[40 + (8 + (MAX_LIGHTS - 1) * 2) * 4 + 3]).toBe(5 + MAX_LIGHTS - 1);
+});
+
+test("a sun with shadows draws casters into the right half of the map, and light boxes reach the uniforms", () => {
+  const { gpu, writes, frames } = recordingGpu();
+  const renderer = createRenderer(gpu);
+  const { world, entity } = oneBoxWorld();
+  world.meshes.set(entity, { mesh: renderer.addMesh(box()), color: vec3(1, 1, 1) });
+  const lights = [{ position: vec3(0, 2, 0), color: vec3(1, 1, 1), range: 5, box: { min: vec3(-1, 0, -1), max: vec3(1, 3, 1), outside: true } }];
+  renderer.draws(world, { eye: vec3(0, 2, 5), target: vec3(0, 0, 0), fovY: 1 }, { ambient: vec3(0, 0, 0), sun: { direction: vec3(0.3, 1, 0.2), color: vec3(1, 1, 1), shadows: 60 }, lights });
+  // One shadow frame with the box as its caster, before the scene.
+  expect(frames.length).toBe(1);
+  expect(frames[0].draws.length).toBe(1);
+  const caster = writes[0];
+  // color.x = 1 marks the sun's half; the box at the origin lands in x > 0 of the map's clip space.
+  expect(caster[32]).toBe(1);
+  expect(caster[12]).toBeGreaterThan(0);
+  const u = writes[writes.length - 1];
+  const sun = 40 + 8 * 4 + MAX_LIGHTS * 8 + 20;
+  expect(u[sun + 16]).toBe(1);
+  const boxes = sun + 20;
+  expect([u[boxes], u[boxes + 3], u[boxes + 4], u[boxes + 5]]).toEqual([-1, 2, 1, 3]);
 });
 
 test("an untextured mesh binds the white pixel and keeps the default key light", () => {
@@ -155,13 +176,32 @@ test("instanced meshes draw once with an instance buffer, count and sway, on a p
   expect(instances.count).toBe(3);
   world.meshes.set(entity, { mesh: renderer.addMesh(box()), color: vec3(1, 1, 1), instances, sway: 0.06 });
   const [draw] = renderer.draws(world, { eye: vec3(0, 0, 0), target: vec3(0, 0, -1), fovY: 1 }, { ambient: vec3(0, 0, 0), time: 2.5 });
-  expect([draw.instanceBuffer, draw.instances]).toEqual([instances.buffer, 3]);
+  // All three sit in one ground cell, drawn as the range of that cell.
+  expect(instances.cells).toHaveLength(1);
+  expect([draw.instanceBuffer, draw.instances, draw.firstInstance]).toEqual([instances.buffer, 3, 0]);
   expect(pipelines[draw.pipeline].instanceStride).toBe(INSTANCE_FLOATS * 4);
   expect(pipelines[draw.pipeline].instanceAttributes?.map((a) => a.location)).toEqual([3, 4]);
   const u = writes[writes.length - 1];
   // material.w is the sway; sunDir.w the time, with no sun set.
   expect(u[39]).toBeCloseTo(0.06, 5);
   expect(u[40 + 3 * 4 + 3]).toBe(2.5);
+});
+
+test("instance cells outside the view are skipped, and on mobile far cells draw a prefix", () => {
+  // 100 small instances in a cell 2 m ahead and 100 in a cell 200 m ahead, plus 100 behind the camera.
+  const data: number[] = [];
+  for (const z of [-2, -200, 120]) for (let i = 0; i < 100; i++) data.push((i % 10) * 0.1, 0, z - Math.floor(i / 10) * 0.1, 1, 0, 0, 0, 0);
+  const camera = { eye: vec3(0, 1, 0), target: vec3(0, 1, -10), fovY: 1, far: 500 };
+  const counts = (mobile: boolean): number[] => {
+    const { gpu } = recordingGpu();
+    const renderer = createRenderer({ ...gpu, mobile });
+    const { world, entity } = oneBoxWorld();
+    world.meshes.set(entity, { mesh: renderer.addMesh(box()), color: vec3(1, 1, 1), instances: renderer.addInstances(new Float32Array(data)) });
+    return renderer.draws(world, camera).map((d: Draw): number => d.instances ?? 1).sort((a: number, b: number): number => b - a);
+  };
+  expect(counts(false)).toEqual([100, 100]);
+  // The box's radius is 0.87 m: full density at 2 m, the floor (8 of 100) at 200 m.
+  expect(counts(true)).toEqual([100, 8]);
 });
 
 test("every renderer shader is fully interpolated (bun cannot compile WGSL, but it can catch a literal ${)", () => {

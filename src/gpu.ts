@@ -58,6 +58,8 @@ export interface Draw {
   // With a pipeline that has instance attributes: the per-instance buffer and how many instances to draw.
   instanceBuffer?: number;
   instances?: number;
+  // First instance of the range (default 0).
+  firstInstance?: number;
 }
 
 // Synchronous rendering surface. Code that must also run in scriptc library mode (iOS), where promises are
@@ -82,6 +84,9 @@ export interface RenderGpu {
   // A texture pipelines can render into and shaders can sample, in the surface's format. Free it with destroyTexture.
   createTarget: (width: number, height: number) => Texture;
   aspect: () => number;
+  // A phone or tablet: the renderer thins small instanced meshes with distance there (see INSTANCE_DETAIL in
+  // src/render). Set by the platform (the iOS host, a coarse pointer on the web); desktops leave it off.
+  mobile?: boolean;
 }
 
 export interface Gpu extends RenderGpu {

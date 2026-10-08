@@ -1,8 +1,9 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, relative, resolve } from "node:path";
 import type { Draw2D } from "../../src/draw2d";
 import type { Sim, SimRun } from "../../src/sim";
-import { CliError, type Ctx, frames60, loadConfig, num, print } from "../lib";
+import { CliError, type Ctx, exec, frames60, loadConfig, num, print } from "../lib";
 import { firstDifference, flatten, headlessRun, type InputSource, inputSource, lcg, loadSim, parseOptions } from "../simkit";
 
 export interface PlayArgs {
@@ -81,6 +82,84 @@ export async function record(ctx: Ctx, file: string, args: PlayArgs): Promise<vo
   const replay: Replay = { version: 1, seed, options, inputs, frames: r.frames, ...(args.throughOver ? { throughOver: true } : {}), checksums: r.trace, final: r.checksum };
   writeFileSync(resolve(process.cwd(), file), `${JSON.stringify(replay)}\n`);
   print(ctx, { file, frames: r.frames, final: r.checksum, checkpoints: r.trace.length }, (): string => `recorded ${r.frames} frames to ${file} (final checksum ${r.checksum})`);
+}
+
+function replaySource(file: string, replay: Replay): InputSource {
+  return {
+    describe: file,
+    at: (frame: number): number[] => {
+      let cur = replay.inputs[0]?.inputs ?? [];
+      for (const k of replay.inputs) {
+        if (k.frame > frame) break;
+        cur = k.inputs;
+      }
+      return cur;
+    },
+  };
+}
+
+// Re-records golden replays after a change that must not move the simulation, once that is shown: each replay runs
+// on the sim at a git ref (HEAD by default) and on the working tree, and its final state() must match, except
+// paths under --ignore and paths only the new state has (fields a change added). Matching replays are re-recorded
+// with the same seed, options, inputs and length; a replay whose state moved is reported and left alone.
+export async function rebase(ctx: Ctx, files: string[], from: string | undefined, ignore: string | undefined): Promise<void> {
+  if (files.length === 0) throw new CliError("MISSING_ARG", "replay rebase needs one or more replay files", "dotframe replay rebase replays/*.json --from HEAD --ignore state.kuro");
+  const config = loadConfig();
+  const ref = from ?? "HEAD";
+  const ignored = (ignore ?? "").split(",").map((p: string): string => p.trim()).filter(Boolean);
+  const skip = (path: string): boolean => ignored.some((p: string): boolean => path === p || path.startsWith(`${p}.`) || path.startsWith(`${p}[`));
+  const top = (await exec({ ...ctx, json: true }, config.root, { label: "git root", argv: ["git", "rev-parse", "--show-toplevel"] })).tail.trim();
+  if (!top) throw new CliError("NOT_GIT", `${config.root} is not in a git repository`, "rebase compares against a git ref; commit the game first", "core");
+  const dir = mkdtempSync(join(tmpdir(), "dotframe-rebase-"));
+  const add = await exec({ ...ctx, json: true }, top, { label: "git worktree", argv: ["git", "worktree", "add", "--detach", "-q", dir, ref] });
+  if (add.code !== 0) throw new CliError("BAD_REF", `cannot check out ${ref}: ${add.tail.trim()}`, "pass --from <commit, branch or tag>", "core");
+  try {
+    const oldRoot = join(dir, relative(top, config.root));
+    // The old tree shares the game's installed packages, so the comparison isolates the game's own change.
+    if (!existsSync(join(oldRoot, "node_modules")) && existsSync(join(config.root, "node_modules"))) symlinkSync(join(config.root, "node_modules"), join(oldRoot, "node_modules"));
+    const oldSim = await loadSim({ ...config, root: oldRoot });
+    const newSim = await loadSim(config);
+    const results: { file: string; status: "rebased" | "unchanged" | "moved"; difference: string; added: number }[] = [];
+    for (const file of files) {
+      const path = resolve(process.cwd(), file);
+      if (!existsSync(path)) throw new CliError("REPLAY_MISSING", `${file} does not exist`, "record one with dotframe replay record");
+      const replay = JSON.parse(readFileSync(path, "utf8")) as Replay;
+      const runOld = await headlessRun(oldSim, oldRoot);
+      runOld.start(replay.seed, replay.options);
+      const a = play(runOld, replaySource(file, replay), replay.frames, 0, replay.throughOver === true);
+      const runNew = await headlessRun(newSim, config.root);
+      runNew.start(replay.seed, replay.options);
+      const b = play(runNew, replaySource(file, replay), replay.frames, 60, replay.throughOver === true);
+      const before = flatten(a.state);
+      const after = flatten(b.state);
+      let difference = a.frames !== b.frames ? `frames: ${a.frames} vs ${b.frames}` : a.over !== b.over ? `over: ${a.over} vs ${b.over}` : "";
+      for (const [k, v] of before) {
+        if (difference) break;
+        if (skip(k)) continue;
+        if (!after.has(k)) difference = `${k}: removed`;
+        else if (after.get(k) !== v) difference = `${k}: ${String(v)} vs ${String(after.get(k))}`;
+        if (difference) break;
+      }
+      const added = [...after.keys()].filter((k: string): boolean => !before.has(k)).length;
+      const same = b.trace.every((c, i): boolean => replay.checksums[i]?.checksum === c.checksum) && b.checksum === replay.final;
+      const status = difference ? "moved" : same ? "unchanged" : "rebased";
+      if (status === "rebased" && !ctx.dryRun) {
+        const next: Replay = { ...replay, frames: b.frames, checksums: b.trace, final: b.checksum };
+        writeFileSync(path, `${JSON.stringify(next)}\n`);
+      }
+      results.push({ file, status, difference, added });
+    }
+    const moved = results.filter((r): boolean => r.status === "moved");
+    print(ctx, { from: ref, ignore: ignored, dryRun: ctx.dryRun, results, moved: moved.length }, (): string =>
+      results
+        .map((r): string => (r.status === "moved" ? `MOVED ${r.file}: ${r.difference}` : `${r.status === "rebased" ? (ctx.dryRun ? "would rebase" : "rebased") : "unchanged"} ${r.file}${r.added ? ` (${r.added} new fields)` : ""}`))
+        .join("\n"),
+    );
+    if (moved.length > 0) process.exit(1);
+  } finally {
+    await exec({ ...ctx, json: true }, top, { label: "git worktree", argv: ["git", "worktree", "remove", "--force", dir] });
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 export async function verify(ctx: Ctx, files: string[]): Promise<void> {

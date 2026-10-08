@@ -3,7 +3,7 @@
 import { spawnSync } from "node:child_process";
 import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, relative } from "node:path";
+import { basename, dirname, join, relative } from "node:path";
 
 // Vertex attributes loadGlb reads. Everything else (TANGENT, TEXCOORD_1, COLOR_0, morph targets) is dead weight.
 const KEPT_ATTRIBUTES = ["POSITION", "NORMAL", "TEXCOORD_0", "JOINTS_0", "WEIGHTS_0"];
@@ -62,6 +62,53 @@ export function writeGlb(doc: Json, bin: Uint8Array): Uint8Array {
   return out;
 }
 
+// Packs a .gltf with external buffers and images (the Poly Haven layout) into one GLB: every buffer goes into one
+// binary chunk, and each image file becomes a buffer view. Returns null on a data: URI or a missing file.
+export function packGltf(path: string): Uint8Array | null {
+  const doc = JSON.parse(readFileSync(path, "utf8"));
+  const dir = dirname(path);
+  const read = (uri: string): Uint8Array | null => {
+    if (uri.startsWith("data:")) return null;
+    try {
+      return new Uint8Array(readFileSync(join(dir, decodeURIComponent(uri))));
+    } catch {
+      return null;
+    }
+  };
+  const placed: { at: number; data: Uint8Array }[] = [];
+  let length = 0;
+  const place = (data: Uint8Array): number => {
+    length += (4 - (length % 4)) % 4;
+    placed.push({ at: length, data });
+    length += data.byteLength;
+    return placed[placed.length - 1].at;
+  };
+  const offsets: number[] = [];
+  for (const b of doc.buffers ?? []) {
+    const data = b.uri === undefined ? null : read(b.uri);
+    if (!data) return null;
+    offsets.push(place(data));
+  }
+  for (const v of doc.bufferViews ?? []) {
+    v.byteOffset = (v.byteOffset ?? 0) + offsets[v.buffer];
+    v.buffer = 0;
+  }
+  for (const image of doc.images ?? []) {
+    if (image.uri === undefined) continue;
+    const data = read(image.uri);
+    if (!data) return null;
+    doc.bufferViews ??= [];
+    doc.bufferViews.push({ buffer: 0, byteOffset: place(data), byteLength: data.byteLength });
+    image.bufferView = doc.bufferViews.length - 1;
+    image.mimeType ??= /\.png$/i.test(image.uri) ? "image/png" : "image/jpeg";
+    delete image.uri;
+  }
+  const bin = new Uint8Array(Math.ceil(length / 4) * 4);
+  for (const p of placed) bin.set(p.data, p.at);
+  doc.buffers = [{ byteLength: bin.byteLength }];
+  return writeGlb(doc, bin);
+}
+
 function baseColorRef(m: Json): Json {
   return m.pbrMetallicRoughness?.baseColorTexture ?? m.extensions?.KHR_materials_pbrSpecularGlossiness?.diffuseTexture;
 }
@@ -87,14 +134,21 @@ function hasChunk(bytes: Uint8Array, name: string): boolean {
 // images. Unused accessors, buffer views and images go away and indices are renumbered. Returns null when the file
 // uses something the rewrite does not understand (extra buffers, sparse accessors, required extensions), so the
 // caller copies it unchanged. clips keeps only the animations with those names (exact, or after "Armature|");
-// a GLB with none of them keeps all of its own.
-export function slimGlb(bytes: Uint8Array, recode?: (image: SlimImage) => { bytes: Uint8Array; mimeType: string } | null, clips?: string[]): Uint8Array | null {
+// a GLB with none of them keeps all of its own. rename then gives kept animations the names a game plays them by.
+export function slimGlb(bytes: Uint8Array, recode?: (image: SlimImage) => { bytes: Uint8Array; mimeType: string } | null, clips?: string[], rename?: Record<string, string>): Uint8Array | null {
   const parts = readGlb(bytes);
   if (!parts) return null;
   const doc = structuredClone(parts.doc);
   if (clips && clips.length > 0 && doc.animations) {
     const wanted = (a: Json): boolean => clips.some((c: string) => a.name === c || String(a.name ?? "").endsWith(`|${c}`));
     if (doc.animations.some(wanted)) doc.animations = doc.animations.filter(wanted);
+  }
+  if (rename && doc.animations) {
+    for (const a of doc.animations) {
+      const name = String(a.name ?? "");
+      const key = Object.keys(rename).find((k: string): boolean => name === k || name.endsWith(`|${k}`));
+      if (key) a.name = rename[key];
+    }
   }
   if ((doc.buffers?.length ?? 0) > 1 || (doc.extensionsRequired ?? []).some((e: string) => !KNOWN_REQUIRED.includes(e)) || (doc.accessors ?? []).some((a: Json) => a.sparse)) return null;
   if ((doc.images ?? []).some((i: Json) => i.bufferView === undefined)) return null;
@@ -293,38 +347,43 @@ export function ffmpegAvailable(): boolean {
 }
 
 // Copies src to out, slimming every .glb on the way. Other files are copied as they are.
-export function slimAssets(src: string, out: string, options: { jpeg?: boolean; quality?: number; clips?: string[] } = {}): SlimReport {
+export function slimAssets(src: string, out: string, options: { jpeg?: boolean; quality?: number; clips?: string[]; rename?: Record<string, string> } = {}): SlimReport {
   const jpeg = options.jpeg !== false && ffmpegAvailable();
   const quality = options.quality ?? 3;
   const report: SlimReport = { before: 0, after: 0, files: [], jpeg };
+  const one = (from: string, to: string, rel: string): void => {
+    mkdirSync(dirname(to), { recursive: true });
+    const before = statSync(from).size;
+    let after = before;
+    let note: string | undefined;
+    const gltf = from.toLowerCase().endsWith(".gltf") && to.toLowerCase().endsWith(".glb");
+    if (from.toLowerCase().endsWith(".glb") || gltf) {
+      const packed = gltf ? packGltf(from) : new Uint8Array(readFileSync(from));
+      if (!packed) throw new Error(`${from}: a buffer or image is missing or inline`);
+      const slim = slimGlb(packed, jpeg ? (image) => (image.opaque && image.mimeType === "image/png" ? (b => b && { bytes: b, mimeType: "image/jpeg" })(pngToJpeg(image.bytes, quality)) : null) : undefined, options.clips, options.rename);
+      if (slim && (gltf || slim.byteLength < before)) {
+        writeFileSync(to, slim);
+        after = slim.byteLength;
+      } else {
+        if (gltf) writeFileSync(to, packed);
+        else copyFileSync(from, to);
+        after = statSync(to).size;
+        note = slim ? "already slim" : "copied unchanged (unsupported layout)";
+      }
+      report.files.push({ path: rel, before, after, ...(note ? { note } : {}) });
+    } else copyFileSync(from, to);
+    report.before += before;
+    report.after += after;
+  };
   const walk = (dir: string): void => {
     for (const name of readdirSync(dir)) {
       const from = join(dir, name);
-      if (statSync(from).isDirectory()) {
-        walk(from);
-        continue;
-      }
-      const rel = relative(src, from);
-      const to = join(out, rel);
-      mkdirSync(dirname(to), { recursive: true });
-      const before = statSync(from).size;
-      let after = before;
-      let note: string | undefined;
-      if (name.toLowerCase().endsWith(".glb")) {
-        const slim = slimGlb(new Uint8Array(readFileSync(from)), jpeg ? (image) => (image.opaque && image.mimeType === "image/png" ? (b => b && { bytes: b, mimeType: "image/jpeg" })(pngToJpeg(image.bytes, quality)) : null) : undefined, options.clips);
-        if (slim && slim.byteLength < before) {
-          writeFileSync(to, slim);
-          after = slim.byteLength;
-        } else {
-          copyFileSync(from, to);
-          note = slim ? "already slim" : "copied unchanged (unsupported layout)";
-        }
-        report.files.push({ path: rel, before, after, ...(note ? { note } : {}) });
-      } else copyFileSync(from, to);
-      report.before += before;
-      report.after += after;
+      if (statSync(from).isDirectory()) walk(from);
+      else one(from, join(out, relative(src, from)), relative(src, from));
     }
   };
-  walk(src);
+  // One GLB in, one GLB out: importing a single model from another project.
+  if (statSync(src).isFile()) one(src, out, basename(src));
+  else walk(src);
   return report;
 }

@@ -48,7 +48,8 @@ export function openLibraryPlatform(options: WindowOptions): LibraryPlatform {
   if (status !== 0) throw new Error(`dfOpen failed: ${status}`);
   const audioReady = openNativeAudio();
   return {
-    gpu: createNativeRenderGpu(),
+    // Library mode is the iOS host.
+    gpu: createNativeRenderGpu(true),
     input: createNativeInput(),
     audio: createNativeAudioPlayer(),
     storage: memoryStorage(),

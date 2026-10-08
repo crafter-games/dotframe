@@ -88,3 +88,66 @@ test("slimGlb keeps only the named clips, and every clip when none match", () =>
   expect((readGlb(kept as Uint8Array)?.doc.accessors ?? []).length).toBeLessThan((readGlb(slimGlb(glb) as Uint8Array)?.doc.accessors ?? []).length);
   expect(names(slimGlb(glb, undefined, ["cat_meow"]))).toEqual(["Armature|dog_walk", "Armature|dog_bark", "dog_run"]);
 });
+
+test("slimGlb renames kept clips to the names a game plays", () => {
+  const parts = readGlb(fixture());
+  if (!parts) throw new Error("fixture");
+  const clip = (name: string, input: number) => ({ name, channels: [{ sampler: 0, target: { node: 0, path: "translation" } }], samplers: [{ input, output: 0 }] });
+  const glb = writeGlb({ ...parts.doc, animations: [clip("Armature|labrador_walk_fwd_01", 1), clip("labrador_bark", 3)] }, parts.bin);
+  const out = readGlb(slimGlb(glb, undefined, ["labrador_walk_fwd_01"], { labrador_walk_fwd_01: "walk" }) as Uint8Array);
+  expect((out?.doc.animations ?? []).map((a: { name: string }) => a.name)).toEqual(["walk"]);
+});
+
+test("slimAssets packs a .gltf with an external .bin and image into one GLB", async () => {
+	const { mkdtempSync, writeFileSync, readFileSync } = await import("node:fs");
+	const { join } = await import("node:path");
+	const { tmpdir } = await import("node:os");
+	const { slimAssets } = await import("../cli/slim");
+	const dir = mkdtempSync(join(tmpdir(), "gltf-"));
+	const positions = new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]);
+	writeFileSync(join(dir, "m.bin"), new Uint8Array(positions.buffer));
+	const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 9, 9, 9]);
+	writeFileSync(join(dir, "diff.jpg"), jpeg);
+	writeFileSync(join(dir, "nor.jpg"), new Uint8Array(64));
+	const doc = {
+		asset: { version: "2.0" },
+		buffers: [{ uri: "m.bin", byteLength: 36 }],
+		bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: 36 }],
+		accessors: [
+			{
+				bufferView: 0,
+				type: "VEC3",
+				count: 3,
+				componentType: 5126,
+				min: [0, 0, 0],
+				max: [1, 1, 0],
+			},
+		],
+		images: [{ uri: "diff.jpg" }, { uri: "nor.jpg" }],
+		textures: [{ source: 0 }, { source: 1 }],
+		materials: [
+			{
+				pbrMetallicRoughness: { baseColorTexture: { index: 0 } },
+				normalTexture: { index: 1 },
+			},
+		],
+		meshes: [{ primitives: [{ attributes: { POSITION: 0 }, material: 0 }] }],
+		nodes: [{ mesh: 0 }],
+		scenes: [{ nodes: [0] }],
+	};
+	writeFileSync(join(dir, "m.gltf"), JSON.stringify(doc));
+	slimAssets(join(dir, "m.gltf"), join(dir, "out.glb"), { jpeg: false });
+	const parts = readGlb(new Uint8Array(readFileSync(join(dir, "out.glb"))));
+	expect(parts).not.toBeNull();
+	expect(parts?.doc.images).toHaveLength(1);
+	expect(parts?.doc.buffers[0].uri).toBeUndefined();
+	const view = parts?.doc.bufferViews[parts.doc.images[0].bufferView];
+	expect([
+		...(parts?.bin.subarray(
+			view.byteOffset,
+			view.byteOffset + view.byteLength,
+		) ?? []),
+	]).toEqual([...jpeg]);
+	const model = loadGlb(new Uint8Array(readFileSync(join(dir, "out.glb"))));
+	expect(model.primitives).toHaveLength(1);
+});

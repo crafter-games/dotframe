@@ -12,8 +12,11 @@ dotframe is a TypeScript game engine. One codebase runs on the web (WebGPU), in 
 2. `dotframe sim --mash 7 --frames 600 --json`: run it headless and read `state` and `checksum`.
 3. `dotframe snap --frame 300 --mash 7 --out f300.png`: render one frame with the real WebGPU renderer, then open the PNG and look at it. The JSON state tells you what the simulation did; only the image tells you what a player sees.
 4. `dotframe replay verify replays/*.json`: golden replays must still pass. If a change is meant to alter gameplay, re-record them on purpose and say so.
+   - A change that adds state or touches the checksum without moving gameplay fails verify too. Show that it did not move anything, then re-record: `dotframe replay rebase replays/*.json` runs each replay on the sim at HEAD and on the working tree and re-records only the ones whose final `state()` matches (fields the change added are allowed; `--ignore state.x` for intended changes). It reports the rest as MOVED with the first differing field and exits 1.
 5. For online games, `dotframe desync` (see `dotframe skills get netplay`).
 6. Only then `dotframe build <target>`.
+
+Performance: `dotframe perf --frames 600 --options '<json>'` reports load time, the requestAnimationFrame interval and the CPU time of step and render (p50, p95, max), plus any frame over 50 ms. It measures this machine's browser, capped at its vsync, so a phone needs its own run. Another agent-browser tab in front throttles the page to 1 fps: rerun before trusting a row of 1000 ms hitches.
 
 Never claim a visual change works from the JSON alone. Snap it and look.
 
@@ -46,8 +49,8 @@ Prove a check can fail before trusting its green: make render change one field o
 
 | Level | Commands | Rule |
 |---|---|---|
-| Read | `sim`, `snap`, `replay verify`, `desync`, `doctor`, `config get`, `skills` | Run freely |
-| Local write | `build`, `replay record`, `config set`, `new`, `dev`, `doctor --fix` | Run freely, report what changed |
+| Read | `sim`, `snap`, `compare`, `replay verify`, `desync`, `doctor`, `config get`, `skills` | Run freely |
+| Local write | `build`, `replay record`, `replay rebase`, `assets slim`, `assets font`, `config set`, `new`, `dev`, `doctor --fix` | Run freely, report what changed |
 | External | `deploy`, `relay deploy`, `device install` | Run `--dry-run` first, show the plan, rerun with `--yes` only after the human approves |
 
 `--yes` is the human's approval, not yours. Never add it on your own.
@@ -84,3 +87,7 @@ render: (draw) => {
 ## Other guides
 
 `dotframe skills list`. Load the one that matches the task: netplay, export-web, discord, ios, macos, relay, game-design, assets.
+
+## Porting a game from another engine
+
+`dotframe compare --frame <n> --ref <png>` puts the port's frame next to the original's picture of the same shot (compare.png: port, reference, difference x4) with the mean difference and a 3x3 grid of where the port is darker or brighter. Add `"reference": {"command": [...]}` to dotframe.json, with `{shot}` and `{out}` placeholders, to have compare capture the original itself (for example a Godot script that loads that moment). Judge the picture, not the number: grain, tape noise and animation phase keep the difference above zero.
