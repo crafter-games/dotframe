@@ -39,6 +39,10 @@ const PIPELINE_DEPTH = 1;
 const PIPELINE_BLEND = 4;
 const PIPELINE_NO_DEPTH_WRITE = 2;
 
+// Milliseconds the frame calls spent, summed since the last reset: begin (acquiring the target, where a host waits
+// for a free drawable), encode (the draw calls) and end (submit and present), and the draw count. perf.ts reads them.
+export const gpuTiming = { begin: 0, encode: 0, end: 0, draws: 0 };
+
 export function createNativeRenderGpu(): RenderGpu {
   const depthPipelines = new Set<number>();
   return {
@@ -89,10 +93,13 @@ export function createNativeRenderGpu(): RenderGpu {
       return { id, width, height };
     },
     frame: (clear: Color, draws: Draw[], target?: Texture): void => {
+      const t0 = performance.now();
       // Pipelines without depth cannot run in a pass with a depth attachment, so a frame that mixes them (a 3D
       // scene under a 2D HUD) opens a new pass, keeping what was drawn, each time the kind changes.
       let usesDepth = draws.length > 0 && depthPipelines.has(draws[0].pipeline);
       const began = target ? dfTarget(1, target.id, clear.r, clear.g, clear.b, usesDepth ? 1 : 0) : dfBegin(clear.r, clear.g, clear.b, usesDepth);
+      const t1 = performance.now();
+      gpuTiming.begin += t1 - t0;
       if (began !== 0) return;
       for (const draw of draws) {
         const depth = depthPipelines.has(draw.pipeline);
@@ -102,7 +109,11 @@ export function createNativeRenderGpu(): RenderGpu {
         }
         dfDraw(draw.pipeline, draw.bindGroup, draw.vertexBuffer, draw.indexBuffer, draw.first, draw.count, draw.instanceBuffer ?? -1, draw.instances ?? 1);
       }
+      const t2 = performance.now();
       dfEnd();
+      gpuTiming.encode += t2 - t1;
+      gpuTiming.end += performance.now() - t2;
+      gpuTiming.draws += draws.length;
     },
     aspect: (): number => dfWidth() / Math.max(dfHeight(), 1),
   };
