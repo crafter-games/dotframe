@@ -8,7 +8,10 @@ export interface Draw2D {
   begin: () => void;
   // Changes the logical canvas size (for a window that resizes); coordinates map onto the whole surface.
   resize: (width: number, height: number) => void;
-  end: (clear: Color) => void;
+  // With target (gpu.createTarget), the frame renders into that texture and presents nothing: an in-world screen
+  // or sign drawn with the same calls, then sampled by a mesh. A second Draw2D sized to the target keeps its
+  // coordinates apart from the HUD's.
+  end: (clear: Color, target?: Texture) => void;
   // Queues draws from another renderer (a 3D scene) to run before this frame's 2D shapes, so the HUD lands on top.
   scene: (draws: Draw[]) => void;
   save: () => void;
@@ -673,7 +676,7 @@ export function createDraw2D(gpu: RenderGpu, width: number, height: number): Dra
     scene: (draws: Draw[]): void => {
       for (const draw of draws) under.push(draw);
     },
-    end: (clear: Color): void => {
+    end: (clear: Color, target?: Texture): void => {
       if (gpuCapacity < capacity) {
         gpu.destroyBuffer(vertexBuffer);
         vertexBuffer = gpu.createBuffer(BufferUsage.Vertex, new Uint8Array(capacity * WORDS_PER_VERTEX * 4));
@@ -692,7 +695,8 @@ export function createDraw2D(gpu: RenderGpu, width: number, height: number): Dra
           count: batch.count,
         });
       }
-      gpu.frame(clear, draws);
+      if (target) gpu.frame(clear, draws, target);
+      else gpu.frame(clear, draws);
     },
     save: (): void => {
       stack.push({ ...state });
