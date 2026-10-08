@@ -14,6 +14,9 @@ export interface Camera {
   // Render layers this camera draws, a bitmask (default 1): a mesh shows when MeshRef.layers shares a bit, so a
   // viewfinder can see what the bare eye does not (Godot cull_mask).
   layers?: number;
+  // Width over height of the image; defaults to the surface's (gpu.aspect). Set it when drawing into a target of
+  // another shape, such as a 4:3 tape for an in-game TV.
+  aspect?: number;
 }
 
 // Replaces the game's camera in every draws() call while set (snap --camera): eye, target and fovY; the game's
@@ -237,6 +240,9 @@ export interface Renderer {
   addSkinnedMesh: (data: MeshData, skin: SkinnedData) => number;
   // Uploads instances (INSTANCE_FLOATS each) for MeshRef.instances.
   addInstances: (data: Float32Array) => Instances;
+  // Rewrites an instance set in place with the same number of instances (rice laid down as it is walked over).
+  // Costs an upload of the whole set, so call it when the data changes, not every frame out of habit.
+  updateInstances: (instances: Instances, data: Float32Array) => void;
   // The scene's draws without presenting a frame, for Draw2D.scene() to put under a 2D HUD in Sim.render.
   draws: (world: World, camera: Camera, environment?: Environment) => Draw[];
   render: (world: World, camera: Camera, clear: Color, environment?: Environment) => void;
@@ -718,6 +724,13 @@ export function createRenderer(gpu: RenderGpu): Renderer {
     return { buffer: gpu.createBuffer(BufferUsage.Vertex, f32Bytes(split.data)), count: data.length / INSTANCE_FLOATS, cells: split.cells };
   };
 
+  const updateInstances = (instances: Instances, data: Float32Array): void => {
+    if (data.length / INSTANCE_FLOATS !== instances.count) throw new Error(`updateInstances: ${data.length / INSTANCE_FLOATS} instances for a set of ${instances.count}`);
+    const split = splitCells(data);
+    gpu.writeBuffer(instances.buffer, f32Bytes(split.data));
+    instances.cells = split.cells;
+  };
+
   // Particles: one pipeline, quad and uniform buffer, made on first use; the instance buffer grows as needed.
   const particle = { pipeline: -1, quad: -1, indices: -1, uniforms: -1, bindGroup: -1, instances: -1, capacity: 0 };
   const particleUniforms = new Float32Array(32);
@@ -795,7 +808,7 @@ export function createRenderer(gpu: RenderGpu): Renderer {
       skyUniforms[slot * 4 + 3] = w;
     };
     skyUniforms.fill(0);
-    put(0, view[0], view[4], view[8], tanY * gpu.aspect());
+    put(0, view[0], view[4], view[8], tanY * (camera.aspect ?? gpu.aspect()));
     put(1, view[1], view[5], view[9], tanY);
     put(2, -view[2], -view[6], -view[10], env.time ?? 0);
     put(3, s.zenith.x, s.zenith.y, s.zenith.z, env.exposure ?? 0);
@@ -816,10 +829,10 @@ export function createRenderer(gpu: RenderGpu): Renderer {
 
   const draws = (world: World, gameCamera: Camera, environment?: Environment): Draw[] => {
     const forced = cameraOverride.camera;
-    const camera: Camera = forced ? { eye: forced.eye, target: forced.target, fovY: forced.fovY, near: gameCamera.near, far: gameCamera.far, layers: gameCamera.layers } : gameCamera;
+    const camera: Camera = forced ? { eye: forced.eye, target: forced.target, fovY: forced.fovY, near: gameCamera.near, far: gameCamera.far, layers: gameCamera.layers, aspect: gameCamera.aspect } : gameCamera;
     const cameraLayers = camera.layers ?? 1;
     const view = lookAt(camera.eye, camera.target, vec3(0, 1, 0));
-    const viewProjection = multiply(perspective(camera.fovY, gpu.aspect(), camera.near ?? 0.1, camera.far ?? 100), view);
+    const viewProjection = multiply(perspective(camera.fovY, camera.aspect ?? gpu.aspect(), camera.near ?? 0.1, camera.far ?? 100), view);
     writeScene(camera, environment ?? DEFAULT_ENVIRONMENT);
     const out: Draw[] = [];
     // First, in its own pass (no depth): everything after draws over it.
@@ -937,7 +950,7 @@ export function createRenderer(gpu: RenderGpu): Renderer {
   const render = (world: World, camera: Camera, clear: Color, environment?: Environment): void =>
     gpu.frame(clear, draws(world, camera, environment));
 
-  return { addMesh, addSkinnedMesh, addInstances, draws, render };
+  return { addMesh, addSkinnedMesh, addInstances, updateInstances, draws, render };
 }
 
 function meshRadius(positions: Float32Array): number {

@@ -65,6 +65,21 @@ test("a mesh off layer 1 shows only to a camera on its layer and casts no shadow
   expect(frames.every((f) => f.draws.length === 0)).toBe(true);
 });
 
+test("updateInstances rewrites a set in place and keeps its count", () => {
+  const { gpu, writes } = recordingGpu();
+  const renderer = createRenderer(gpu);
+  const data = new Float32Array(INSTANCE_FLOATS * 3);
+  for (let i = 0; i < 3; i++) data.set([i * 20, 0, 0, 1], i * INSTANCE_FLOATS);
+  const set = renderer.addInstances(data);
+  const before = writes.length;
+  data[0] = 5;
+  renderer.updateInstances(set, data);
+  expect(writes.length).toBe(before + 1);
+  expect(set.count).toBe(3);
+  expect(Array.from(writes[writes.length - 1]).includes(5)).toBe(true);
+  expect(() => renderer.updateInstances(set, new Float32Array(INSTANCE_FLOATS))).toThrow();
+});
+
 test("Draw2D.scene() puts 3D draws before the 2D batch in one frame", () => {
   const { gpu, pipelines, frames } = recordingGpu();
   const renderer = createRenderer(gpu);
