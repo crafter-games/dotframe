@@ -33,7 +33,7 @@ function walker(): { sim: Sim; run: SimRun } {
     neutral: 0,
     random: (): number => 0,
     create: (): SimRun => run,
-    pilot: { yawTo: (dx: number, dz: number): number => Math.atan2(-dx, -dz), turn: 1.27, input: (m): number => (m.forward ? 1 : 0) | (m.use ? 2 : 0) | (byte(m.yaw) << 8) | (byte(m.pitch) << 16) },
+    pilot: { yawTo: (dx: number, dz: number): number => Math.atan2(-dx, -dz), turn: 1.27, input: (m): number => (m.forward ? 1 : 0) | (m.use || m.buttons.includes("use") ? 2 : 0) | (byte(m.yaw) << 8) | (byte(m.pitch) << 16) },
   };
   return { sim, run };
 }
@@ -48,6 +48,12 @@ describe("replay plan", () => {
     const yaw = p?.yaw ?? 1;
     expect(Math.abs(Math.atan2(Math.sin(yaw), Math.cos(yaw)))).toBeLessThan(0.02);
     expect(r.inputs.length).toBeGreaterThan(100);
+  });
+
+  test("holds named buttons through a step", () => {
+    const { sim, run } = walker();
+    const r = runPlan(sim, run, [{ wait: 4, with: ["use"] }, { expect: "used", is: 4 }]);
+    expect(r.steps.every((s) => s.ok)).toBe(true);
   });
 
   test("stops at the first failed step", () => {

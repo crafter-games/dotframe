@@ -58,8 +58,9 @@ export interface Pilot {
   yawTo: (dx: number, dz: number) => number;
   // The most the view turns in one frame, in radians (the input's largest look value).
   turn: number;
-  // One frame's input: turn the view by yaw and pitch radians (within turn), walk forward, press the use button.
-  input: (move: { forward: boolean; yaw: number; pitch: number; use: boolean }) => number;
+  // One frame's input: turn the view by yaw and pitch radians (within turn), walk forward, press the use button, and
+  // hold the game's named buttons (a plan step's "with", such as "crouch" or "camera").
+  input: (move: { forward: boolean; yaw: number; pitch: number; use: boolean; buttons: string[] }) => number;
 }
 
 export interface Sim {

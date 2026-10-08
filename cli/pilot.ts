@@ -5,12 +5,14 @@ import { CliError } from "./lib";
 // A replay plan: what player 0 does, step by step, for replay record --plan. Walking and aiming are steered from the
 // game's own pose each frame, so a plan survives a change in walk speed or a moved spawn where hand-tuned inputs
 // do not.
-export type PlanStep =
+// Any step but expect can hold named buttons while it runs ("with": ["crouch"]); the game maps the names.
+export type PlanStep = (
   | { go: [number, number]; within?: number; stop?: number }
   | { look: [number, number, number] }
   | { press: number }
   | { wait: number | { until: string; is: unknown; max?: number } }
-  | { expect: string; is: unknown };
+  | { expect: string; is: unknown }
+) & { with?: string[] };
 
 export interface PlanResult {
   inputs: number[];
@@ -50,6 +52,7 @@ export function runPlan(sim: Sim, run: SimRun, plan: PlanStep[]): PlanResult {
   const clamp = (v: number): number => Math.max(-pilot.turn, Math.min(pilot.turn, v));
   for (const [i, step] of plan.entries()) {
     const start = inputs.length;
+    const buttons = step.with ?? [];
     let ok = true;
     let detail = "";
     let kind = "";
@@ -66,9 +69,9 @@ export function runPlan(sim: Sim, run: SimRun, plan: PlanStep[]): PlanResult {
           break;
         }
         const d = wrap(pilot.yawTo(dx, dz) - p.yaw);
-        push(pilot.input({ forward: Math.abs(d) < 0.3, yaw: clamp(d), pitch: 0, use: false }));
+        push(pilot.input({ forward: Math.abs(d) < 0.3, yaw: clamp(d), pitch: 0, use: false, buttons }));
       }
-      for (let k = 0; k < (step.stop ?? 30); k++) push(pilot.input({ forward: false, yaw: 0, pitch: 0, use: false }));
+      for (let k = 0; k < (step.stop ?? 30); k++) push(pilot.input({ forward: false, yaw: 0, pitch: 0, use: false, buttons }));
       const p = pose();
       detail = `at ${p.x.toFixed(2)}, ${p.z.toFixed(2)}`;
       if (!ok) detail = `did not reach ${step.go.join(", ")} (stuck ${detail})`;
@@ -82,15 +85,15 @@ export function runPlan(sim: Sim, run: SimRun, plan: PlanStep[]): PlanResult {
         const yaw = wrap(pilot.yawTo(dx, dz) - p.yaw);
         const pitch = Math.atan2(dy, Math.hypot(dx, dz)) - p.pitch;
         if (Math.abs(yaw) < 0.005 && Math.abs(pitch) < 0.005) break;
-        push(pilot.input({ forward: false, yaw: clamp(yaw), pitch: clamp(pitch), use: false }));
+        push(pilot.input({ forward: false, yaw: clamp(yaw), pitch: clamp(pitch), use: false, buttons }));
       }
     } else if ("press" in step) {
       kind = "press";
-      for (let k = 0; k < step.press; k++) push(pilot.input({ forward: false, yaw: 0, pitch: 0, use: true }));
-      push(pilot.input({ forward: false, yaw: 0, pitch: 0, use: false }));
+      for (let k = 0; k < step.press; k++) push(pilot.input({ forward: false, yaw: 0, pitch: 0, use: true, buttons }));
+      push(pilot.input({ forward: false, yaw: 0, pitch: 0, use: false, buttons }));
     } else if ("wait" in step) {
       kind = "wait";
-      const idle = pilot.input({ forward: false, yaw: 0, pitch: 0, use: false });
+      const idle = pilot.input({ forward: false, yaw: 0, pitch: 0, use: false, buttons });
       if (typeof step.wait === "number") for (let k = 0; k < step.wait; k++) push(idle);
       else {
         const w = step.wait;

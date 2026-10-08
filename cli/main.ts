@@ -95,7 +95,8 @@ record stores seed, options, inputs, and a checksum every 60 frames. verify repl
 first divergent frame.
 --plan steers player 0 through Sim.pilot: a JSON array of {"go": [x, z]}, {"look": [x, y, z]}, {"press": frames},
 {"wait": frames | {"until": "state.path", "is": value, "max": frames}} and {"expect": "state.path", "is": value} (an
-array at the path passes when it contains the value). Each step reports its frame; a failed step writes nothing.
+array at the path passes when it contains the value). Any step can hold the game's named buttons with "with":
+["crouch"]. Each step reports its frame; a failed step writes nothing.
 --native compiles the sim with scriptc and replays there, as the macOS, Windows and iOS builds run it: a native-only
 abort or divergence shows up off the device. doctor runs it over replays/*.json.
 

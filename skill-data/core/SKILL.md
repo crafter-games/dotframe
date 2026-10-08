@@ -32,7 +32,7 @@ Never claim a visual change works from the JSON alone. Snap it and look.
 - `--inputs file.jsonl`: one line per frame, `[p0, p1]`, or sparse `{"frame": 120, "inputs": [p0, p1]}` held until the next line. Each input is the game's JSON shape (for example `{"right": true, "attack": true}`) or an already-encoded number.
 - `--seed <n>` seeds the simulation; `--options '<json>'` overrides match options (stage, characters, stocks).
 - `--every <n>` on `sim` adds a checksum trace.
-- `--plan plan.json` on `replay record` walks and aims player 0 for you, for first- and third-person games that declare `pilot` (see below): `{"go": [x, z]}`, `{"look": [x, y, z]}`, `{"press": frames}`, `{"wait": frames}` or `{"wait": {"until": "story.phase", "is": "day"}}`, and `{"expect": "story.seen", "is": "collar"}` (an array passes when it contains the value). Steering reads the game's pose every frame, so the plan survives a moved spawn or a new walk speed; prefer it to hand-tuned `--inputs` and to one-off route scripts. A failed step names its frame and writes nothing.
+- `--plan plan.json` on `replay record` walks and aims player 0 for you, for first- and third-person games that declare `pilot` (see below): `{"go": [x, z]}`, `{"look": [x, y, z]}`, `{"press": frames}`, `{"wait": frames}` or `{"wait": {"until": "story.phase", "is": "day"}}`, and `{"expect": "story.seen", "is": "collar"}` (an array passes when it contains the value); any step can hold named buttons with `"with": ["crouch"]`. Steering reads the game's pose every frame, so the plan survives a moved spawn or a new walk speed; prefer it to hand-tuned `--inputs` and to one-off route scripts. A failed step names its frame and writes nothing.
 
 ## The Sim contract
 
@@ -42,7 +42,7 @@ Never claim a visual change works from the JSON alone. Snap it and look.
 - Randomness comes from a seeded generator that `save`/`restore` capture.
 - `inspect` returns the whole state graph so `desync` can name the exact field that differs.
 - `render` must draw with whatever Draw2D it receives, including a stub that renders nothing. `desync` calls `render(stubDraw)` to prove rendering leaves state alone; a render that skips itself when there is no real renderer makes that check pass without checking anything. `dotframe doctor` fails `sim:render` when render makes no draw calls.
-- For `replay record --plan`, declare `pilot` on the Sim (`yawTo(dx, dz)`, `turn` radians per frame, `input({forward, yaw, pitch, use})` returning the encoded input) and `pose()` on the run (player 0's eye position, yaw and pitch). The game owns its angle conventions and input encoding; the CLI only aims and walks.
+- For `replay record --plan`, declare `pilot` on the Sim (`yawTo(dx, dz)`, `turn` radians per frame, `input({forward, yaw, pitch, use, buttons})` returning the encoded input) and `pose()` on the run (player 0's eye position, yaw and pitch). The game owns its angle conventions and input encoding; the CLI only aims and walks.
 - Declare `rollbackWindow` (the most frames your netplay rolls back) so `desync` warns when a link needs more.
 
 Prove a check can fail before trusting its green: make render change one field on purpose, run `desync`, and confirm it fails on peer 1 and names that field. Then revert.
