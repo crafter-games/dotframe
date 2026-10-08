@@ -153,8 +153,8 @@ a model whose library ships far more clips than the game plays; GLBs with none o
   dotframe assets slim tools/dog assets/models --clips walk_fwd_01,run_fwd_01
   dotframe assets slim tools/dog/dog.glb assets/models/dog.glb --clips walk_fwd_01 --rename walk_fwd_01=walk
 
-src and out may be two .glb files instead of folders, to import one model. --rename gives the kept animations the
-names the game plays them by. font bakes a TTF into the SDF atlas Draw2D.addFont reads (out.png and out.json):
+src and out may be two .glb files instead of folders, to import one model; src may also be a .gltf with its .bin and
+images beside it, packed into the GLB. --rename gives the kept animations the names the game plays them by. font bakes a TTF into the SDF atlas Draw2D.addFont reads (out.png and out.json):
 printable ASCII and Latin-1, plus every other character in the text files under --chars-from, so a caption cannot
 miss a glyph. It builds tools/bake-font.c with the machine's C compiler the first time.
 

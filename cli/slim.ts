@@ -62,6 +62,53 @@ export function writeGlb(doc: Json, bin: Uint8Array): Uint8Array {
   return out;
 }
 
+// Packs a .gltf with external buffers and images (the Poly Haven layout) into one GLB: every buffer goes into one
+// binary chunk, and each image file becomes a buffer view. Returns null on a data: URI or a missing file.
+export function packGltf(path: string): Uint8Array | null {
+  const doc = JSON.parse(readFileSync(path, "utf8"));
+  const dir = dirname(path);
+  const read = (uri: string): Uint8Array | null => {
+    if (uri.startsWith("data:")) return null;
+    try {
+      return new Uint8Array(readFileSync(join(dir, decodeURIComponent(uri))));
+    } catch {
+      return null;
+    }
+  };
+  const placed: { at: number; data: Uint8Array }[] = [];
+  let length = 0;
+  const place = (data: Uint8Array): number => {
+    length += (4 - (length % 4)) % 4;
+    placed.push({ at: length, data });
+    length += data.byteLength;
+    return placed[placed.length - 1].at;
+  };
+  const offsets: number[] = [];
+  for (const b of doc.buffers ?? []) {
+    const data = b.uri === undefined ? null : read(b.uri);
+    if (!data) return null;
+    offsets.push(place(data));
+  }
+  for (const v of doc.bufferViews ?? []) {
+    v.byteOffset = (v.byteOffset ?? 0) + offsets[v.buffer];
+    v.buffer = 0;
+  }
+  for (const image of doc.images ?? []) {
+    if (image.uri === undefined) continue;
+    const data = read(image.uri);
+    if (!data) return null;
+    doc.bufferViews ??= [];
+    doc.bufferViews.push({ buffer: 0, byteOffset: place(data), byteLength: data.byteLength });
+    image.bufferView = doc.bufferViews.length - 1;
+    image.mimeType ??= /\.png$/i.test(image.uri) ? "image/png" : "image/jpeg";
+    delete image.uri;
+  }
+  const bin = new Uint8Array(Math.ceil(length / 4) * 4);
+  for (const p of placed) bin.set(p.data, p.at);
+  doc.buffers = [{ byteLength: bin.byteLength }];
+  return writeGlb(doc, bin);
+}
+
 function baseColorRef(m: Json): Json {
   return m.pbrMetallicRoughness?.baseColorTexture ?? m.extensions?.KHR_materials_pbrSpecularGlossiness?.diffuseTexture;
 }
@@ -309,13 +356,18 @@ export function slimAssets(src: string, out: string, options: { jpeg?: boolean; 
     const before = statSync(from).size;
     let after = before;
     let note: string | undefined;
-    if (from.toLowerCase().endsWith(".glb")) {
-      const slim = slimGlb(new Uint8Array(readFileSync(from)), jpeg ? (image) => (image.opaque && image.mimeType === "image/png" ? (b => b && { bytes: b, mimeType: "image/jpeg" })(pngToJpeg(image.bytes, quality)) : null) : undefined, options.clips, options.rename);
-      if (slim && slim.byteLength < before) {
+    const gltf = from.toLowerCase().endsWith(".gltf") && to.toLowerCase().endsWith(".glb");
+    if (from.toLowerCase().endsWith(".glb") || gltf) {
+      const packed = gltf ? packGltf(from) : new Uint8Array(readFileSync(from));
+      if (!packed) throw new Error(`${from}: a buffer or image is missing or inline`);
+      const slim = slimGlb(packed, jpeg ? (image) => (image.opaque && image.mimeType === "image/png" ? (b => b && { bytes: b, mimeType: "image/jpeg" })(pngToJpeg(image.bytes, quality)) : null) : undefined, options.clips, options.rename);
+      if (slim && (gltf || slim.byteLength < before)) {
         writeFileSync(to, slim);
         after = slim.byteLength;
       } else {
-        copyFileSync(from, to);
+        if (gltf) writeFileSync(to, packed);
+        else copyFileSync(from, to);
+        after = statSync(to).size;
         note = slim ? "already slim" : "copied unchanged (unsupported layout)";
       }
       report.files.push({ path: rel, before, after, ...(note ? { note } : {}) });
