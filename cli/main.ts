@@ -245,7 +245,6 @@ const { values, positionals } = parseArgs({
     online: { type: "boolean" },
     seeds: { type: "string" },
     site: { type: "string" },
-    native: { type: "boolean" },
     path: { type: "string" },
     provider: { type: "string" },
     compose: { type: "string" },

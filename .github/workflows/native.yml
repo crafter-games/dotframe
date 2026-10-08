@@ -18,7 +18,7 @@ jobs:
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.16.0
-      - run: npm install -g scriptc@0.2.0
+      - run: npm install -g scriptc@0.2.3
       - run: bun install --frozen-lockfile
       - uses: actions/cache@v4
         with:
@@ -56,7 +56,7 @@ jobs:
             cd "/tmp/templates/$t"
             sed -i '' "s#\"dotframe\": \"[^\"]*\"#\"dotframe\": \"file:$tarball\"#" package.json
             bun install --minimum-release-age 0
-            bun add -d @scriptc/runtime-win32-x64-msvc@0.2.0 --minimum-release-age 0
+            bun add -d @scriptc/runtime-win32-x64-msvc@0.2.3 --minimum-release-age 0
             bun node_modules/dotframe/cli/main.ts build macos --json
             bun node_modules/dotframe/cli/main.ts build windows --json
             test -x "dist/macos/$t" && test -f "dist/windows/$t.exe"
