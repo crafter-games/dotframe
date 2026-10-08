@@ -1,5 +1,6 @@
 // Software mixer over an SDL3 audio stream: decoded sound effects, square tones and one streamed music track.
 // All entry points are called from the game thread; the SDL callback mixes on the audio thread under g_lock.
+// df_sound decodes on a worker thread: it returns the id at once, and voices on a sound still decoding wait silent.
 #include <SDL3/SDL.h>
 #include <math.h>
 #include <stdint.h>
@@ -26,7 +27,8 @@ typedef struct {
 typedef struct {
   int32_t sound;
   double position;
-  double step;
+  // Playback rate; the step per output frame also needs the sound's sample rate, known once it decodes.
+  double speed;
   float volume;
   // Balance gains from the pan: 1 and 1 in the center, one side fading to 0 at -1 or 1.
   float left;
@@ -118,6 +120,11 @@ static void SDLCALL mix(void *userdata, SDL_AudioStream *stream, int additional,
     for (int32_t v = 0; v < g_voice_count;) {
       Voice *voice = &g_voices[v];
       Sound *sound = &g_sounds[voice->sound];
+      if (sound->count == 0) {
+        v++;
+        continue;
+      }
+      double step = (double)sound->rate / OUTPUT_RATE * voice->speed;
       int done = 0;
       for (int f = 0; f < frames; f++) {
         uint64_t i = (uint64_t)voice->position;
@@ -133,7 +140,7 @@ static void SDLCALL mix(void *userdata, SDL_AudioStream *stream, int additional,
         float t = (float)(voice->position - (double)i);
         out[f * 2] += (sample(sound, i, 0) * (1 - t) + sample(sound, i + 1, 0) * t) * voice->volume * voice->left;
         out[f * 2 + 1] += (sample(sound, i, 1) * (1 - t) + sample(sound, i + 1, 1) * t) * voice->volume * voice->right;
-        voice->position += voice->step;
+        voice->position += step;
       }
       if (done) g_voices[v] = g_voices[--g_voice_count];
       else v++;
@@ -182,26 +189,59 @@ int32_t df_audio_open(void) {
   return 0;
 }
 
-// Decodes MP3 bytes into a playable sound.
-int32_t df_sound(const uint8_t *mp3, size_t len) {
-  if (g_sound_count >= MAX_SOUNDS) return -1;
+typedef struct {
+  int32_t id;
+  uint8_t *mp3;
+  size_t len;
+} DecodeJob;
+
+// Decodes still running, so closing waits for them before freeing the sounds and the lock.
+static SDL_AtomicInt g_decoding;
+
+static int SDLCALL decode(void *data) {
+  DecodeJob *job = data;
   drmp3_config config;
   drmp3_uint64 count = 0;
-  drmp3_int16 *decoded = drmp3_open_memory_and_read_pcm_frames_s16(mp3, len, &config, &count, NULL);
-  if (!decoded) return -2;
-  uint32_t channels = config.channels > 1 ? 2 : 1;
-  int16_t *frames = malloc(sizeof(int16_t) * channels * (size_t)count);
-  if (!frames) {
+  drmp3_int16 *decoded = drmp3_open_memory_and_read_pcm_frames_s16(job->mp3, job->len, &config, &count, NULL);
+  free(job->mp3);
+  if (decoded) {
+    uint32_t channels = config.channels > 1 ? 2 : 1;
+    int16_t *frames = malloc(sizeof(int16_t) * channels * (size_t)count);
+    if (frames) {
+      for (drmp3_uint64 i = 0; i < count; i++)
+        for (uint32_t c = 0; c < channels; c++) frames[i * channels + c] = decoded[i * config.channels + c];
+      SDL_LockMutex(g_lock);
+      g_sounds[job->id] = (Sound){frames, count, config.sampleRate, channels};
+      SDL_UnlockMutex(g_lock);
+    }
     drmp3_free(decoded, NULL);
+  }
+  free(job);
+  SDL_AddAtomicInt(&g_decoding, -1);
+  return 0;
+}
+
+// Takes MP3 bytes for a playable sound: copies them, decodes on a worker thread and returns the id right away.
+// A sound that fails to decode stays silent.
+int32_t df_sound(const uint8_t *mp3, size_t len) {
+  if (g_sound_count >= MAX_SOUNDS || !g_lock) return -1;
+  DecodeJob *job = malloc(sizeof *job);
+  uint8_t *copy = malloc(len);
+  if (!job || !copy) {
+    free(job);
+    free(copy);
     return -3;
   }
-  for (drmp3_uint64 i = 0; i < count; i++)
-    for (uint32_t c = 0; c < channels; c++) frames[i * channels + c] = decoded[i * config.channels + c];
-  drmp3_free(decoded, NULL);
+  memcpy(copy, mp3, len);
   SDL_LockMutex(g_lock);
   int32_t id = g_sound_count++;
-  g_sounds[id] = (Sound){frames, count, config.sampleRate, channels};
+  g_sounds[id] = (Sound){NULL, 0, OUTPUT_RATE, 1};
   SDL_UnlockMutex(g_lock);
+  *job = (DecodeJob){id, copy, len};
+  SDL_AddAtomicInt(&g_decoding, 1);
+  SDL_Thread *thread = SDL_CreateThread(decode, "df-mp3", job);
+  if (thread) SDL_DetachThread(thread);
+  else decode(job);
   return id;
 }
 
@@ -210,7 +250,7 @@ void df_play(int32_t sound, double volume, double rate) {
   SDL_LockMutex(g_lock);
   if (g_voice_count < MAX_VOICES) {
     g_voices[g_voice_count++] =
-        (Voice){sound, 0.0, (double)g_sounds[sound].rate / OUTPUT_RATE * rate, (float)volume, 1.0f, 1.0f, 0, 0};
+        (Voice){sound, 0.0, rate, (float)volume, 1.0f, 1.0f, 0, 0};
   }
   SDL_UnlockMutex(g_lock);
 }
@@ -276,6 +316,7 @@ int32_t df_audio_active(void) {
 }
 
 void df_audio_close(void) {
+  while (SDL_GetAtomicInt(&g_decoding) > 0) SDL_Delay(1);
   if (g_stream) SDL_DestroyAudioStream(g_stream);
   g_stream = NULL;
   if (g_music_open) drmp3_uninit(&g_music);
@@ -304,7 +345,7 @@ int32_t df_voice(int32_t op, double a, double b, double c, double d) {
     int32_t sound = (int32_t)a;
     if (sound >= 0 && sound < g_sound_count && g_voice_count < MAX_VOICES) {
       result = g_next_voice++;
-      g_voices[g_voice_count++] = (Voice){sound, 0.0, (double)g_sounds[sound].rate / OUTPUT_RATE * c, (float)b, 1.0f, 1.0f, (uint8_t)(d != 0), result};
+      g_voices[g_voice_count++] = (Voice){sound, 0.0, c, (float)b, 1.0f, 1.0f, (uint8_t)(d != 0), result};
     }
   } else {
     Voice *voice = find_voice((int32_t)a);
