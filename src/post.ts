@@ -3,6 +3,8 @@
 import { BufferUsage, type Draw, f32Bytes, type RenderGpu, type Texture } from "./gpu";
 
 export const POST_PARAMS = 16;
+// Size factor for post targets on mobile (gpu.mobile).
+export const POST_MOBILE_SCALE = 0.75;
 
 export interface PostPass {
   // The texture to render the scene into, sized on the last resize (undefined until then).
@@ -51,8 +53,11 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
   return {
     target: (): Texture | undefined => texture,
     resize: (width: number, height: number): void => {
-      const w = Math.max(1, Math.round(width));
-      const h = Math.max(1, Math.round(height));
+      // Phones (gpu.mobile) render full-screen passes at 0.75 of the size asked: a viewfinder pass over the scene's
+      // pass left an iPhone 15 GPU-bound (p95 21 ms) at 720 lines.
+      const k = gpu.mobile ? POST_MOBILE_SCALE : 1;
+      const w = Math.max(1, Math.round(width * k));
+      const h = Math.max(1, Math.round(height * k));
       if (texture && texture.width === w && texture.height === h) return;
       if (texture) gpu.destroyTexture(texture);
       texture = gpu.createTarget(w, h);
