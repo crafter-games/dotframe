@@ -20,6 +20,8 @@ export interface Camera {
   // Turn about the view direction, in radians (positive turns the camera's up toward its right): a hand-held or fallen
   // camera.
   roll?: number;
+  // A camera inside the scene (the one filming an in-game TV's picture): snap --camera does not replace it.
+  fixed?: boolean;
 }
 
 // Per-entity GPU buffers are cached by this key, so two worlds drawn by one renderer (an in-game TV's set and the
@@ -862,7 +864,7 @@ export function createRenderer(gpu: RenderGpu): Renderer {
   };
 
   const draws = (world: World, gameCamera: Camera, environment?: Environment): Draw[] => {
-    const forced = cameraOverride.camera;
+    const forced = gameCamera.fixed ? null : cameraOverride.camera;
     const camera: Camera = forced ? { eye: forced.eye, target: forced.target, fovY: forced.fovY, near: gameCamera.near, far: gameCamera.far, layers: gameCamera.layers, aspect: gameCamera.aspect, roll: gameCamera.roll } : gameCamera;
     const cameraLayers = camera.layers ?? 1;
     const view = lookAt(camera.eye, camera.target, rolledUp(camera));
