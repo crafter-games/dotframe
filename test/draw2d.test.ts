@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { parseColor, parseFont, triangulate } from "../src/draw2d";
+import { createDraw2D, parseColor, parseFont, triangulate } from "../src/draw2d";
 
 test("parses hex, rgb, rgba and named colors", () => {
   expect(parseColor("#fff")).toEqual({ r: 1, g: 1, b: 1, a: 1 });
@@ -55,4 +55,30 @@ test("parses CSS font shorthands used by Canvas2D games", () => {
   });
   expect(parseFont("72px Bangers, Impact")).toEqual({ size: 72, italic: false, families: ["bangers", "impact"] });
   expect(parseFont("bold 9.5px Menlo, monospace").size).toBe(9.5);
+});
+
+test("end with a target renders the 2D frame into that texture", () => {
+  const frames: { target?: { id: number } }[] = [];
+  const noop = (): number => 1;
+  const gpu = {
+    createBuffer: noop,
+    writeBuffer: (): void => {},
+    destroyBuffer: (): void => {},
+    createPipeline: noop,
+    bind: noop,
+    createTexture: (width: number, height: number) => ({ id: 7, width, height }),
+    destroyTexture: (): void => {},
+    frame: (_clear: unknown, _draws: unknown, target?: { id: number }): void => void frames.push({ target }),
+    createTarget: (width: number, height: number) => ({ id: 9, width, height }),
+    aspect: (): number => 4 / 3,
+  };
+  const draw = createDraw2D(gpu, 320, 240);
+  const screen = gpu.createTarget(320, 240);
+  draw.begin();
+  draw.setFillStyle("#123456");
+  draw.fillRect(0, 0, 320, 240);
+  draw.end({ r: 0, g: 0, b: 0 }, screen);
+  draw.begin();
+  draw.end({ r: 0, g: 0, b: 0 });
+  expect(frames.map((f) => f.target?.id)).toEqual([9, undefined]);
 });
