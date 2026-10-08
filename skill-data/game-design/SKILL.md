@@ -21,7 +21,7 @@ Templates: `fighter` (two players, knockback, stocks), `platformer` (one player,
 - Keep all state in one plain object graph. Then `structuredClone` is a snapshot and `inspect` is free.
 - Encode input as a small number per player. Replays, netplay and mashing all reuse it.
 - Make `state()` the summary a reviewer needs: positions, scores, who won. Agents read it after every sim.
-- Record a golden replay as soon as a mechanic works (`dotframe replay record replays/<name>.json --mash 7`) and keep `bun test` running them.
+- Record a golden replay as soon as a mechanic works (`dotframe replay record replays/<name>.json --mash 7`) and keep `bun run test` running them.
 - Add `--options` for anything you want to test in isolation (stage, character, one stock).
 
 See `dotframe skills get game-design --full` for a sim.ts walkthrough.
