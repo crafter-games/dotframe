@@ -176,13 +176,32 @@ test("instanced meshes draw once with an instance buffer, count and sway, on a p
   expect(instances.count).toBe(3);
   world.meshes.set(entity, { mesh: renderer.addMesh(box()), color: vec3(1, 1, 1), instances, sway: 0.06 });
   const [draw] = renderer.draws(world, { eye: vec3(0, 0, 0), target: vec3(0, 0, -1), fovY: 1 }, { ambient: vec3(0, 0, 0), time: 2.5 });
-  expect([draw.instanceBuffer, draw.instances]).toEqual([instances.buffer, 3]);
+  // All three sit in one ground cell, drawn as the range of that cell.
+  expect(instances.cells).toHaveLength(1);
+  expect([draw.instanceBuffer, draw.instances, draw.firstInstance]).toEqual([instances.buffer, 3, 0]);
   expect(pipelines[draw.pipeline].instanceStride).toBe(INSTANCE_FLOATS * 4);
   expect(pipelines[draw.pipeline].instanceAttributes?.map((a) => a.location)).toEqual([3, 4]);
   const u = writes[writes.length - 1];
   // material.w is the sway; sunDir.w the time, with no sun set.
   expect(u[39]).toBeCloseTo(0.06, 5);
   expect(u[40 + 3 * 4 + 3]).toBe(2.5);
+});
+
+test("instance cells outside the view are skipped, and on mobile far cells draw a prefix", () => {
+  // 100 small instances in a cell 2 m ahead and 100 in a cell 200 m ahead, plus 100 behind the camera.
+  const data: number[] = [];
+  for (const z of [-2, -200, 120]) for (let i = 0; i < 100; i++) data.push((i % 10) * 0.1, 0, z - Math.floor(i / 10) * 0.1, 1, 0, 0, 0, 0);
+  const camera = { eye: vec3(0, 1, 0), target: vec3(0, 1, -10), fovY: 1, far: 500 };
+  const counts = (mobile: boolean): number[] => {
+    const { gpu } = recordingGpu();
+    const renderer = createRenderer({ ...gpu, mobile });
+    const { world, entity } = oneBoxWorld();
+    world.meshes.set(entity, { mesh: renderer.addMesh(box()), color: vec3(1, 1, 1), instances: renderer.addInstances(new Float32Array(data)) });
+    return renderer.draws(world, camera).map((d: Draw): number => d.instances ?? 1).sort((a: number, b: number): number => b - a);
+  };
+  expect(counts(false)).toEqual([100, 100]);
+  // The box's radius is 0.87 m: full density at 2 m, the floor (8 of 100) at 200 m.
+  expect(counts(true)).toEqual([100, 8]);
 });
 
 test("every renderer shader is fully interpolated (bun cannot compile WGSL, but it can catch a literal ${)", () => {

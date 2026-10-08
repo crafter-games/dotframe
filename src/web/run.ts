@@ -287,9 +287,9 @@ export async function run(options: WindowOptions, setup: Setup, runOptions: RunO
           if (draw.instanceBuffer !== undefined && draw.instanceBuffer >= 0) pass.setVertexBuffer(1, buffers[draw.instanceBuffer]);
           if (draw.indexBuffer >= 0) {
             pass.setIndexBuffer(buffers[draw.indexBuffer], "uint32");
-            pass.drawIndexed(draw.count, instances, draw.first);
+            pass.drawIndexed(draw.count, instances, draw.first, 0, draw.firstInstance ?? 0);
           } else {
-            pass.draw(draw.count, instances, draw.first);
+            pass.draw(draw.count, instances, draw.first, draw.firstInstance ?? 0);
           }
         }
         pass.end();
@@ -299,6 +299,7 @@ export async function run(options: WindowOptions, setup: Setup, runOptions: RunO
       device.queue.submit([encoder.finish()]);
     },
     aspect: (): number => canvas.width / Math.max(canvas.height, 1),
+    mobile: typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches,
   };
 
   const pressed = new Set<string>();

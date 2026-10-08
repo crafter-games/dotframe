@@ -36,6 +36,19 @@ export interface MeshRef {
 export interface Instances {
   buffer: number;
   count: number;
+  // Ground cells over the buffer, which addInstances reorders cell by cell, each cell shuffled so any prefix is an
+  // even sample: the renderer skips cells outside the view and, on mobile, draws a prefix of the far ones.
+  cells: InstanceCell[];
+}
+
+export interface InstanceCell {
+  // Range in the set's buffer.
+  first: number;
+  count: number;
+  center: [number, number, number];
+  // Farthest instance from center, and the largest instance scale.
+  radius: number;
+  scale: number;
 }
 
 export interface World {

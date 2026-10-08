@@ -11,6 +11,7 @@ export function timedFrame(frame: (time: number) => boolean, since: number, ever
   const encode: number[] = [];
   const end: number[] = [];
   const draws: number[] = [];
+  const instances: number[] = [];
   let last = -1;
   let load = -1;
   const summary = (values: number[]): string => {
@@ -28,6 +29,7 @@ export function timedFrame(frame: (time: number) => boolean, since: number, ever
     gpuTiming.encode = 0;
     gpuTiming.end = 0;
     gpuTiming.draws = 0;
+    gpuTiming.instances = 0;
     const keep = frame(time);
     const total = performance.now() - t;
     cpu.push(total);
@@ -35,11 +37,12 @@ export function timedFrame(frame: (time: number) => boolean, since: number, ever
     encode.push(gpuTiming.encode);
     end.push(gpuTiming.end);
     draws.push(gpuTiming.draws);
+    instances.push(gpuTiming.instances);
     if (interval.length >= every) {
       // js: the frame minus the time inside the GPU calls, so the game's own work.
       const js = cpu.map((c: number, i: number): number => c - begin[i] - encode[i] - end[i]);
-      console.log(`dotframe-perf load ${Math.round(load)} ms | interval ${summary(interval)} | cpu ${summary(cpu)} | js ${summary(js)} | begin ${summary(begin)} | encode ${summary(encode)} | end ${summary(end)} | draws ${summary(draws)} | ${interval.length} frames`);
-      for (const list of [interval, cpu, begin, encode, end, draws]) list.length = 0;
+      console.log(`dotframe-perf load ${Math.round(load)} ms | interval ${summary(interval)} | cpu ${summary(cpu)} | js ${summary(js)} | begin ${summary(begin)} | encode ${summary(encode)} | end ${summary(end)} | draws ${summary(draws)} | instances ${summary(instances)} | ${interval.length} frames`);
+      for (const list of [interval, cpu, begin, encode, end, draws, instances]) list.length = 0;
     }
     return keep;
   };

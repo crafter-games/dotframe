@@ -18,7 +18,6 @@
 #include "third_party/stb_image.h"
 
 #define DF_MAX_PIPELINES 64
-#define DF_MAX_BUFFERS 1024
 
 enum { DF_USAGE_VERTEX = 1, DF_USAGE_INDEX = 2, DF_USAGE_UNIFORM = 4 };
 enum { DF_PIPELINE_DEPTH = 1, DF_PIPELINE_NO_DEPTH_WRITE = 2, DF_PIPELINE_BLEND = 4 };
@@ -33,9 +32,10 @@ static WGPUQueue g_queue;
 static WGPUTextureFormat g_format;
 static WGPURenderPipeline g_pipelines[DF_MAX_PIPELINES];
 static int32_t g_pipeline_count;
-static WGPUBuffer g_buffers[DF_MAX_BUFFERS];
+static WGPUBuffer *g_buffers;
 static int32_t g_buffer_count;
-// Bind groups and textures grow as needed; ids are never reused, so a destroyed id never aliases a new resource.
+static int32_t g_buffer_capacity;
+// Buffers, bind groups and textures grow as needed; ids are never reused, so a destroyed id never aliases a new resource.
 static WGPUBindGroup *g_bind_groups;
 // The texture a bind group samples, or -1, so destroying a texture also releases the groups that hold it.
 static int32_t *g_bind_group_textures;
@@ -56,6 +56,7 @@ static int grow(void **array, int32_t *capacity, int32_t need, size_t size) {
   void *grown = realloc(*array, (size_t)next * size);
   if (!grown) return 0;
   *array = grown;
+  *capacity = next;
   return 1;
 }
 static WGPUSampler g_sampler;
@@ -319,7 +320,7 @@ int32_t df_width(void) { return g_width; }
 int32_t df_height(void) { return g_height; }
 
 int32_t df_buffer(uint32_t usage, const uint8_t *data, size_t len) {
-  if (g_buffer_count >= DF_MAX_BUFFERS) return -1;
+  if (!grow((void **)&g_buffers, &g_buffer_capacity, g_buffer_count + 1, sizeof *g_buffers)) return -1;
   WGPUBufferDescriptor desc = WGPU_BUFFER_DESCRIPTOR_INIT;
   desc.size = (len + 3) & ~(size_t)3;
   desc.usage = WGPUBufferUsage_CopyDst;
@@ -806,8 +807,9 @@ int32_t df_target(int32_t op, double a, double b, double c, double d, double e) 
 }
 
 // Negative handles mean "none". first/count are indices with an index buffer (uint32), vertices otherwise.
+// first_instance starts the instance range (a ground cell of an instanced mesh, src/render splitCells).
 void df_draw(int32_t pipeline, int32_t bind_group, int32_t vertex_buffer, int32_t index_buffer, uint32_t first,
-             uint32_t count, int32_t instance_buffer, uint32_t instances) {
+             uint32_t count, int32_t instance_buffer, uint32_t instances, uint32_t first_instance) {
   if (instances == 0) instances = 1;
   if (!g_frame_pass || pipeline < 0 || pipeline >= g_pipeline_count) return;
   // A group released with its texture draws nothing rather than sampling freed memory.
@@ -822,9 +824,9 @@ void df_draw(int32_t pipeline, int32_t bind_group, int32_t vertex_buffer, int32_
   if (index_buffer >= 0 && index_buffer < g_buffer_count) {
     wgpuRenderPassEncoderSetIndexBuffer(g_frame_pass, g_buffers[index_buffer], WGPUIndexFormat_Uint32, 0,
                                         WGPU_WHOLE_SIZE);
-    wgpuRenderPassEncoderDrawIndexed(g_frame_pass, count, instances, first, 0, 0);
+    wgpuRenderPassEncoderDrawIndexed(g_frame_pass, count, instances, first, 0, first_instance);
   } else {
-    wgpuRenderPassEncoderDraw(g_frame_pass, count, instances, first, 0);
+    wgpuRenderPassEncoderDraw(g_frame_pass, count, instances, first, first_instance);
   }
 }
 

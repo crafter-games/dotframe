@@ -1,4 +1,4 @@
-import type { Instances, World } from "./ecs";
+import type { InstanceCell, Instances, World } from "./ecs";
 import type { MeshData } from "./gltf";
 import { BufferUsage, type Color, type Draw, f32Bytes, type RenderGpu, type Texture, u32Bytes, VertexFormat } from "./gpu";
 import { compose, lookAt, multiply, orthographic, perspective, type Vec3, vec3 } from "./math";
@@ -207,6 +207,13 @@ const SKY_FLOATS = 48;
 
 // Floats per instance in addInstances: x, y, z, scale, yaw, sway phase, 0, 0.
 export const INSTANCE_FLOATS = 8;
+// Instanced meshes are split into square ground cells this many meters wide.
+export const INSTANCE_CELL = 16;
+// On mobile, an instance set keeps full density while its mesh's radius over the distance stays above this (a 0.5 m
+// rice tuft out to 6 m, a 12 m tree out to 150 m), then thins as the square of that ratio, never below the floor.
+// Measured on an iPhone 14 class (A16): 0.04 left The Ones GPU-bound, 0.08 holds 60 fps.
+// Grazing views overlap far instances, so the thinning hardly shows; desktops draw every instance.
+export const INSTANCE_DETAIL = { size: 0.08, floor: 0.08 };
 
 export const MAX_LIGHTS = 8;
 // Joints a skinned mesh can use (Character Creator rigs have ~150); extra joints draw at rest. 256 joints are 16 KB
@@ -233,6 +240,8 @@ export interface Renderer {
 }
 
 interface GpuMesh {
+  // Farthest vertex from the origin, for culling instance cells.
+  radius: number;
   vertexBuffer: number;
   indexBuffer: number;
   count: number;
@@ -553,6 +562,7 @@ export function createRenderer(gpu: RenderGpu): Renderer {
       }
     }
     meshes.push({
+      radius: meshRadius(data.positions),
       vertexBuffer: gpu.createBuffer(BufferUsage.Vertex, f32Bytes(interleaved)),
       indexBuffer: gpu.createBuffer(BufferUsage.Index, u32Bytes(data.indices)),
       count: data.indices.length,
@@ -593,6 +603,7 @@ export function createRenderer(gpu: RenderGpu): Renderer {
       }
     }
     meshes.push({
+      radius: meshRadius(skin.positions),
       vertexBuffer: gpu.createBuffer(BufferUsage.Vertex, f32Bytes(interleaved)),
       indexBuffer: gpu.createBuffer(BufferUsage.Index, u32Bytes(data.indices)),
       count: data.indices.length,
@@ -700,7 +711,8 @@ export function createRenderer(gpu: RenderGpu): Renderer {
         ],
       });
     }
-    return { buffer: gpu.createBuffer(BufferUsage.Vertex, f32Bytes(data)), count: data.length / INSTANCE_FLOATS };
+    const split = splitCells(data);
+    return { buffer: gpu.createBuffer(BufferUsage.Vertex, f32Bytes(split.data)), count: data.length / INSTANCE_FLOATS, cells: split.cells };
   };
 
   // Particles: one pipeline, quad and uniform buffer, made on first use; the instance buffer grows as needed.
@@ -886,6 +898,22 @@ export function createRenderer(gpu: RenderGpu): Renderer {
       }
       gpu.writeBuffer(binding.uniformBuffer, f32Bytes(data));
 
+      if (instances && instances.cells.length > 0) {
+        // One draw per cell in view; on mobile, far cells draw an even prefix of their instances.
+        for (const cell of instances.cells) {
+          const c = transformPoint(model, cell.center);
+          const reach = cell.radius + mesh.radius * cell.scale;
+          if (!inView(viewProjection, c, reach)) continue;
+          let count = cell.count;
+          if (gpu.mobile) {
+            const d = Math.max(Math.hypot(c[0] - camera.eye.x, c[1] - camera.eye.y, c[2] - camera.eye.z) - cell.radius, 0.001);
+            const ratio = (mesh.radius * cell.scale) / d / INSTANCE_DETAIL.size;
+            if (ratio < 1) count = Math.max(1, Math.ceil(cell.count * Math.max(ratio * ratio, INSTANCE_DETAIL.floor)));
+          }
+          out.push({ pipeline: entityPipeline, bindGroup: binding.bindGroup, vertexBuffer: mesh.vertexBuffer, indexBuffer: mesh.indexBuffer, first: 0, count: mesh.count, instanceBuffer: instances.buffer, instances: count, firstInstance: cell.first });
+        }
+        continue;
+      }
       out.push({
         pipeline: entityPipeline,
         bindGroup: binding.bindGroup,
@@ -906,4 +934,96 @@ export function createRenderer(gpu: RenderGpu): Renderer {
     gpu.frame(clear, draws(world, camera, environment));
 
   return { addMesh, addSkinnedMesh, addInstances, draws, render };
+}
+
+function meshRadius(positions: Float32Array): number {
+  let r = 0;
+  for (let i = 0; i + 2 < positions.length; i += 3) r = Math.max(r, Math.hypot(positions[i], positions[i + 1], positions[i + 2]));
+  return r;
+}
+
+// Instances reordered by ground cell (place.xyz in the first three floats, scale in the fourth), each cell's order
+// shuffled with a fixed hash so a prefix samples the cell evenly. Cells are INSTANCE_CELL meters, widened so a set
+// has at most about INSTANCE_CELLS of them (a forest across the map stays a few dozen draws).
+export const INSTANCE_CELLS = 36;
+export function splitCells(data: Float32Array): { data: Float32Array; cells: InstanceCell[] } {
+  const count = Math.floor(data.length / INSTANCE_FLOATS);
+  let x0 = Infinity;
+  let x1 = -Infinity;
+  let z0 = Infinity;
+  let z1 = -Infinity;
+  for (let i = 0; i < count; i++) {
+    x0 = Math.min(x0, data[i * INSTANCE_FLOATS]);
+    x1 = Math.max(x1, data[i * INSTANCE_FLOATS]);
+    z0 = Math.min(z0, data[i * INSTANCE_FLOATS + 2]);
+    z1 = Math.max(z1, data[i * INSTANCE_FLOATS + 2]);
+  }
+  const size = Math.max(INSTANCE_CELL, Math.max(x1 - x0, z1 - z0) / Math.sqrt(INSTANCE_CELLS));
+  const groups = new Map<string, number[]>();
+  for (let i = 0; i < count; i++) {
+    const o = i * INSTANCE_FLOATS;
+    const key = `${Math.floor((data[o] - x0) / size)},${Math.floor((data[o + 2] - z0) / size)}`;
+    const list = groups.get(key);
+    if (list) list.push(i);
+    else groups.set(key, [i]);
+  }
+  const out = new Float32Array(count * INSTANCE_FLOATS);
+  const cells: InstanceCell[] = [];
+  let at = 0;
+  for (const list of groups.values()) {
+    let s = list.length * 2654435761;
+    for (let i = list.length - 1; i > 0; i--) {
+      s = (Math.imul(s, 1103515245) + 12345) >>> 0;
+      const j = s % (i + 1);
+      const t = list[i];
+      list[i] = list[j];
+      list[j] = t;
+    }
+    let cx = 0;
+    let cy = 0;
+    let cz = 0;
+    let scale = 0;
+    list.forEach((index: number, k: number): void => {
+      const o = index * INSTANCE_FLOATS;
+      for (let f = 0; f < INSTANCE_FLOATS; f++) out[(at + k) * INSTANCE_FLOATS + f] = data[o + f];
+      cx += data[o];
+      cy += data[o + 1];
+      cz += data[o + 2];
+      scale = Math.max(scale, Math.abs(data[o + 3]));
+    });
+    const center: [number, number, number] = [cx / list.length, cy / list.length, cz / list.length];
+    let radius = 0;
+    for (const index of list) {
+      const o = index * INSTANCE_FLOATS;
+      radius = Math.max(radius, Math.hypot(data[o] - center[0], data[o + 1] - center[1], data[o + 2] - center[2]));
+    }
+    cells.push({ first: at, count: list.length, center, radius, scale });
+    at += list.length;
+  }
+  return { data: out, cells };
+}
+
+function transformPoint(m: Float32Array, p: [number, number, number]): [number, number, number] {
+  return [m[0] * p[0] + m[4] * p[1] + m[8] * p[2] + m[12], m[1] * p[0] + m[5] * p[1] + m[9] * p[2] + m[13], m[2] * p[0] + m[6] * p[1] + m[10] * p[2] + m[14]];
+}
+
+// A sphere against the clip-space planes of a view-projection (WebGPU depth 0..1).
+export function inView(vp: Float32Array, c: [number, number, number], r: number): boolean {
+  const row = (i: number): number[] => [vp[i], vp[4 + i], vp[8 + i], vp[12 + i]];
+  const x = row(0);
+  const y = row(1);
+  const z = row(2);
+  const w = row(3);
+  const planes = [
+    [w[0] + x[0], w[1] + x[1], w[2] + x[2], w[3] + x[3]],
+    [w[0] - x[0], w[1] - x[1], w[2] - x[2], w[3] - x[3]],
+    [w[0] + y[0], w[1] + y[1], w[2] + y[2], w[3] + y[3]],
+    [w[0] - y[0], w[1] - y[1], w[2] - y[2], w[3] - y[3]],
+    [z[0], z[1], z[2], z[3]],
+  ];
+  for (const p of planes) {
+    const len = Math.hypot(p[0], p[1], p[2]) || 1;
+    if ((p[0] * c[0] + p[1] * c[1] + p[2] * c[2] + p[3]) / len < -r) return false;
+  }
+  return true;
 }
