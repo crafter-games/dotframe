@@ -11,7 +11,7 @@ dotframe is a TypeScript game engine. One codebase runs on the web (WebGPU), in 
 1. Edit game code.
 2. `dotframe sim --mash 7 --frames 600 --json`: run it headless and read `state` and `checksum`.
 3. `dotframe snap --frame 300 --mash 7 --out f300.png`: render one frame with the real WebGPU renderer, then open the PNG and look at it. The JSON state tells you what the simulation did; only the image tells you what a player sees.
-4. `dotframe replay verify replays/*.json`: golden replays must still pass. If a change is meant to alter gameplay, re-record them on purpose and say so.
+4. `dotframe replay verify replays/*.json`: golden replays must still pass. If a change is meant to alter gameplay, re-record them on purpose and say so. Before shipping to a native target, add `--native` (or run `doctor`): the same replays on the scriptc build, where code Bun accepts can abort.
    - A change that adds state or touches the checksum without moving gameplay fails verify too. Show that it did not move anything, then re-record: `dotframe replay rebase replays/*.json` runs each replay on the sim at HEAD and on the working tree and re-records only the ones whose final `state()` matches (fields the change added are allowed; `--ignore state.x` for intended changes). It reports the rest as MOVED with the first differing field and exits 1.
 5. For online games, `dotframe desync` (see `dotframe skills get netplay`).
 6. Only then `dotframe build <target>`.

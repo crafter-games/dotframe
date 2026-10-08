@@ -5,7 +5,7 @@
     "": {
       "name": "dotframe",
       "devDependencies": {
-        "@scriptc/runtime-win32-x64-msvc": "0.2.0",
+        "@scriptc/runtime-win32-x64-msvc": "0.2.3",
         "@types/bun": "^1.4.2",
         "@webgpu/types": "^0.1.74",
         "typescript": "^7.0.2",
@@ -13,7 +13,7 @@
     },
   },
   "packages": {
-    "@scriptc/runtime-win32-x64-msvc": ["@scriptc/runtime-win32-x64-msvc@0.2.0", "", {}, "sha512-PHKoSqvBxywE61Z7Ifv1u7bck8ebesLkqgZwj86wBTHlNguCvhbeUwHaw+S3XQaps83eeCMFRTKpPLz2pfE4oA=="],
+    "@scriptc/runtime-win32-x64-msvc": ["@scriptc/runtime-win32-x64-msvc@0.2.3", "", {}, "sha512-KXPzlxuuOst9Ew0Kxm9x6sEBy3kTSUxYU0syN1JOKPjnYyHbvote/WdLHV0wILEs34qRjfXbinWs0Kqr8WjYCA=="],
 
     "@types/bun": ["@types/bun@1.4.2", "", { "dependencies": { "bun-types": "1.4.2" } }, "sha512-GimotNn7+ZV0uVArItBbriZsR1oNf0+WTzPkdcFrzShI7k2norL0uzEaJT8T33dWr7O/c9ZDuAFQrctKCi72oQ=="],
 

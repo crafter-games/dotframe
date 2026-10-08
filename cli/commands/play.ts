@@ -4,6 +4,7 @@ import { join, relative, resolve } from "node:path";
 import type { Draw2D } from "../../src/draw2d";
 import type { Sim, SimRun } from "../../src/sim";
 import { CliError, type Ctx, exec, frames60, loadConfig, num, print } from "../lib";
+import { verifyNative } from "../native-replay";
 import { firstDifference, flatten, headlessRun, type InputSource, inputSource, lcg, loadSim, parseOptions } from "../simkit";
 
 export interface PlayArgs {
@@ -162,15 +163,27 @@ export async function rebase(ctx: Ctx, files: string[], from: string | undefined
   }
 }
 
-export async function verify(ctx: Ctx, files: string[]): Promise<void> {
+export async function verify(ctx: Ctx, files: string[], native = false): Promise<void> {
   if (files.length === 0) throw new CliError("MISSING_ARG", "replay verify needs one or more replay files", "dotframe replay verify replays/*.json");
   const config = loadConfig();
-  const sim = await loadSim(config);
-  const results: { file: string; ok: boolean; firstMismatch: number | null; expected: number; got: number }[] = [];
-  for (const file of files) {
+  const replays = files.map((file: string): Replay => {
     const path = resolve(process.cwd(), file);
     if (!existsSync(path)) throw new CliError("REPLAY_MISSING", `${file} does not exist`, "record one with dotframe replay record");
-    const replay = JSON.parse(readFileSync(path, "utf8")) as Replay;
+    return JSON.parse(readFileSync(path, "utf8")) as Replay;
+  });
+  if (native) {
+    const results = await verifyNative(ctx, config, replays.map((r: Replay, i: number) => ({ file: files[i], seed: r.seed, options: r.options, inputs: r.inputs, frames: r.frames, throughOver: r.throughOver === true, checksums: r.checksums, final: r.final })));
+    const failed = results.filter((r): boolean => !r.ok);
+    print(ctx, { native: true, results, failed: failed.length }, (): string =>
+      results.map((r): string => (r.ok ? `ok   ${r.file} (native)` : r.error ? `FAIL ${r.file} (native): ${r.error}` : `FAIL ${r.file} (native): diverges by frame ${r.firstMismatch}`)).join("\n"),
+    );
+    if (failed.length > 0) process.exit(1);
+    return;
+  }
+  const sim = await loadSim(config);
+  const results: { file: string; ok: boolean; firstMismatch: number | null; expected: number; got: number }[] = [];
+  for (const [i, file] of files.entries()) {
+    const replay = replays[i];
     const run = await headlessRun(sim, config.root);
     run.start(replay.seed, replay.options);
     const source: InputSource = {
