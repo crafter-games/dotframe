@@ -29,6 +29,8 @@ export interface MeshRef {
   instances?: Instances;
   // Wind: instanced vertices bend by this much per unit of height, animated by Environment.time.
   sway?: number;
+  // false draws the mesh without Environment.fog: far lights and signs that must read through it (Godot disable_fog).
+  fog?: boolean;
 }
 
 export interface Instances {

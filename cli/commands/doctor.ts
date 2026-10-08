@@ -16,6 +16,8 @@ interface Check {
   detail: string;
   fix: string;
   skill: string;
+  // Every file:line a finding covers; detail shows the first few.
+  locations?: string[];
 }
 
 const tool = (bin: string, why: string, fix: string, skill: string): Check => {
@@ -205,6 +207,7 @@ function mathCheck(simFile: string): Check {
     ok: false,
     warn: true,
     detail: `${hits.length} platform-dependent math call(s) in code the sim reaches: ${shown}`,
+    locations: hits,
     fix: "use dotframe/src/detmath (dsin, dcos, datan2, dexp, dpow, ...) in simulation code; mark render-only lines with // dotframe-allow-math, or a render-only file with // dotframe-allow-math-file",
   };
 }
