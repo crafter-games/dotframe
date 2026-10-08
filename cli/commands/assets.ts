@@ -29,7 +29,7 @@ function charsIn(dir: string): string {
       if (name === "node_modules" || name.startsWith(".")) continue;
       const p = join(d, name);
       if (statSync(p).isDirectory()) walk(p);
-      else if (/\.(ts|tsx|js|json|txt|md|csv)$/.test(name)) for (const c of readFileSync(p, "utf8")) if ((c.codePointAt(0) ?? 0) > 0x2ff) chars.add(c);
+      else if (/\.(ts|tsx|js|json|txt|md|csv)$/.test(name)) for (const c of readFileSync(p, "utf8")) if ((c.codePointAt(0) ?? 0) > 0xff) chars.add(c);
     }
   };
   walk(dir);

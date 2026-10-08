@@ -72,9 +72,14 @@ int main(int argc, char **argv) {
   FILE *json = fopen(argv[3], "w");
   fprintf(json, "{\n  \"size\": %g,\n  \"ascent\": %g,\n  \"descent\": %g,\n  \"lineGap\": %g,\n  \"distanceRange\": %d,\n  \"glyphs\": [\n",
           pixel_height, ascent * scale, descent * scale, line_gap * scale, PADDING);
-  int x = 0, y = 0, row_height = 0, used_height = 0;
+  int x = 0, y = 0, row_height = 0, used_height = 0, written = 0, missing = 0;
   for (int i = 0; i < count; i++) {
     int cp = codepoints[i];
+    // A character the font lacks would bake its .notdef box; leave it out so Draw2D's fallback handles it.
+    if (cp != 32 && stbtt_FindGlyphIndex(&font, cp) == 0) {
+      missing++;
+      continue;
+    }
     int advance, lsb, w = 0, h = 0, xoff = 0, yoff = 0;
     stbtt_GetCodepointHMetrics(&font, cp, &advance, &lsb);
     unsigned char *sdf = stbtt_GetCodepointSDF(&font, scale, cp, PADDING, ON_EDGE, (float)ON_EDGE / PADDING, &w, &h, &xoff, &yoff);
@@ -86,15 +91,17 @@ int main(int argc, char **argv) {
     for (int row = 0; row < h; row++)
       for (int col = 0; col < w; col++) atlas[((y + row) * ATLAS_WIDTH + x + col) * 4 + 3] = sdf[row * w + col];
     if (sdf) stbtt_FreeSDF(sdf, NULL);
-    fprintf(json, "    { \"code\": %d, \"x\": %d, \"y\": %d, \"width\": %d, \"height\": %d, \"offsetX\": %d, \"offsetY\": %d, \"advance\": %g }%s\n",
-            cp, x, y, w, h, xoff, yoff, advance * scale, i + 1 < count ? "," : "");
+    fprintf(json, "%s    { \"code\": %d, \"x\": %d, \"y\": %d, \"width\": %d, \"height\": %d, \"offsetX\": %d, \"offsetY\": %d, \"advance\": %g }",
+            written++ > 0 ? ",\n" : "", cp, x, y, w, h, xoff, yoff, advance * scale);
     x += w + 1;
     if (h > row_height) row_height = h;
     if (y + row_height > used_height) used_height = y + row_height;
   }
-  fprintf(json, "  ],\n  \"atlasWidth\": %d,\n  \"atlasHeight\": %d\n}\n", ATLAS_WIDTH, used_height);
+  fprintf(json, "\n  ],\n  \"atlasWidth\": %d,\n  \"atlasHeight\": %d\n}\n", ATLAS_WIDTH, used_height);
   fclose(json);
   stbi_write_png(argv[2], ATLAS_WIDTH, used_height, 4, atlas, ATLAS_WIDTH * 4);
-  printf("%s: %d glyphs, atlas %dx%d\n", argv[2], count, ATLAS_WIDTH, used_height);
+  printf("%s: %d glyphs, atlas %dx%d", argv[2], written, ATLAS_WIDTH, used_height);
+  if (missing > 0) printf(", %d characters not in the font left out", missing);
+  printf("\n");
   return 0;
 }

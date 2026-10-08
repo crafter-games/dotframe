@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- `assets font --chars-from` collects every character past Latin-1 (it skipped U+0100 to U+02FF, so ō, ā, ł and ş never baked: The Ones' "Gorō (shōbōdan)" drew as "Gor (shbdan)"), and the baker leaves out characters the font lacks instead of baking its .notdef box, and says how many.
 - `replay verify --native` compiles the sim with scriptc and runs each replay there, one process per replay, reporting the frame an abort happened after. `doctor` runs it over `replays/*.json` as `native-replays`, and CI runs it on the templates. Bun replays had passed The Ones' 15 replays while the iPhone aborted in a dialog.
 - `MeshRef.emissive` glows with the texture (surface color times emissive), so a textured emitter keeps its pattern; untextured meshes look the same as before.
 - `fitFootprint(model, length)` in `src/model`: scales a flat prop by its longest horizontal side.
