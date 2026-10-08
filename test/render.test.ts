@@ -98,8 +98,29 @@ test("the environment reaches the uniforms: emissive, texture tile, lights, spot
   expect(u[40 + 5 * 4 + 3]).toBe(22);
   expect(u[40 + 6 * 4 + 3]).toBeCloseTo(Math.cos(0.4), 5);
   // Lights past MAX_LIGHTS are dropped: the last slot holds light MAX_LIGHTS - 1.
-  expect(u.length).toBe(40 + 8 * 4 + MAX_LIGHTS * 8 + 20);
+  expect(u.length).toBe(40 + 8 * 4 + MAX_LIGHTS * 8 + 40 + MAX_LIGHTS * 8);
   expect(u[40 + (8 + (MAX_LIGHTS - 1) * 2) * 4 + 3]).toBe(5 + MAX_LIGHTS - 1);
+});
+
+test("a sun with shadows draws casters into the right half of the map, and light boxes reach the uniforms", () => {
+  const { gpu, writes, frames } = recordingGpu();
+  const renderer = createRenderer(gpu);
+  const { world, entity } = oneBoxWorld();
+  world.meshes.set(entity, { mesh: renderer.addMesh(box()), color: vec3(1, 1, 1) });
+  const lights = [{ position: vec3(0, 2, 0), color: vec3(1, 1, 1), range: 5, box: { min: vec3(-1, 0, -1), max: vec3(1, 3, 1), outside: true } }];
+  renderer.draws(world, { eye: vec3(0, 2, 5), target: vec3(0, 0, 0), fovY: 1 }, { ambient: vec3(0, 0, 0), sun: { direction: vec3(0.3, 1, 0.2), color: vec3(1, 1, 1), shadows: 60 }, lights });
+  // One shadow frame with the box as its caster, before the scene.
+  expect(frames.length).toBe(1);
+  expect(frames[0].draws.length).toBe(1);
+  const caster = writes[0];
+  // color.x = 1 marks the sun's half; the box at the origin lands in x > 0 of the map's clip space.
+  expect(caster[32]).toBe(1);
+  expect(caster[12]).toBeGreaterThan(0);
+  const u = writes[writes.length - 1];
+  const sun = 40 + 8 * 4 + MAX_LIGHTS * 8 + 20;
+  expect(u[sun + 16]).toBe(1);
+  const boxes = sun + 20;
+  expect([u[boxes], u[boxes + 3], u[boxes + 4], u[boxes + 5]]).toEqual([-1, 2, 1, 3]);
 });
 
 test("an untextured mesh binds the white pixel and keeps the default key light", () => {

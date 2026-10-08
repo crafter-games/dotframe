@@ -42,6 +42,17 @@ export function perspective(fovY: number, aspect: number, near: number, far: num
   return m;
 }
 
+// A square orthographic box, halfSize on x and y, z from near to far mapped to 0..1 (WebGPU depth).
+export function orthographic(halfSize: number, near: number, far: number): Float32Array {
+  const m = new Float32Array(16);
+  m[0] = 1 / halfSize;
+  m[5] = 1 / halfSize;
+  m[10] = 1 / (near - far);
+  m[14] = near / (near - far);
+  m[15] = 1;
+  return m;
+}
+
 export function lookAt(eye: Vec3, target: Vec3, up: Vec3): Float32Array {
   let zx = eye.x - target.x;
   let zy = eye.y - target.y;

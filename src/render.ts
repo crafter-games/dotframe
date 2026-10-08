@@ -1,7 +1,7 @@
 import type { Instances, World } from "./ecs";
 import type { MeshData } from "./gltf";
 import { BufferUsage, type Color, type Draw, f32Bytes, type RenderGpu, type Texture, u32Bytes, VertexFormat } from "./gpu";
-import { compose, lookAt, multiply, perspective, type Vec3, vec3 } from "./math";
+import { compose, lookAt, multiply, orthographic, perspective, type Vec3, vec3 } from "./math";
 import { PARTICLE_FLOATS } from "./particles";
 
 export interface Camera {
@@ -22,6 +22,9 @@ export interface PointLight {
   color: Vec3;
   // Distance where the light reaches zero.
   range: number;
+  // Walls without a shadow map: the light reaches only fragments inside this box, or with outside, only those
+  // outside it (a lamp in a room, a street light kept out of the house).
+  box?: { min: Vec3; max: Vec3; outside?: boolean };
 }
 
 export interface SpotLight extends PointLight {
@@ -32,13 +35,16 @@ export interface SpotLight extends PointLight {
   shadows?: boolean;
 }
 
+// The shadow map is SHADOW_SIZE * 2 wide: the spot's half on the left, the sun's on the right.
 export const SHADOW_SIZE = 1024;
 
 // Lighting for one frame. Leaving it out keeps the default: a fixed key light and no fog.
 export interface Environment {
   ambient: Vec3;
   // Direction the light comes from (towards the light).
-  sun?: { direction: Vec3; color: Vec3 };
+  // shadows: static meshes cast shadows from it within this many meters of the eye (an orthographic map that follows
+  // the camera, snapped to its texels so edges hold still).
+  sun?: { direction: Vec3; color: Vec3; shadows?: number };
   fog?: { color: Vec3; density: number };
   // At most MAX_LIGHTS; extra lights are ignored.
   lights?: PointLight[];
@@ -303,6 +309,11 @@ struct Uniforms {
   shadowVP: mat4x4f,
   // x on, y bias (fraction of the spot's range), z one texel in uv.
   shadowParams: vec4f,
+  sunVP: mat4x4f,
+  // x on, y bias (fraction of the box depth).
+  sunParams: vec4f,
+  // Per light: min.xyz and w (0 none, 1 inside, 2 outside), then max.xyz.
+  lightBoxes: array<vec4f, ${MAX_LIGHTS * 2}>,
   ${skinned ? `joints: array<mat4x4f, ${MAX_JOINTS}>,` : ""}
 }
 @group(0) @binding(0) var<uniform> u: Uniforms;
@@ -375,6 +386,14 @@ ${
   kind === 3
     ? `@fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4f {
+  // color.x picks the half: 0 the spot, 1 the sun. Fragments outside that light's own frustum would spill into the
+  // other half, so they go.
+  let sun = u.color.x > 0.5;
+  var clip = u.shadowVP * vec4f(in.world, 1.0);
+  if (sun) { clip = u.sunVP * vec4f(in.world, 1.0); }
+  let ndc = clip.xyz / clip.w;
+  if (abs(ndc.x) > 1.0 || abs(ndc.y) > 1.0) { discard; }
+  if (sun) { return vec4f(packDepth(ndc.z), 1.0); }
   return vec4f(packDepth(distance(in.world, u.spotPos.xyz) / u.spotPos.w), 1.0);
 }`
     : `fn spotShadow(world: vec3f) -> f32 {
@@ -382,15 +401,37 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
   let clip = u.shadowVP * vec4f(world, 1.0);
   if (clip.w <= 0.0) { return 1.0; }
   let ndc = clip.xyz / clip.w;
-  let uv = vec2f(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
-  let d = distance(world, u.spotPos.xyz) / u.spotPos.w - u.shadowParams.y;
+  if (abs(ndc.x) > 1.0 || abs(ndc.y) > 1.0) { return 1.0; }
+  let uv = vec2f((ndc.x * 0.5 + 0.5) * 0.5, 0.5 - ndc.y * 0.5);
+  return shadowTaps(uv, distance(world, u.spotPos.xyz) / u.spotPos.w - u.shadowParams.y);
+}
+
+fn sunShadow(world: vec3f) -> f32 {
+  if (u.sunParams.x < 0.5) { return 1.0; }
+  let ndc = (u.sunVP * vec4f(world, 1.0)).xyz;
+  if (abs(ndc.x) > 1.0 || abs(ndc.y) > 1.0 || ndc.z > 1.0) { return 1.0; }
+  let uv = vec2f(0.5 + (ndc.x * 0.5 + 0.5) * 0.5, 0.5 - ndc.y * 0.5);
+  return shadowTaps(uv, ndc.z - u.sunParams.y);
+}
+
+// Four taps a texel and a half apart; the map is twice as wide as tall.
+fn shadowTaps(uv: vec2f, d: f32) -> f32 {
   var lit = 0.0;
   for (var i = 0; i < 4; i++) {
-    let o = (vec2f(f32(i % 2), f32(i / 2)) - 0.5) * u.shadowParams.z * 1.5;
+    let o = (vec2f(f32(i % 2), f32(i / 2)) - 0.5) * u.shadowParams.z * 1.5 * vec2f(0.5, 1.0);
     let stored = dot(textureSampleLevel(shadowTex, shadowSamp, uv + o, 0.0).rgb, vec3f(1.0, 1.0 / 255.0, 1.0 / 65025.0));
     lit += select(0.0, 1.0, d <= stored);
   }
   return lit / 4.0;
+}
+
+// 0 when a light box keeps this fragment out.
+fn boxed(i: i32, world: vec3f) -> f32 {
+  let lo = u.lightBoxes[i * 2];
+  if (lo.w < 0.5) { return 1.0; }
+  let hi = u.lightBoxes[i * 2 + 1].xyz;
+  let inside = all(world >= lo.xyz) && all(world <= hi);
+  return select(0.0, 1.0, inside == (lo.w < 1.5));
 }
 
 @fragment
@@ -414,13 +455,15 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
     albedo = albedo * (tx * w.x + ty * w.y + tz * w.z);
   }
   var light = u.ambient.rgb;
-  light += u.sunColor.rgb * max(dot(n, normalize(u.sunDir.xyz)), 0.0);
+  let sunLit = max(dot(n, normalize(u.sunDir.xyz)), 0.0);
+  // Uniform control flow for the shadow taps: sampled whatever sunLit is.
+  light += u.sunColor.rgb * sunLit * sunShadow(in.world);
   for (var i = 0; i < ${MAX_LIGHTS}; i++) {
     let l = u.lights[i];
     if (l.position.w <= 0.0) { continue; }
     let to = l.position.xyz - in.world;
     let d = length(to);
-    light += l.color.rgb * max(dot(n, to / max(d, 0.0001)), 0.0) * falloff(d, l.position.w);
+    light += l.color.rgb * max(dot(n, to / max(d, 0.0001)), 0.0) * falloff(d, l.position.w) * boxed(i, in.world);
   }
   if (u.spotPos.w > 0.0) {
     let to = u.spotPos.xyz - in.world;
@@ -454,10 +497,13 @@ fn falloff(d: f32, range: f32) -> f32 {
 // Position, normal, uv; skinned meshes add four joint slots and four weights.
 const VERTEX_FLOATS = 8;
 const SKINNED_FLOATS = 16;
-// mvp (16) + model (16) + 10 vec4 + MAX_LIGHTS * 2 vec4 + shadowVP (16) + shadowParams (4) floats.
-const UNIFORM_FLOATS = 32 + 10 * 4 + MAX_LIGHTS * 8 + 20;
-// Where shadowVP starts in the scene block (which starts at float 40).
+// mvp (16) + model (16) + 10 vec4 + MAX_LIGHTS * 2 vec4 + shadowVP (16) + shadowParams (4) + sunVP (16) +
+// sunParams (4) + MAX_LIGHTS * 2 vec4 of light boxes.
+const UNIFORM_FLOATS = 32 + 10 * 4 + MAX_LIGHTS * 8 + 40 + MAX_LIGHTS * 8;
+// Where shadowVP, sunVP and the light boxes start in the scene block (which starts at float 40).
 const SHADOW_SLOT = 8 * 4 + MAX_LIGHTS * 8;
+const SUN_SLOT = SHADOW_SLOT + 20;
+const BOX_SLOT = SUN_SLOT + 20;
 
 const DEFAULT_ENVIRONMENT: Environment = {
   ambient: vec3(0.25, 0.25, 0.25),
@@ -478,8 +524,9 @@ export function createRenderer(gpu: RenderGpu): Renderer {
   // The shader always samples, so untextured meshes bind one white pixel.
   const white = gpu.createTexture(1, 1, new Uint8Array([255, 255, 255, 255]), false);
   // Every lit pipeline samples the shadow map, so it exists from the start; it is drawn only when a spot asks.
-  const shadowMap = gpu.createTarget(SHADOW_SIZE, SHADOW_SIZE);
+  const shadowMap = gpu.createTarget(SHADOW_SIZE * 2, SHADOW_SIZE);
   const shadowPipeline = gpu.createPipeline({ wgsl: shader(3), stride: VERTEX_FLOATS * 4, attributes: BASE_ATTRIBUTES, depth: true, blend: false });
+  // One binding per entity and light (key entity * 2 + 1 for the sun).
   const shadowBindings = new Map<number, number[]>();
   const shadowUniforms = new Float32Array(UNIFORM_FLOATS);
   const meshes: GpuMesh[] = [];
@@ -556,6 +603,19 @@ export function createRenderer(gpu: RenderGpu): Renderer {
   };
 
   let shadowVP: Float32Array | null = null;
+  let sunVP: Float32Array | null = null;
+  // Clip x squeezed into one half of the map: [-1, 1] to [-1, 0] (spot) or [0, 1] (sun).
+  const half = (side: number): Float32Array => {
+    const m = new Float32Array(16);
+    m[0] = 0.5;
+    m[5] = 1;
+    m[10] = 1;
+    m[15] = 1;
+    m[12] = side * 0.5;
+    return m;
+  };
+  const spotHalf = half(-1);
+  const sunHalf = half(1);
   // The per-frame part of the uniforms, written once and copied into every entity's buffer.
   const writeScene = (camera: Camera, env: Environment): void => {
     scene.fill(0);
@@ -588,12 +648,40 @@ export function createRenderer(gpu: RenderGpu): Renderer {
       scene.set(shadowVP, SHADOW_SLOT);
       scene[SHADOW_SLOT + 16] = 1;
       scene[SHADOW_SLOT + 17] = 0.004;
-      scene[SHADOW_SLOT + 18] = 1 / SHADOW_SIZE;
+    }
+    scene[SHADOW_SLOT + 18] = 1 / SHADOW_SIZE;
+    sunVP = null;
+    const reach = env.sun ? env.sun.shadows ?? 0 : 0;
+    if (env.sun && reach > 0) {
+      const d = env.sun.direction;
+      const dl = Math.hypot(d.x, d.y, d.z) || 1;
+      const dir = vec3(d.x / dl, d.y / dl, d.z / dl);
+      const up = Math.abs(dir.y) > 0.99 ? vec3(0, 0, 1) : vec3(0, 1, 0);
+      // Centered on the eye, snapped to whole texels in light space so the map does not swim as the camera moves.
+      const view = lookAt(vec3(0, 0, 0), vec3(-dir.x, -dir.y, -dir.z), up);
+      const texel = (reach * 2) / SHADOW_SIZE;
+      const e = camera.eye;
+      const lx = Math.floor((view[0] * e.x + view[4] * e.y + view[8] * e.z) / texel) * texel;
+      const ly = Math.floor((view[1] * e.x + view[5] * e.y + view[9] * e.z) / texel) * texel;
+      const lz = view[2] * e.x + view[6] * e.y + view[10] * e.z;
+      // Back to world: the rows of the view rotation are the light's axes.
+      const center = vec3(view[0] * lx + view[1] * ly + view[2] * lz, view[4] * lx + view[5] * ly + view[6] * lz, view[8] * lx + view[9] * ly + view[10] * lz);
+      const depth = reach * 3;
+      const eye = vec3(center.x + dir.x * depth * 0.5, center.y + dir.y * depth * 0.5, center.z + dir.z * depth * 0.5);
+      sunVP = multiply(orthographic(reach, 0, depth), lookAt(eye, center, up));
+      scene.set(sunVP, SUN_SLOT);
+      scene[SUN_SLOT + 16] = 1;
+      // A fixed 0.15 m along the light, as a fraction of the box depth.
+      scene[SUN_SLOT + 17] = 0.15 / depth;
     }
     const lights = env.lights ?? [];
     for (let i = 0; i < Math.min(lights.length, MAX_LIGHTS); i++) {
       put(8 + i * 2, lights[i].position, lights[i].range);
       put(9 + i * 2, lights[i].color, 0);
+      const b = lights[i].box;
+      if (b) {
+        scene.set([b.min.x, b.min.y, b.min.z, b.outside ? 2 : 1, b.max.x, b.max.y, b.max.z, 0], BOX_SLOT + i * 8);
+      }
     }
   };
 
@@ -721,26 +809,33 @@ export function createRenderer(gpu: RenderGpu): Renderer {
     // First, in its own pass (no depth): everything after draws over it.
     const skyFirst = skyDraw(camera, view, environment ?? DEFAULT_ENVIRONMENT);
     if (skyFirst) out.push(skyFirst);
-    const lightVP = shadowVP;
-    if (lightVP) {
-      // Shadow pass: static meshes seen from the spot, their distance packed into the shadow map.
+    const passes: { vp: Float32Array; squeeze: Float32Array; sun: number }[] = [];
+    if (shadowVP) passes.push({ vp: shadowVP, squeeze: spotHalf, sun: 0 });
+    if (sunVP) passes.push({ vp: sunVP, squeeze: sunHalf, sun: 1 });
+    if (passes.length > 0) {
+      // Shadow pass: static meshes seen from the spot and the sun, each into its half of the map (distance for the
+      // spot, depth for the sun, packed into the color).
       const casters: Draw[] = [];
       for (const [entity, meshRef] of world.meshes) {
         const transform = world.transforms.get(entity);
         const mesh = meshes[meshRef.mesh];
         if (!transform || !mesh || mesh.skinned || meshRef.instances || (meshRef.emissive ?? 0) > 0) continue;
-        let binding = shadowBindings.get(entity);
-        if (!binding) {
-          const buffer = gpu.createBuffer(BufferUsage.Uniform, f32Bytes(shadowUniforms));
-          binding = [buffer, gpu.bind(shadowPipeline, buffer, -1)];
-          shadowBindings.set(entity, binding);
-        }
         const model = compose(transform.position, transform.rotation, transform.scale);
-        shadowUniforms.set(multiply(lightVP, model), 0);
-        shadowUniforms.set(model, 16);
-        shadowUniforms.set(scene, 40);
-        gpu.writeBuffer(binding[0], f32Bytes(shadowUniforms));
-        casters.push({ pipeline: shadowPipeline, bindGroup: binding[1], vertexBuffer: mesh.vertexBuffer, indexBuffer: mesh.indexBuffer, first: 0, count: mesh.count });
+        for (const pass of passes) {
+          const key = entity * 2 + pass.sun;
+          let binding = shadowBindings.get(key);
+          if (!binding) {
+            const buffer = gpu.createBuffer(BufferUsage.Uniform, f32Bytes(shadowUniforms));
+            binding = [buffer, gpu.bind(shadowPipeline, buffer, -1)];
+            shadowBindings.set(key, binding);
+          }
+          shadowUniforms.set(multiply(pass.squeeze, multiply(pass.vp, model)), 0);
+          shadowUniforms.set(model, 16);
+          shadowUniforms[32] = pass.sun;
+          shadowUniforms.set(scene, 40);
+          gpu.writeBuffer(binding[0], f32Bytes(shadowUniforms));
+          casters.push({ pipeline: shadowPipeline, bindGroup: binding[1], vertexBuffer: mesh.vertexBuffer, indexBuffer: mesh.indexBuffer, first: 0, count: mesh.count });
+        }
       }
       gpu.frame({ r: 1, g: 1, b: 1 }, casters, shadowMap);
     }
