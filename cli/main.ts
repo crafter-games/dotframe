@@ -88,14 +88,17 @@ ${INPUTS}
   dotframe snap --frame 60,240,600 --out /tmp/walk-{frame}.png   several frames of one run, one browser
   dotframe snap --frame 300 --camera 0,1.6,-3,0,1.2,0,35   a 3D game seen from another camera (eye, target, fov)`,
   replay: `dotframe replay record <file> [--mash <seed> | --inputs f.jsonl] [--frames 1800] [--seed 1] [--options json] [--through-over]
-dotframe replay verify <file...>
+dotframe replay verify <file...> [--native]
 dotframe replay rebase <file...> [--from HEAD] [--ignore state.a,state.b] [--dry-run]
 
 record stores seed, options, inputs, and a checksum every 60 frames. verify replays them and exits 1 with the
 first divergent frame.
+--native compiles the sim with scriptc and replays there, as the macOS, Windows and iOS builds run it: a native-only
+abort or divergence shows up off the device. doctor runs it over replays/*.json.
 
   dotframe replay record replays/smoke.json --mash 7
   dotframe replay verify replays/*.json
+  dotframe replay verify replays/*.json --native
   dotframe replay rebase replays/*.json --ignore state.kuro
 
 rebase re-records replays after a change that must not move the simulation, once it shows that it did not: each
@@ -237,6 +240,7 @@ const { values, positionals } = parseArgs({
     ignore: { type: "string" },
     ref: { type: "string" },
     "through-over": { type: "boolean" },
+    native: { type: "boolean" },
     docker: { type: "boolean" },
     online: { type: "boolean" },
     seeds: { type: "string" },
@@ -262,7 +266,7 @@ try {
   else if (command === "snap") await snap(ctx, v);
   else if (command === "perf") await perf(ctx, v);
   else if (command === "replay" && rest[0] === "record") await record(ctx, rest[1], v);
-  else if (command === "replay" && rest[0] === "verify") await verify(ctx, rest.slice(1));
+  else if (command === "replay" && rest[0] === "verify") await verify(ctx, rest.slice(1), values.native === true);
   else if (command === "compare") await compare(ctx, v);
   else if (command === "replay" && rest[0] === "rebase") await rebase(ctx, rest.slice(1), typeof values.from === "string" ? values.from : undefined, typeof values.ignore === "string" ? values.ignore : undefined);
   else if (command === "desync") await desync(ctx, v);

@@ -1,10 +1,11 @@
-import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, symlinkSync, unlinkSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, symlinkSync, unlinkSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { CliError, type Config, type Ctx, findRoot, home, loadConfig, print, type Target, which, XCODE_DEVELOPER } from "../lib";
 import type { Draw2D } from "../../src/draw2d";
 import type { Sim } from "../../src/sim";
 import { buildNative, importGraph, vendorFix, vendorStatus } from "../native";
 import { buildIos, iosPackFix, iosRuntimePack } from "../ios";
+import { verifyNative } from "../native-replay";
 import { dockerCheck } from "./docker";
 import { firstDifference, flatten, headlessRun, loadSim } from "../simkit";
 
@@ -83,6 +84,8 @@ export async function doctor(ctx: Ctx, fix: boolean, docker = false): Promise<vo
         checks.push({ check: `ios-runtime:${name}`, ok: pack.path !== null, detail: pack.path ? `@scriptc/runtime-ios-arm64 ${pack.want}` : pack.found ? `runtime pack ${pack.found} does not match scriptc ${pack.want}` : `@scriptc/runtime-ios-arm64 ${pack.want} not installed`, fix: pack.path ? "" : iosPackFix(pack.want), skill: "ios" });
       }
     }
+    const native = Object.values(config.targets).find((t) => t.native)?.native;
+    if (native && config.sim) checks.push(await nativeReplayCheck(ctx, config, native.platform));
     for (const bin of config.requires ?? []) checks.push(tool(bin, "listed in requires", `brew install ${bin}`, "export-web"));
     if (docker) {
       const dockerized = Object.values(config.targets).some((t) => t.deploy?.provider === "dokploy");
@@ -210,6 +213,31 @@ function mathCheck(simFile: string): Check {
     locations: hits,
     fix: "use dotframe/src/detmath (dsin, dcos, datan2, dexp, dpow, ...) in simulation code; mark render-only lines with // dotframe-allow-math, or a render-only file with // dotframe-allow-math-file",
   };
+}
+
+// Replays on the scriptc build: the JS replays run on Bun, so a native-only abort or divergence passes them all and
+// shows up first on the device (a dialog step outside its union crashed the iPhone with every replay green).
+async function nativeReplayCheck(ctx: Ctx, config: Config, platform: string): Promise<Check> {
+  const base = { check: "native-replays", skill: platform === "windows" ? "macos" : platform };
+  const dir = join(config.root, "replays");
+  const files = existsSync(dir) ? readdirSync(dir).filter((f: string): boolean => f.endsWith(".json")).sort() : [];
+  if (files.length === 0) return { ...base, ok: true, warn: true, detail: "no replays/*.json to run natively", fix: "dotframe replay record replays/<name>.json --inputs <file.jsonl>" };
+  if (!which("scriptc")) return { ...base, ok: false, detail: "scriptc not found", fix: "npm i -g scriptc" };
+  try {
+    const started = performance.now();
+    const replays = files.map((f: string) => {
+      const r = JSON.parse(readFileSync(join(dir, f), "utf8")) as { seed: number; options: Record<string, unknown>; inputs: { frame: number; inputs: number[] }[]; frames: number; throughOver?: boolean; checksums: { frame: number; checksum: number }[]; final: number };
+      return { file: `replays/${f}`, seed: r.seed, options: r.options, inputs: r.inputs, frames: r.frames, throughOver: r.throughOver === true, checksums: r.checksums, final: r.final };
+    });
+    const results = await verifyNative({ ...ctx, json: true, dryRun: false }, config, replays);
+    const failed = results.filter((r): boolean => !r.ok);
+    if (failed.length === 0) return { ...base, ok: true, detail: `${results.length} replays match on the scriptc build (${Math.round(performance.now() - started)} ms)`, fix: "" };
+    const shown = failed.slice(0, 4).map((r): string => `${r.file}: ${r.error ?? `diverges by frame ${r.firstMismatch}`}`).join("; ");
+    return { ...base, ok: false, detail: `${failed.length} of ${results.length} replays fail natively: ${shown}`, fix: "dotframe replay verify <file> --native; the web build plays them fine, the native and iOS builds do not" };
+  } catch (error) {
+    if (!(error instanceof CliError)) throw error;
+    return { ...base, ok: false, detail: error.message.split("\n").slice(0, 2).join(" "), fix: error.fix };
+  }
 }
 
 // Compiles a native target's TypeScript the way the real build does (staging plus scriptc; for iOS the library),
