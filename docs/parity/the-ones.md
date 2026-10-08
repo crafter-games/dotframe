@@ -21,7 +21,7 @@ Status: **has** (dotframe does it), **sub** (the port fakes it acceptably), **pa
 |---|---|---|---|---|
 | MeshInstance3D, StandardMaterial3D (albedo, texture, emission, alpha cut) | 99, 38 | has | `MeshRef` color, texture, triplanar, emissive, alphaCutoff | - |
 | Roughness, metallic, clearcoat, specular | many | missing | One fixed lighting model. The deer's eyes and wet skin read flat | T9 |
-| ShaderMaterial (29 custom shaders: skin, foliage, water, shoji, CRT, dog coat...) | 37 | missing | No per-material fragment code; the port approximates with tints (`one_skin` greys the albedo, so the deer is a dark silhouette) | T1 |
+| ShaderMaterial (29 custom shaders: skin, foliage, water, shoji, CRT, dog coat...) | 37 | partial | `Renderer.createMaterial` + `MeshRef.material`/`params`: fragment surface code (albedo, emission) under the built-in lighting. `one_skin` is ported. No vertex hook yet (`one_skin`'s glitch, foliage wind beyond `sway`), and specular, roughness, rim and SSS wait on T9 | T1 |
 | BoxMesh, CylinderMesh, SphereMesh, QuadMesh, PlaneMesh, TorusMesh, PrismMesh, CapsuleMesh | 27, 33, 18, 17, 12, 7, 3, 1 | partial | Engine ships only `box()`. The port writes cylinder, sphere, dome, quad, floor quad and torus itself in `src/scene.ts` | T2 |
 | OmniLight3D | 27 | partial | `PointLight`, at most 8 (`MAX_LIGHTS`), no shadow maps; `PointLight.box` keeps light inside walls as a stand-in | T4 |
 | SpotLight3D | 13 | partial | One spot light per frame. Flashlight and camcorder IR cannot both light; chapter 3's power cut and shoji silhouette want more | T3 |

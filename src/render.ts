@@ -282,6 +282,9 @@ export interface Renderer {
   // The scene's draws without presenting a frame, for Draw2D.scene() to put under a 2D HUD in Sim.render.
   draws: (world: World, camera: Camera, environment?: Environment) => Draw[];
   render: (world: World, camera: Camera, clear: Color, environment?: Environment) => void;
+  // A material for MeshRef.material: WGSL defining fn surface(s: SurfaceIn) -> Surface (Godot's fragment()). It may
+  // sample tex with samp (MeshRef.texture) and read MeshRef.params. Built-in lighting, shadows and fog apply to it.
+  createMaterial: (wgsl: string) => number;
 }
 
 interface GpuMesh {
@@ -295,6 +298,7 @@ interface GpuMesh {
 }
 
 interface EntityBinding {
+  pipeline: number;
   uniformBuffer: number;
   bindGroup: number;
   texture: Texture;
@@ -338,8 +342,30 @@ struct Out {
 }
 `;
 
-// kind 0 static, 1 skinned, 2 instanced.
-const shader = (kind: number): string => {
+// What a custom material's surface() gets and returns (Renderer.createMaterial). Lighting, shadows, fog and exposure
+// stay the built-in ones, applied to the returned albedo; emission is added after lighting, unlit.
+const SURFACE_TYPES = `
+struct SurfaceIn {
+  world: vec3f,
+  normal: vec3f,
+  uv: vec2f,
+  // Unit vector from the surface to the eye.
+  view: vec3f,
+  // MeshRef.color, and MeshRef.params as two vec4s.
+  color: vec3f,
+  params0: vec4f,
+  params1: vec4f,
+  // Environment.time.
+  time: f32,
+}
+struct Surface {
+  albedo: vec3f,
+  emission: vec3f,
+}
+`;
+
+// kind 0 static, 1 skinned, 2 instanced, 3 shadow casters. surface is a material's WGSL (createMaterial).
+const shader = (kind: number, surface?: string): string => {
   const skinned = kind === 1;
   return `
 struct Light {
@@ -368,6 +394,7 @@ struct Uniforms {
   sunParams: vec4f,
   // Per light: min.xyz and w (0 none, 1 inside, 2 outside), then max.xyz.
   lightBoxes: array<vec4f, ${MAX_LIGHTS * 2}>,
+  params: array<vec4f, 2>,
   ${skinned ? `joints: array<mat4x4f, ${MAX_JOINTS}>,` : ""}
 }
 @group(0) @binding(0) var<uniform> u: Uniforms;
@@ -488,10 +515,17 @@ fn boxed(i: i32, world: vec3f) -> f32 {
   return select(0.0, 1.0, inside == (lo.w < 1.5));
 }
 
+${surface ? `${SURFACE_TYPES}
+${surface}
+` : ""}
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4f {
   let n = normalize(in.normal);
-  var albedo = u.color.rgb;
+  ${
+    surface
+      ? `let s = surface(SurfaceIn(in.world, n, in.uv, normalize(u.eye.xyz - in.world), u.color.rgb, u.params[0], u.params[1], u.sunDir.w));
+  let albedo = s.albedo;`
+      : `var albedo = u.color.rgb;
   // Sampled unconditionally (uniform control flow); material.y picks what to use: 0 none, 1 triplanar, 2 UVs.
   // No fract: tiled textures use a repeating sampler (mipmaps), and fract's seams would pick the smallest mip.
   let texel = textureSample(tex, samp, in.uv);
@@ -507,6 +541,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
     let ty = textureSample(tex, samp, p.xz).rgb;
     let tz = textureSample(tex, samp, p.xy).rgb;
     albedo = albedo * (tx * w.x + ty * w.y + tz * w.z);
+  }`
   }
   var light = u.ambient.rgb;
   let sunLit = max(dot(n, normalize(u.sunDir.xyz)), 0.0);
@@ -526,7 +561,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
     let cone = smoothstep(u.spotDir.w, u.spotColor.w, dot(-dir, normalize(u.spotDir.xyz)));
     light += u.spotColor.rgb * max(dot(n, dir), 0.0) * falloff(d, u.spotPos.w) * cone * spotShadow(in.world);
   }
-  var color = albedo * (light + vec3f(u.color.w));
+  var color = albedo * (light + vec3f(u.color.w))${surface ? " + s.emission" : ""};
   if (u.fog.w > 0.0) {
     let d = distance(in.world, u.eye.xyz) * u.fog.w;
     color = mix(u.fog.rgb, color, exp(-d * d));
@@ -552,8 +587,9 @@ fn falloff(d: f32, range: f32) -> f32 {
 const VERTEX_FLOATS = 8;
 const SKINNED_FLOATS = 16;
 // mvp (16) + model (16) + 10 vec4 + MAX_LIGHTS * 2 vec4 + shadowVP (16) + shadowParams (4) + sunVP (16) +
-// sunParams (4) + MAX_LIGHTS * 2 vec4 of light boxes.
-const UNIFORM_FLOATS = 32 + 10 * 4 + MAX_LIGHTS * 8 + 40 + MAX_LIGHTS * 8;
+// sunParams (4) + MAX_LIGHTS * 2 vec4 of light boxes + 2 vec4 of material params.
+const UNIFORM_FLOATS = 32 + 10 * 4 + MAX_LIGHTS * 8 + 40 + MAX_LIGHTS * 8 + 8;
+const PARAMS_SLOT = UNIFORM_FLOATS - 8;
 // Where shadowVP, sunVP and the light boxes start in the scene block (which starts at float 40).
 const SHADOW_SLOT = 8 * 4 + MAX_LIGHTS * 8;
 const SUN_SLOT = SHADOW_SLOT + 20;
@@ -571,7 +607,36 @@ const BASE_ATTRIBUTES = [
 ];
 
 export function createRenderer(gpu: RenderGpu): Renderer {
-  const pipeline = gpu.createPipeline({ wgsl: shader(0), stride: VERTEX_FLOATS * 4, attributes: BASE_ATTRIBUTES, depth: true, blend: false });
+  const pipelineFor = (kind: number, surface?: string): number =>
+    gpu.createPipeline(
+      kind === 1
+        ? {
+            wgsl: shader(1, surface),
+            stride: SKINNED_FLOATS * 4,
+            attributes: [...BASE_ATTRIBUTES, { format: VertexFormat.Float32x4, offset: 32, location: 3 }, { format: VertexFormat.Float32x4, offset: 48, location: 4 }],
+            depth: true,
+            blend: false,
+          }
+        : kind === 2
+          ? {
+              wgsl: shader(2, surface),
+              stride: VERTEX_FLOATS * 4,
+              attributes: BASE_ATTRIBUTES,
+              depth: true,
+              blend: false,
+              instanceStride: INSTANCE_FLOATS * 4,
+              instanceAttributes: [
+                { format: VertexFormat.Float32x4, offset: 0, location: 3 },
+                { format: VertexFormat.Float32x4, offset: 16, location: 4 },
+              ],
+            }
+          : { wgsl: shader(0, surface), stride: VERTEX_FLOATS * 4, attributes: BASE_ATTRIBUTES, depth: true, blend: false },
+    );
+  const pipeline = pipelineFor(0);
+  // Custom materials' WGSL, and their pipelines by kind, made on first draw.
+  const materials: string[] = [];
+  const materialPipelines = new Map<number, number>();
+  const createMaterial = (wgsl: string): number => materials.push(wgsl) - 1;
   // Created on the first skinned mesh or instance set, so games without one pay nothing.
   let skinnedPipeline = -1;
   let instancedPipeline = -1;
@@ -618,15 +683,7 @@ export function createRenderer(gpu: RenderGpu): Renderer {
   };
 
   const addSkinnedMesh = (data: MeshData, skin: SkinnedData): number => {
-    if (skinnedPipeline < 0) {
-      skinnedPipeline = gpu.createPipeline({
-        wgsl: shader(1),
-        stride: SKINNED_FLOATS * 4,
-        attributes: [...BASE_ATTRIBUTES, { format: VertexFormat.Float32x4, offset: 32, location: 3 }, { format: VertexFormat.Float32x4, offset: 48, location: 4 }],
-        depth: true,
-        blend: false,
-      });
-    }
+    if (skinnedPipeline < 0) skinnedPipeline = pipelineFor(1);
     const vertexCount = skin.positions.length / 3;
     const interleaved = new Float32Array(vertexCount * SKINNED_FLOATS);
     const uvs = data.uvs;
@@ -742,20 +799,7 @@ export function createRenderer(gpu: RenderGpu): Renderer {
   };
 
   const addInstances = (data: Float32Array): Instances => {
-    if (instancedPipeline < 0) {
-      instancedPipeline = gpu.createPipeline({
-        wgsl: shader(2),
-        stride: VERTEX_FLOATS * 4,
-        attributes: BASE_ATTRIBUTES,
-        depth: true,
-        blend: false,
-        instanceStride: INSTANCE_FLOATS * 4,
-        instanceAttributes: [
-          { format: VertexFormat.Float32x4, offset: 0, location: 3 },
-          { format: VertexFormat.Float32x4, offset: 16, location: 4 },
-        ],
-      });
-    }
+    if (instancedPipeline < 0) instancedPipeline = pipelineFor(2);
     const split = splitCells(data);
     return { buffer: gpu.createBuffer(BufferUsage.Vertex, f32Bytes(split.data)), count: data.length / INSTANCE_FLOATS, cells: split.cells };
   };
@@ -911,13 +955,25 @@ export function createRenderer(gpu: RenderGpu): Renderer {
 
       const texture = meshRef.texture ?? white;
       const instances = meshRef.instances;
-      const entityPipeline = mesh.skinned ? skinnedPipeline : instances ? instancedPipeline : pipeline;
+      const kind = mesh.skinned ? 1 : instances ? 2 : 0;
+      let entityPipeline = kind === 1 ? skinnedPipeline : kind === 2 ? instancedPipeline : pipeline;
+      const material = meshRef.material;
+      if (material !== undefined) {
+        if (material < 0 || material >= materials.length) throw new Error(`MeshRef.material ${material}: no such material (Renderer.createMaterial)`);
+        const key = material * 4 + kind;
+        let custom = materialPipelines.get(key);
+        if (custom === undefined) {
+          custom = pipelineFor(kind, materials[material]);
+          materialPipelines.set(key, custom);
+        }
+        entityPipeline = custom;
+      }
       const data = mesh.skinned ? skinnedUniforms : uniforms;
       const bindingKey = entityKey(world, entity);
       let binding = bindings.get(bindingKey);
-      if (!binding || binding.texture !== texture) {
+      if (!binding || binding.texture !== texture || binding.pipeline !== entityPipeline) {
         const uniformBuffer = binding?.uniformBuffer ?? gpu.createBuffer(BufferUsage.Uniform, f32Bytes(data));
-        binding = { uniformBuffer, bindGroup: gpu.bind(entityPipeline, uniformBuffer, texture.id, shadowMap.id), texture };
+        binding = { pipeline: entityPipeline, uniformBuffer, bindGroup: gpu.bind(entityPipeline, uniformBuffer, texture.id, shadowMap.id), texture };
         bindings.set(bindingKey, binding);
       }
 
@@ -935,6 +991,8 @@ export function createRenderer(gpu: RenderGpu): Renderer {
       uniforms.set(scene, 40);
       // fog.w is the density; 0 skips fog in the fragment shader.
       if (meshRef.fog === false) uniforms[47] = 0;
+      const params = meshRef.params;
+      if (params) for (let i = 0; i < Math.min(params.length, 8); i++) uniforms[PARAMS_SLOT + i] = params[i];
       if (mesh.skinned) {
         skinnedUniforms.set(uniforms, 0);
         const joints = meshRef.joints;
@@ -987,7 +1045,7 @@ export function createRenderer(gpu: RenderGpu): Renderer {
   const render = (world: World, camera: Camera, clear: Color, environment?: Environment): void =>
     gpu.frame(clear, draws(world, camera, environment));
 
-  return { addMesh, addSkinnedMesh, addInstances, updateInstances, draws, render };
+  return { addMesh, addSkinnedMesh, addInstances, updateInstances, draws, render, createMaterial };
 }
 
 function meshRadius(positions: Float32Array): number {
