@@ -86,11 +86,16 @@ function hasChunk(bytes: Uint8Array, name: string): boolean {
 // Rewrites a GLB to the parts loadGlb reads: kept vertex attributes, indices, skins, animations and base color
 // images. Unused accessors, buffer views and images go away and indices are renumbered. Returns null when the file
 // uses something the rewrite does not understand (extra buffers, sparse accessors, required extensions), so the
-// caller copies it unchanged.
-export function slimGlb(bytes: Uint8Array, recode?: (image: SlimImage) => { bytes: Uint8Array; mimeType: string } | null): Uint8Array | null {
+// caller copies it unchanged. clips keeps only the animations with those names (exact, or after "Armature|");
+// a GLB with none of them keeps all of its own.
+export function slimGlb(bytes: Uint8Array, recode?: (image: SlimImage) => { bytes: Uint8Array; mimeType: string } | null, clips?: string[]): Uint8Array | null {
   const parts = readGlb(bytes);
   if (!parts) return null;
   const doc = structuredClone(parts.doc);
+  if (clips && clips.length > 0 && doc.animations) {
+    const wanted = (a: Json): boolean => clips.some((c: string) => a.name === c || String(a.name ?? "").endsWith(`|${c}`));
+    if (doc.animations.some(wanted)) doc.animations = doc.animations.filter(wanted);
+  }
   if ((doc.buffers?.length ?? 0) > 1 || (doc.extensionsRequired ?? []).some((e: string) => !KNOWN_REQUIRED.includes(e)) || (doc.accessors ?? []).some((a: Json) => a.sparse)) return null;
   if ((doc.images ?? []).some((i: Json) => i.bufferView === undefined)) return null;
 
@@ -195,6 +200,20 @@ export function slimGlb(bytes: Uint8Array, recode?: (image: SlimImage) => { byte
       accessors.push(accessor);
       continue;
     }
+    const element = (COMPONENTS[accessor.type] ?? 1) * (COMPONENT_BYTES[accessor.componentType] ?? 4);
+    const stride = accessor.bufferView === undefined ? undefined : doc.bufferViews[accessor.bufferView].byteStride;
+    if (accessor.bufferView !== undefined && (stride === undefined || stride === element)) {
+      // Tightly packed: copy just this accessor's bytes. Exporters (Blender, Godot) pack every animation accessor
+      // into a few large views, so keeping whole views would keep the clips that were dropped. A stride equal to
+      // the element size is packed too (Godot writes 12 and 16 on its VEC3 and VEC4 animation views).
+      const v = doc.bufferViews[accessor.bufferView];
+      const start = (v.byteOffset ?? 0) + (accessor.byteOffset ?? 0);
+      const size = accessor.count * element;
+      accessor.bufferView = append(parts.bin.subarray(start, start + size), { target: v.target });
+      accessor.byteOffset = undefined;
+      accessors.push(accessor);
+      continue;
+    }
     if (accessor.bufferView !== undefined) {
       if (!viewMap.has(accessor.bufferView)) {
         const v = doc.bufferViews[accessor.bufferView];
@@ -224,6 +243,9 @@ export function slimGlb(bytes: Uint8Array, recode?: (image: SlimImage) => { byte
   if (!doc.textures) delete doc.samplers;
   return writeGlb(doc, bin);
 }
+
+const COMPONENTS: Record<string, number> = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4, MAT2: 4, MAT3: 9, MAT4: 16 };
+const COMPONENT_BYTES: Record<number, number> = { 5120: 1, 5121: 1, 5122: 2, 5123: 2, 5125: 4, 5126: 4 };
 
 function u32View(bin: Uint8Array, doc: Json, accessor: Json): DataView | null {
   if (accessor.bufferView === undefined) return null;
@@ -271,7 +293,7 @@ export function ffmpegAvailable(): boolean {
 }
 
 // Copies src to out, slimming every .glb on the way. Other files are copied as they are.
-export function slimAssets(src: string, out: string, options: { jpeg?: boolean; quality?: number } = {}): SlimReport {
+export function slimAssets(src: string, out: string, options: { jpeg?: boolean; quality?: number; clips?: string[] } = {}): SlimReport {
   const jpeg = options.jpeg !== false && ffmpegAvailable();
   const quality = options.quality ?? 3;
   const report: SlimReport = { before: 0, after: 0, files: [], jpeg };
@@ -289,7 +311,7 @@ export function slimAssets(src: string, out: string, options: { jpeg?: boolean; 
       let after = before;
       let note: string | undefined;
       if (name.toLowerCase().endsWith(".glb")) {
-        const slim = slimGlb(new Uint8Array(readFileSync(from)), jpeg ? (image) => (image.opaque && image.mimeType === "image/png" ? (b => b && { bytes: b, mimeType: "image/jpeg" })(pngToJpeg(image.bytes, quality)) : null) : undefined);
+        const slim = slimGlb(new Uint8Array(readFileSync(from)), jpeg ? (image) => (image.opaque && image.mimeType === "image/png" ? (b => b && { bytes: b, mimeType: "image/jpeg" })(pngToJpeg(image.bytes, quality)) : null) : undefined, options.clips);
         if (slim && slim.byteLength < before) {
           writeFileSync(to, slim);
           after = slim.byteLength;

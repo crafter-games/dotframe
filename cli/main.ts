@@ -120,14 +120,17 @@ dotframe device logs <target> [--json]
 install puts the built app on targets.<target>.device with devicectl (gated like deploy). logs copies the newest
 crash report of the app's process from the device into .dotframe/logs and prints the exception, termination and
 the crashed thread's frames (read-only on the device).`,
-  assets: `dotframe assets slim <src> <out> [--no-jpeg] [--json]
+  assets: `dotframe assets slim <src> <out> [--no-jpeg] [--clips a,b,...] [--json]
 
 Copies src to out. Every .glb keeps only what loadGlb reads: POSITION, NORMAL, TEXCOORD_0, JOINTS_0 and WEIGHTS_0,
 indices (narrowed to 16 bits when they fit), skins, animations and base color images. Normal, roughness and other
 maps go, and opaque PNG base colors become JPEG through ffmpeg. Sources stay untouched. A GLB with something the
 rewrite does not understand is copied as it is and noted. iOS builds slim their bundle the same way.
+--clips keeps only the named animations (exact, or after "Armature|") in each GLB that has any of them, to import
+a model whose library ships far more clips than the game plays; GLBs with none of them keep theirs.
 
-  dotframe assets slim assets dist/web/assets`,
+  dotframe assets slim assets dist/web/assets
+  dotframe assets slim tools/dog assets/models --clips walk_fwd_01,run_fwd_01`,
   vendor: `dotframe vendor <macos|windows> [--dry-run]
 
 Downloads wgpu-native and builds SDL3 for native targets into DOTFRAME_VENDOR (default ~/.dotframe/vendor), which
@@ -187,6 +190,7 @@ const { values, positionals } = parseArgs({
     port: { type: "string" },
     "no-install": { type: "boolean" },
     "no-jpeg": { type: "boolean" },
+    clips: { type: "string" },
     "through-over": { type: "boolean" },
     docker: { type: "boolean" },
     online: { type: "boolean" },
@@ -227,7 +231,7 @@ try {
   else if (command === "device" && rest[0] === "install") await device(ctx, rest[1] ?? "ios");
   else if (command === "device" && rest[0] === "logs") await deviceLogs(ctx, rest[1] ?? "ios");
   else if (command === "vendor") await vendor(ctx, rest[0]);
-  else if (command === "assets" && rest[0] === "slim") assetsSlim(ctx, rest[1], rest[2], values["no-jpeg"] !== true);
+  else if (command === "assets" && rest[0] === "slim") assetsSlim(ctx, rest[1], rest[2], values["no-jpeg"] !== true, typeof values.clips === "string" ? values.clips.split(",").map((c: string): string => c.trim()).filter(Boolean) : undefined);
   else if (command === "doctor") await doctor(ctx, values.fix === true, values.docker === true);
   else if (command === "config") await configCmd(ctx, rest);
   else if (command === "skills") await skills(ctx, rest, values.full === true, values.all === true);
