@@ -31,6 +31,9 @@ export interface MeshRef {
   sway?: number;
   // false draws the mesh without Environment.fog: far lights and signs that must read through it (Godot disable_fog).
   fog?: boolean;
+  // Render layers the mesh is on, a bitmask (default 1). A camera draws it when they share a layer (Camera.layers).
+  // A mesh off layer 1 casts no shadow, so a mesh only one camera sees is not given away by its shadow.
+  layers?: number;
 }
 
 export interface Instances {
