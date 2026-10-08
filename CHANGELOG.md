@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- `perf` sets the viewport before opening the game and draws 30 untimed frames at `--frame` before measuring: runs used to start with up to nine one-second "hitches" from the resize and the first shader compiles.
 - Fixed: one renderer drawing two worlds (an in-game TV's set and the scene) reused per-entity GPU buffers across them, since both number entities from 0; buffers are now keyed by `World.id` too.
 - `Renderer.updateInstances(set, data)` rewrites an instance set in place (same count). `Camera.aspect` draws into a target of another shape than the surface, `Camera.roll` turns the view about its direction, and `Camera.fixed` keeps a camera inside the scene (one filming an in-game TV) from being replaced by `snap --camera`.
 - Render layers: `MeshRef.layers` and `Camera.layers` (bitmasks, default 1), like Godot's layers and cull mask. A mesh off layer 1 casts no shadow. The Ones uses it for what only the camcorder shows.

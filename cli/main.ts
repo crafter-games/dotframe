@@ -72,7 +72,8 @@ camera, inputs) and {out} (the PNG to write), for example a Godot script that lo
   dotframe compare --frame 2108 --camera -2.5,1.7,-4.5,-2.5,1.4,-9.5,60 --inputs replays/inputs/night2-survive.jsonl`,
   perf: `dotframe perf [--frame <n>] [--frames 300] [--camera ex,ey,ez,tx,ty,tz[,fov]] [--mash <seed> | --inputs f.jsonl] [--seed 1] [--options json] [--json]
 
-Serves the game like snap, steps the sim to --frame, then renders --frames frames, one sim step each, and reports
+Serves the game like snap, steps the sim to --frame, draws 30 untimed frames there (shader compiles), then renders
+--frames frames, one sim step each, and reports
 load time (navigation to ready and to the first frame, bytes fetched from the local server), the
 requestAnimationFrame interval and the CPU time of step and render (p50, p95, max). The numbers are this machine's
 browser; a phone needs its own run.
