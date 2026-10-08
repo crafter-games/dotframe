@@ -47,6 +47,24 @@ export async function build(ctx: Ctx, name: string | undefined, release: boolean
   );
 }
 
+// A project created by `vercel link` inside a git repo gets that repo connected, and every push then deploys the
+// repo root (source index.html, no bundle) to production. A root vercel.json with git.deploymentEnabled false stops it.
+function gitDeployWarning(root: string, scope: string, project: string): string | null {
+  try {
+    const guard = JSON.parse(readFileSync(join(root, "vercel.json"), "utf8"))?.git?.deploymentEnabled === false;
+    if (guard) return null;
+  } catch {}
+  const r = Bun.spawnSync(["vercel", "api", `/v9/projects/${project}`, "--scope", scope], { env: process.env, stdout: "pipe", stderr: "pipe" });
+  if (r.exitCode !== 0) return null;
+  try {
+    const repo = JSON.parse(r.stdout.toString())?.link;
+    if (!repo?.type) return null;
+    return `${scope}/${project} is connected to ${repo.org}/${repo.repo}: each push to ${repo.productionBranch} deploys the repo root to production. Add {"git": {"deploymentEnabled": false}} to ${join(root, "vercel.json")}`;
+  } catch {
+    return null;
+  }
+}
+
 export async function deploy(ctx: Ctx, name: string | undefined, prod: boolean): Promise<void> {
   if (!name) throw new CliError("MISSING_ARG", "deploy needs a target", "dotframe deploy web --prod --dry-run");
   const config = loadConfig();
@@ -79,7 +97,8 @@ export async function deploy(ctx: Ctx, name: string | undefined, prod: boolean):
   const r = await exec(ctx, config.root, { label: "vercel deploy", argv, cwd: out });
   if (r.code !== 0) throw new CliError("DEPLOY_FAILED", r.tail, "vercel whoami; vercel switch " + vercel.scope, skill);
   const url = r.tail.match(/https:\/\/\S+\.vercel\.app/g)?.pop() ?? null;
-  print(ctx, { ...plan, url, ms: r.ms }, (): string => `deployed ${url ?? "(url not found in output)"}`);
+  const warning = gitDeployWarning(config.root, vercel.scope, vercel.project);
+  print(ctx, { ...plan, url, ms: r.ms, warning }, (): string => [`deployed ${url ?? "(url not found in output)"}`, warning ? `warning: ${warning}` : ""].filter(Boolean).join("\n"));
 }
 
 export async function relay(ctx: Ctx, region: string | undefined): Promise<void> {
