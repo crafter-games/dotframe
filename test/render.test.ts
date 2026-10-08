@@ -82,6 +82,29 @@ test("Camera.roll turns the view about its direction", () => {
   expect(Math.abs(turned[1])).toBeCloseTo(Math.abs(flat[0]), 5);
 });
 
+test("two worlds drawn by one renderer keep their own entity buffers", () => {
+  const { gpu } = recordingGpu();
+  let created = 0;
+  const make = gpu.createBuffer;
+  gpu.createBuffer = (usage: number, data: Uint8Array): number => {
+    created++;
+    return make(usage, data);
+  };
+  const renderer = createRenderer(gpu);
+  const a = oneBoxWorld();
+  const b = oneBoxWorld();
+  const mesh = renderer.addMesh(box());
+  a.world.meshes.set(a.entity, { mesh, color: vec3(1, 0, 0) });
+  b.world.meshes.set(b.entity, { mesh, color: vec3(0, 1, 0) });
+  const camera = { eye: vec3(0, 0, 0), target: vec3(0, 0, -1), fovY: 1 };
+  renderer.draws(a.world, camera);
+  const afterA = created;
+  renderer.draws(b.world, camera);
+  expect(a.entity).toBe(b.entity);
+  // The second world's entity gets its own uniform buffer instead of rewriting the first one's.
+  expect(created).toBe(afterA + 1);
+});
+
 test("updateInstances rewrites a set in place and keeps its count", () => {
   const { gpu, writes } = recordingGpu();
   const renderer = createRenderer(gpu);

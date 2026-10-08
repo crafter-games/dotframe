@@ -22,6 +22,12 @@ export interface Camera {
   roll?: number;
 }
 
+// Per-entity GPU buffers are cached by this key, so two worlds drawn by one renderer (an in-game TV's set and the
+// scene) keep their own.
+function entityKey(world: World, entity: number): number {
+  return (world.id ?? 0) * 1048576 + entity;
+}
+
 // The up vector for a camera rolled about its view direction.
 function rolledUp(camera: Camera): Vec3 {
   const roll = camera.roll ?? 0;
@@ -572,7 +578,7 @@ export function createRenderer(gpu: RenderGpu): Renderer {
   // Every lit pipeline samples the shadow map, so it exists from the start; it is drawn only when a spot asks.
   const shadowMap = gpu.createTarget(SHADOW_SIZE * 2, SHADOW_SIZE);
   const shadowPipeline = gpu.createPipeline({ wgsl: shader(3), stride: VERTEX_FLOATS * 4, attributes: BASE_ATTRIBUTES, depth: true, blend: false });
-  // One binding per entity and light (key entity * 2 + 1 for the sun).
+  // One binding per world, entity and light (entityKey * 2 + 1 for the sun).
   const shadowBindings = new Map<number, number[]>();
   const shadowUniforms = new Float32Array(UNIFORM_FLOATS);
   const meshes: GpuMesh[] = [];
@@ -879,7 +885,7 @@ export function createRenderer(gpu: RenderGpu): Renderer {
         if (!transform || !mesh || mesh.skinned || meshRef.instances || (meshRef.emissive ?? 0) > 0 || ((meshRef.layers ?? 1) & 1) === 0) continue;
         const model = compose(transform.position, transform.rotation, transform.scale);
         for (const pass of passes) {
-          const key = entity * 2 + pass.sun;
+          const key = entityKey(world, entity) * 2 + pass.sun;
           let binding = shadowBindings.get(key);
           if (!binding) {
             const buffer = gpu.createBuffer(BufferUsage.Uniform, f32Bytes(shadowUniforms));
@@ -905,11 +911,12 @@ export function createRenderer(gpu: RenderGpu): Renderer {
       const instances = meshRef.instances;
       const entityPipeline = mesh.skinned ? skinnedPipeline : instances ? instancedPipeline : pipeline;
       const data = mesh.skinned ? skinnedUniforms : uniforms;
-      let binding = bindings.get(entity);
+      const bindingKey = entityKey(world, entity);
+      let binding = bindings.get(bindingKey);
       if (!binding || binding.texture !== texture) {
         const uniformBuffer = binding?.uniformBuffer ?? gpu.createBuffer(BufferUsage.Uniform, f32Bytes(data));
         binding = { uniformBuffer, bindGroup: gpu.bind(entityPipeline, uniformBuffer, texture.id, shadowMap.id), texture };
-        bindings.set(entity, binding);
+        bindings.set(bindingKey, binding);
       }
 
       const model = compose(transform.position, transform.rotation, transform.scale);

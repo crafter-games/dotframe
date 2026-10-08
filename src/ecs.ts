@@ -55,13 +55,17 @@ export interface InstanceCell {
 }
 
 export interface World {
+  // Distinguishes worlds drawn by one renderer (its per-entity GPU buffers are keyed by world and entity).
+  id?: number;
   nextEntity: number;
   transforms: Map<number, Transform>;
   meshes: Map<number, MeshRef>;
 }
 
+let nextWorld = 0;
+
 export function createWorld(): World {
-  return { nextEntity: 0, transforms: new Map<number, Transform>(), meshes: new Map<number, MeshRef>() };
+  return { id: nextWorld++, nextEntity: 0, transforms: new Map<number, Transform>(), meshes: new Map<number, MeshRef>() };
 }
 
 export function spawn(world: World): number {
