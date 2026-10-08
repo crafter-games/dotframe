@@ -70,6 +70,9 @@ export interface Config {
   assets?: { localOnly?: string[] };
   // Tools the build needs besides bun (for example ffmpeg); doctor checks them and docker images install them.
   requires?: string[];
+  // How dotframe compare gets the original game's picture of a shot (a port's source engine, such as Godot): argv
+  // with {shot} (a JSON file: frame, seconds, seed, options, camera, window) and {out} (the PNG to write).
+  reference?: { command: string[] };
 }
 
 export const CONFIG_FILE = "dotframe.json";

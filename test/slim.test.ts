@@ -88,3 +88,12 @@ test("slimGlb keeps only the named clips, and every clip when none match", () =>
   expect((readGlb(kept as Uint8Array)?.doc.accessors ?? []).length).toBeLessThan((readGlb(slimGlb(glb) as Uint8Array)?.doc.accessors ?? []).length);
   expect(names(slimGlb(glb, undefined, ["cat_meow"]))).toEqual(["Armature|dog_walk", "Armature|dog_bark", "dog_run"]);
 });
+
+test("slimGlb renames kept clips to the names a game plays", () => {
+  const parts = readGlb(fixture());
+  if (!parts) throw new Error("fixture");
+  const clip = (name: string, input: number) => ({ name, channels: [{ sampler: 0, target: { node: 0, path: "translation" } }], samplers: [{ input, output: 0 }] });
+  const glb = writeGlb({ ...parts.doc, animations: [clip("Armature|labrador_walk_fwd_01", 1), clip("labrador_bark", 3)] }, parts.bin);
+  const out = readGlb(slimGlb(glb, undefined, ["labrador_walk_fwd_01"], { labrador_walk_fwd_01: "walk" }) as Uint8Array);
+  expect((out?.doc.animations ?? []).map((a: { name: string }) => a.name)).toEqual(["walk"]);
+});

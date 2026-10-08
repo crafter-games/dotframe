@@ -1,6 +1,6 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { CliError, type Ctx, exec, loadConfig, num, print, which } from "../lib";
 import { inputSource, loadSim, parseOptions, simPath } from "../simkit";
 import type { PlayArgs } from "./play";
@@ -124,6 +124,7 @@ run(sim.window, (p) => {
         throw new CliError("SNAP_TIMEOUT", `the page never reported frame ${frames[k]} after 60 s${logs ? `\n${logs}` : ""}`, "open the page with agent-browser --headed and read the console; WebGPU may be unavailable", "core");
       }
       if (result.error) throw new CliError("SNAP_PAGE_ERROR", result.error, /WGSL|WebGPU:/.test(result.error) ? "fix the shader named in the message; the frame would render black" : "WebGPU unavailable? try AGENT_BROWSER_ARGS=--enable-unsafe-webgpu", "core");
+      mkdirSync(dirname(out), { recursive: true });
       let shot = await ab("screenshot", out);
       if (shot.code !== 0) throw new CliError("BROWSER_FAILED", shot.tail);
       let size = pngSize(out);

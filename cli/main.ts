@@ -5,11 +5,12 @@ import { build, deploy, device, deviceLogs, relay, vendor } from "./commands/shi
 import { doctor } from "./commands/doctor";
 import { deployInit } from "./commands/docker";
 import { configCmd } from "./commands/config";
-import { desync, record, sim, verify } from "./commands/play";
+import { desync, rebase, record, sim, verify } from "./commands/play";
+import { compare } from "./commands/compare";
 import { snap } from "./commands/snap";
 import { playOnline } from "./commands/online";
 import { skills } from "./commands/skills";
-import { assetsSlim } from "./commands/assets";
+import { assetsFont, assetsSlim } from "./commands/assets";
 import { create, dev } from "./commands/new";
 import { CliError, type Ctx, fail, num, print, useXcode } from "./lib";
 import { startRelay } from "./relay";
@@ -20,8 +21,9 @@ Agents: run \`dotframe skills get core\` before anything else.
 
 Play (headless, deterministic)
   sim      [--inputs f.jsonl | --mash <seed>] [--frames 600] [--seed 1] [--options json] [--every n]
+  compare  --frame <n> (--ref <png> | reference.command) [--camera ...] [--out dir]
   snap     --frame <n>[,<n>...] [--camera ex,ey,ez,tx,ty,tz[,fov]] [--out frame.png] [--inputs f | --mash <seed>] [--seed 1] [--options json]
-  replay   record <file> | verify <file...>
+  replay   record <file> | verify <file...> | rebase <file...>
   play     --online [room] [--frames 600] [--seeds 1,2]   two browsers, local relay, scripted match
   desync   [--latency 100ms] [--jitter 0ms] [--delay 2] [--frames 1800] [--renders 3]
 
@@ -56,6 +58,16 @@ ${INPUTS}
 
   dotframe sim --mash 7 --frames 600 --json
   dotframe sim --inputs combo.jsonl --options '{"stocks": 1}'`,
+  compare: `dotframe compare --frame <n> [--ref <png>] [--camera ex,ey,ez,tx,ty,tz[,fov]] [--inputs f.jsonl | --mash <seed>] [--seed 1] [--options json] [--out <dir>] [--dry-run] [--json]
+
+Puts the port's frame next to the original game's picture of the same shot and measures how far apart they are:
+compare.png (port | reference | difference x4), the mean absolute difference, each side's mean luminance, and the
+luminance difference per cell of a 3x3 grid (negative: the port is darker there). The reference is --ref, or
+what dotframe.json's reference.command writes: argv with {shot} (a JSON file with frame, seconds, seed, options,
+camera, inputs) and {out} (the PNG to write), for example a Godot script that loads the original at that moment.
+
+  dotframe compare --frame 600 --ref captures/godot-600.png --out /tmp/cmp-600
+  dotframe compare --frame 2108 --camera -2.5,1.7,-4.5,-2.5,1.4,-9.5,60 --inputs replays/inputs/night2-survive.jsonl`,
   snap: `dotframe snap --frame <n>[,<n>...] [--camera ex,ey,ez,tx,ty,tz[,fov]] [--out snap-{frame}.png] [--mash <seed> | --inputs f.jsonl] [--seed 1] [--options json] [--json]
 
 Steps the sim to frame n in a real browser (WebGPU, through agent-browser) and screenshots it. Open the PNG and look.
@@ -66,12 +78,19 @@ ${INPUTS}
   dotframe snap --frame 300 --camera 0,1.6,-3,0,1.2,0,35   a 3D game seen from another camera (eye, target, fov)`,
   replay: `dotframe replay record <file> [--mash <seed> | --inputs f.jsonl] [--frames 1800] [--seed 1] [--options json] [--through-over]
 dotframe replay verify <file...>
+dotframe replay rebase <file...> [--from HEAD] [--ignore state.a,state.b] [--dry-run]
 
 record stores seed, options, inputs, and a checksum every 60 frames. verify replays them and exits 1 with the
 first divergent frame.
 
   dotframe replay record replays/smoke.json --mash 7
-  dotframe replay verify replays/*.json`,
+  dotframe replay verify replays/*.json
+  dotframe replay rebase replays/*.json --ignore state.kuro
+
+rebase re-records replays after a change that must not move the simulation, once it shows that it did not: each
+replay runs on the sim at --from (a git ref, HEAD by default) and on the working tree, and the final state() must
+match, except paths under --ignore and paths only the new state has. Moved replays are reported (exit 1) and
+left alone. The old tree reuses the game's node_modules, so it isolates the game's change, not the engine's.`,
   desync: `dotframe desync [--latency 100ms] [--jitter 0ms] [--delay 2] [--frames 1800] [--renders 3] [--every 30] [--mash <seed> | --inputs f]
 
 Runs a reference sim and two rollback peers over a simulated link. Peer 1 renders --renders times per step.
@@ -120,7 +139,8 @@ dotframe device logs <target> [--json]
 install puts the built app on targets.<target>.device with devicectl (gated like deploy). logs copies the newest
 crash report of the app's process from the device into .dotframe/logs and prints the exception, termination and
 the crashed thread's frames (read-only on the device).`,
-  assets: `dotframe assets slim <src> <out> [--no-jpeg] [--clips a,b,...] [--json]
+  assets: `dotframe assets slim <src> <out> [--no-jpeg] [--clips a,b,...] [--rename a=b,...] [--json]
+dotframe assets font <font.ttf> <out> [--size 48] [--chars-from <dir>] [--dry-run] [--json]
 
 Copies src to out. Every .glb keeps only what loadGlb reads: POSITION, NORMAL, TEXCOORD_0, JOINTS_0 and WEIGHTS_0,
 indices (narrowed to 16 bits when they fit), skins, animations and base color images. Normal, roughness and other
@@ -130,7 +150,15 @@ rewrite does not understand is copied as it is and noted. iOS builds slim their 
 a model whose library ships far more clips than the game plays; GLBs with none of them keep theirs.
 
   dotframe assets slim assets dist/web/assets
-  dotframe assets slim tools/dog assets/models --clips walk_fwd_01,run_fwd_01`,
+  dotframe assets slim tools/dog assets/models --clips walk_fwd_01,run_fwd_01
+  dotframe assets slim tools/dog/dog.glb assets/models/dog.glb --clips walk_fwd_01 --rename walk_fwd_01=walk
+
+src and out may be two .glb files instead of folders, to import one model. --rename gives the kept animations the
+names the game plays them by. font bakes a TTF into the SDF atlas Draw2D.addFont reads (out.png and out.json):
+printable ASCII and Latin-1, plus every other character in the text files under --chars-from, so a caption cannot
+miss a glyph. It builds tools/bake-font.c with the machine's C compiler the first time.
+
+  dotframe assets font tools/fonts/KleeOne-SemiBold.ttf assets/fonts/klee-one --chars-from src`,
   vendor: `dotframe vendor <macos|windows> [--dry-run]
 
 Downloads wgpu-native and builds SDL3 for native targets into DOTFRAME_VENDOR (default ~/.dotframe/vendor), which
@@ -191,6 +219,12 @@ const { values, positionals } = parseArgs({
     "no-install": { type: "boolean" },
     "no-jpeg": { type: "boolean" },
     clips: { type: "string" },
+    rename: { type: "string" },
+    size: { type: "string" },
+    "chars-from": { type: "string" },
+    from: { type: "string" },
+    ignore: { type: "string" },
+    ref: { type: "string" },
     "through-over": { type: "boolean" },
     docker: { type: "boolean" },
     online: { type: "boolean" },
@@ -217,6 +251,8 @@ try {
   else if (command === "snap") await snap(ctx, v);
   else if (command === "replay" && rest[0] === "record") await record(ctx, rest[1], v);
   else if (command === "replay" && rest[0] === "verify") await verify(ctx, rest.slice(1));
+  else if (command === "compare") await compare(ctx, v);
+  else if (command === "replay" && rest[0] === "rebase") await rebase(ctx, rest.slice(1), typeof values.from === "string" ? values.from : undefined, typeof values.ignore === "string" ? values.ignore : undefined);
   else if (command === "desync") await desync(ctx, v);
   else if (command === "build") await build(ctx, rest[0], values.release === true);
   else if (command === "deploy" && rest[0] === "init") await deployInit(ctx, rest[1], v.provider, v.compose, v.site, v.path);
@@ -231,7 +267,16 @@ try {
   else if (command === "device" && rest[0] === "install") await device(ctx, rest[1] ?? "ios");
   else if (command === "device" && rest[0] === "logs") await deviceLogs(ctx, rest[1] ?? "ios");
   else if (command === "vendor") await vendor(ctx, rest[0]);
-  else if (command === "assets" && rest[0] === "slim") assetsSlim(ctx, rest[1], rest[2], values["no-jpeg"] !== true, typeof values.clips === "string" ? values.clips.split(",").map((c: string): string => c.trim()).filter(Boolean) : undefined);
+  else if (command === "assets" && rest[0] === "slim")
+    assetsSlim(
+      ctx,
+      rest[1],
+      rest[2],
+      values["no-jpeg"] !== true,
+      typeof values.clips === "string" ? values.clips.split(",").map((c: string): string => c.trim()).filter(Boolean) : undefined,
+      typeof values.rename === "string" ? Object.fromEntries(values.rename.split(",").map((p: string): string[] => p.split("=").map((x: string): string => x.trim())).filter((p: string[]): boolean => p.length === 2 && p[0] !== "" && p[1] !== "")) : undefined,
+    );
+  else if (command === "assets" && rest[0] === "font") assetsFont(ctx, rest[1], rest[2], typeof values.size === "string" ? values.size : undefined, typeof values["chars-from"] === "string" ? values["chars-from"] : undefined);
   else if (command === "doctor") await doctor(ctx, values.fix === true, values.docker === true);
   else if (command === "config") await configCmd(ctx, rest);
   else if (command === "skills") await skills(ctx, rest, values.full === true, values.all === true);

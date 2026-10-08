@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { buildIos } from "../ios";
 import { deployDokploy } from "./docker";
@@ -92,8 +92,12 @@ export async function deploy(ctx: Ctx, name: string | undefined, prod: boolean):
   }
   gate(ctx, `deploy ${name}${prod ? " to production" : ""}`, skill);
   if (!which("vercel")) throw new CliError("TOOL_MISSING", "vercel CLI not found", "npm i -g vercel", skill);
+  const envFile = join(out, ".env.local");
+  const hadEnv = existsSync(envFile);
   const l = await exec(ctx, config.root, { label: "vercel link", argv: link, cwd: out });
   if (l.code !== 0) throw new CliError("DEPLOY_FAILED", l.tail, "vercel whoami; vercel switch " + vercel.scope, skill);
+  // vercel link pulls a .env.local with an OIDC token into the build folder; a static game needs none of it.
+  if (!hadEnv && existsSync(envFile)) rmSync(envFile);
   const r = await exec(ctx, config.root, { label: "vercel deploy", argv, cwd: out });
   if (r.code !== 0) throw new CliError("DEPLOY_FAILED", r.tail, "vercel whoami; vercel switch " + vercel.scope, skill);
   const url = r.tail.match(/https:\/\/\S+\.vercel\.app/g)?.pop() ?? null;
