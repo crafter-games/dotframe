@@ -11,6 +11,9 @@ export interface Camera {
   // Clip planes; default 0.1 and 100.
   near?: number;
   far?: number;
+  // Render layers this camera draws, a bitmask (default 1): a mesh shows when MeshRef.layers shares a bit, so a
+  // viewfinder can see what the bare eye does not (Godot cull_mask).
+  layers?: number;
 }
 
 // Replaces the game's camera in every draws() call while set (snap --camera): eye, target and fovY; the game's
@@ -813,7 +816,8 @@ export function createRenderer(gpu: RenderGpu): Renderer {
 
   const draws = (world: World, gameCamera: Camera, environment?: Environment): Draw[] => {
     const forced = cameraOverride.camera;
-    const camera: Camera = forced ? { eye: forced.eye, target: forced.target, fovY: forced.fovY, near: gameCamera.near, far: gameCamera.far } : gameCamera;
+    const camera: Camera = forced ? { eye: forced.eye, target: forced.target, fovY: forced.fovY, near: gameCamera.near, far: gameCamera.far, layers: gameCamera.layers } : gameCamera;
+    const cameraLayers = camera.layers ?? 1;
     const view = lookAt(camera.eye, camera.target, vec3(0, 1, 0));
     const viewProjection = multiply(perspective(camera.fovY, gpu.aspect(), camera.near ?? 0.1, camera.far ?? 100), view);
     writeScene(camera, environment ?? DEFAULT_ENVIRONMENT);
@@ -831,7 +835,7 @@ export function createRenderer(gpu: RenderGpu): Renderer {
       for (const [entity, meshRef] of world.meshes) {
         const transform = world.transforms.get(entity);
         const mesh = meshes[meshRef.mesh];
-        if (!transform || !mesh || mesh.skinned || meshRef.instances || (meshRef.emissive ?? 0) > 0) continue;
+        if (!transform || !mesh || mesh.skinned || meshRef.instances || (meshRef.emissive ?? 0) > 0 || ((meshRef.layers ?? 1) & 1) === 0) continue;
         const model = compose(transform.position, transform.rotation, transform.scale);
         for (const pass of passes) {
           const key = entity * 2 + pass.sun;
@@ -854,7 +858,7 @@ export function createRenderer(gpu: RenderGpu): Renderer {
     for (const [entity, meshRef] of world.meshes) {
       const transform = world.transforms.get(entity);
       const mesh = meshes[meshRef.mesh];
-      if (!transform || !mesh) continue;
+      if (!transform || !mesh || ((meshRef.layers ?? 1) & cameraLayers) === 0) continue;
 
       const texture = meshRef.texture ?? white;
       const instances = meshRef.instances;

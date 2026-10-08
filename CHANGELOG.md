@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Render layers: `MeshRef.layers` and `Camera.layers` (bitmasks, default 1), like Godot's layers and cull mask. A mesh off layer 1 casts no shadow. The Ones uses it for what only the camcorder shows.
+- `replay record --plan plan.json`: go, look, press, wait (frames or until a `state()` path has a value) and expect steps, each able to hold named buttons (`"with": ["crouch"]`), steered through the new optional `Sim.pilot` and `SimRun.pose`. Replaces hand-tuned inputs and per-replay route scripts (The Ones had five copies of one). A failed step names its frame and writes nothing.
+- `assets font --chars-from` collects every character past Latin-1 (it skipped U+0100 to U+02FF, so ō, ā, ł and ş never baked: The Ones' "Gorō (shōbōdan)" drew as "Gor (shbdan)"), and the baker leaves out characters the font lacks instead of baking its .notdef box, and says how many.
 - `replay verify --native` compiles the sim with scriptc and runs each replay there, one process per replay, reporting the frame an abort happened after. `doctor` runs it over `replays/*.json` as `native-replays`, and CI runs it on the templates. Bun replays had passed The Ones' 15 replays while the iPhone aborted in a dialog.
 - `MeshRef.emissive` glows with the texture (surface color times emissive), so a textured emitter keeps its pattern; untextured meshes look the same as before.
 - `fitFootprint(model, length)` in `src/model`: scales a flat prop by its longest horizontal side.

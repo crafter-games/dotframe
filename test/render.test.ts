@@ -53,6 +53,18 @@ test("draws() returns the scene's draws without presenting a frame", () => {
   expect(frames.length).toBe(1);
 });
 
+test("a mesh off layer 1 shows only to a camera on its layer and casts no shadow", () => {
+  const { gpu, frames } = recordingGpu();
+  const renderer = createRenderer(gpu);
+  const { world, entity } = oneBoxWorld();
+  world.meshes.set(entity, { mesh: renderer.addMesh(box()), color: vec3(1, 0, 0), layers: 2 });
+  const eye = { eye: vec3(0, 0, 0), target: vec3(0, 0, -1), fovY: 1 };
+  expect(renderer.draws(world, eye).length).toBe(0);
+  expect(renderer.draws(world, { ...eye, layers: 1 | 2 }).length).toBe(1);
+  renderer.draws(world, { ...eye, layers: 3 }, { ambient: vec3(0, 0, 0), sun: { direction: vec3(0, 1, 0), color: vec3(1, 1, 1), shadows: 50 } });
+  expect(frames.every((f) => f.draws.length === 0)).toBe(true);
+});
+
 test("Draw2D.scene() puts 3D draws before the 2D batch in one frame", () => {
   const { gpu, pipelines, frames } = recordingGpu();
   const renderer = createRenderer(gpu);

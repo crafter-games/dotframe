@@ -87,18 +87,23 @@ ${INPUTS}
   dotframe snap --frame 300 --mash 7 --out /tmp/f300.png
   dotframe snap --frame 60,240,600 --out /tmp/walk-{frame}.png   several frames of one run, one browser
   dotframe snap --frame 300 --camera 0,1.6,-3,0,1.2,0,35   a 3D game seen from another camera (eye, target, fov)`,
-  replay: `dotframe replay record <file> [--mash <seed> | --inputs f.jsonl] [--frames 1800] [--seed 1] [--options json] [--through-over]
+  replay: `dotframe replay record <file> [--mash <seed> | --inputs f.jsonl | --plan plan.json] [--frames 1800] [--seed 1] [--options json] [--through-over]
 dotframe replay verify <file...> [--native]
 dotframe replay rebase <file...> [--from HEAD] [--ignore state.a,state.b] [--dry-run]
 
 record stores seed, options, inputs, and a checksum every 60 frames. verify replays them and exits 1 with the
 first divergent frame.
+--plan steers player 0 through Sim.pilot: a JSON array of {"go": [x, z]}, {"look": [x, y, z]}, {"press": frames},
+{"wait": frames | {"until": "state.path", "is": value, "max": frames}} and {"expect": "state.path", "is": value} (an
+array at the path passes when it contains the value). Any step can hold the game's named buttons with "with":
+["crouch"]. Each step reports its frame; a failed step writes nothing.
 --native compiles the sim with scriptc and replays there, as the macOS, Windows and iOS builds run it: a native-only
 abort or divergence shows up off the device. doctor runs it over replays/*.json.
 
   dotframe replay record replays/smoke.json --mash 7
   dotframe replay verify replays/*.json
   dotframe replay verify replays/*.json --native
+  dotframe replay record replays/day3.json --plan replays/plans/day3.json --options '{"day":3}'
   dotframe replay rebase replays/*.json --ignore state.kuro
 
 rebase re-records replays after a change that must not move the simulation, once it shows that it did not: each
@@ -241,6 +246,7 @@ const { values, positionals } = parseArgs({
     ref: { type: "string" },
     "through-over": { type: "boolean" },
     native: { type: "boolean" },
+    plan: { type: "string" },
     docker: { type: "boolean" },
     online: { type: "boolean" },
     seeds: { type: "string" },

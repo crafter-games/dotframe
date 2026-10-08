@@ -39,6 +39,28 @@ export interface SimRun {
   // that renders nothing: desync calls it that way to prove rendering leaves the simulation alone, so a render
   // that skips itself without a real draw makes that check blind.
   render?: (draw: Draw2D) => void;
+  // Optional, with Sim.pilot: where player 0's eyes are and where they look (radians), for replay record --plan.
+  pose?: () => Pose;
+}
+
+export interface Pose {
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+  pitch: number;
+}
+
+// How replay record --plan steers player 0 in a first- or third-person game: the game owns its input encoding and
+// angle conventions, the CLI only aims and walks.
+export interface Pilot {
+  // The yaw that faces along (dx, dz) on the ground.
+  yawTo: (dx: number, dz: number) => number;
+  // The most the view turns in one frame, in radians (the input's largest look value).
+  turn: number;
+  // One frame's input: turn the view by yaw and pitch radians (within turn), walk forward, press the use button, and
+  // hold the game's named buttons (a plan step's "with", such as "crouch" or "camera").
+  input: (move: { forward: boolean; yaw: number; pitch: number; use: boolean; buttons: string[] }) => number;
 }
 
 export interface Sim {
@@ -57,6 +79,8 @@ export interface Sim {
   create: (platform: SimPlatform) => SimRun;
   // Optional: the most frames the game's netplay can roll back. desync warns when a link needs more.
   rollbackWindow?: number;
+  // Optional: steering for replay record --plan (needs SimRun.pose).
+  pilot?: Pilot;
 }
 
 export function defineSim(sim: Sim): Sim {

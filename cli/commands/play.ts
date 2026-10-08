@@ -5,6 +5,7 @@ import type { Draw2D } from "../../src/draw2d";
 import type { Sim, SimRun } from "../../src/sim";
 import { CliError, type Ctx, exec, frames60, loadConfig, num, print } from "../lib";
 import { verifyNative } from "../native-replay";
+import { type PlanResult, readPlan, runPlan } from "../pilot";
 import { firstDifference, flatten, headlessRun, type InputSource, inputSource, lcg, loadSim, parseOptions } from "../simkit";
 
 export interface PlayArgs {
@@ -16,6 +17,8 @@ export interface PlayArgs {
   every?: string;
   // Keep stepping after over(), for rematch and results flows.
   throughOver?: boolean;
+  // replay record: a plan file (go, look, press, wait, expect) steered through Sim.pilot instead of --inputs.
+  plan?: string;
 }
 
 interface Played {
@@ -71,8 +74,20 @@ interface Replay {
 
 export async function record(ctx: Ctx, file: string, args: PlayArgs): Promise<void> {
   if (!file) throw new CliError("MISSING_ARG", "replay record needs an output file", "dotframe replay record replays/smoke.json --mash 7 --frames 1800");
-  const { run, source, seed, options } = await setup(args);
-  const frames = num("frames", args.frames, 1800, 1);
+  let { run, source, seed, options, sim, root } = await setup(args);
+  let frames = num("frames", args.frames, 1800, 1);
+  let planned: PlanResult | null = null;
+  if (args.plan) {
+    planned = runPlan(sim, run, readPlan(resolve(process.cwd(), args.plan)));
+    const failed = planned.steps.find((s): boolean => !s.ok);
+    if (failed) throw new CliError("PLAN_FAILED", `plan step ${failed.step} (${failed.kind}) failed at frame ${failed.frame}: ${failed.detail}`, "fix the plan or the game; nothing was written");
+    const used = planned.inputs;
+    const idle = sim.neutral;
+    source = { describe: args.plan, at: (f: number): number[] => [f < used.length ? used[f] : idle] };
+    frames = Math.max(args.frames ? frames : 0, used.length);
+    run = await headlessRun(sim, root);
+    run.start(seed, options);
+  }
   const r = play(run, source, frames, 60, args.throughOver === true);
   const inputs: Replay["inputs"] = [];
   for (let f = 0; f < r.frames; f++) {
@@ -82,7 +97,10 @@ export async function record(ctx: Ctx, file: string, args: PlayArgs): Promise<vo
   }
   const replay: Replay = { version: 1, seed, options, inputs, frames: r.frames, ...(args.throughOver ? { throughOver: true } : {}), checksums: r.trace, final: r.checksum };
   writeFileSync(resolve(process.cwd(), file), `${JSON.stringify(replay)}\n`);
-  print(ctx, { file, frames: r.frames, final: r.checksum, checkpoints: r.trace.length }, (): string => `recorded ${r.frames} frames to ${file} (final checksum ${r.checksum})`);
+  const steps = planned ? planned.steps : undefined;
+  print(ctx, { file, frames: r.frames, final: r.checksum, checkpoints: r.trace.length, steps }, (): string =>
+    [...(steps ?? []).map((s): string => `step ${s.step} ${s.kind} at frame ${s.frame}${s.detail ? `: ${s.detail}` : ""}`), `recorded ${r.frames} frames to ${file} (final checksum ${r.checksum})`].join("\n"),
+  );
 }
 
 function replaySource(file: string, replay: Replay): InputSource {
