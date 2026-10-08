@@ -14,6 +14,45 @@ export interface Camera {
   // Render layers this camera draws, a bitmask (default 1): a mesh shows when MeshRef.layers shares a bit, so a
   // viewfinder can see what the bare eye does not (Godot cull_mask).
   layers?: number;
+  // Width over height of the image; defaults to the surface's (gpu.aspect). Set it when drawing into a target of
+  // another shape, such as a 4:3 tape for an in-game TV.
+  aspect?: number;
+  // Turn about the view direction, in radians (positive turns the camera's up toward its right): a hand-held or fallen
+  // camera.
+  roll?: number;
+  // A camera inside the scene (the one filming an in-game TV's picture): snap --camera does not replace it.
+  fixed?: boolean;
+}
+
+// Per-entity GPU buffers are cached by this key, so two worlds drawn by one renderer (an in-game TV's set and the
+// scene) keep their own.
+function entityKey(world: World, entity: number): number {
+  return (world.id ?? 0) * 1048576 + entity;
+}
+
+// The up vector for a camera rolled about its view direction.
+function rolledUp(camera: Camera): Vec3 {
+  const roll = camera.roll ?? 0;
+  if (roll === 0) return vec3(0, 1, 0);
+  let fx = camera.target.x - camera.eye.x;
+  let fy = camera.target.y - camera.eye.y;
+  let fz = camera.target.z - camera.eye.z;
+  const fl = Math.hypot(fx, fy, fz) || 1;
+  fx /= fl;
+  fy /= fl;
+  fz /= fl;
+  // right = forward x up(0,1,0); camera up = right x forward.
+  let rx = -fz;
+  let rz = fx;
+  const rl = Math.hypot(rx, rz) || 1;
+  rx /= rl;
+  rz /= rl;
+  const ux = -rz * fy;
+  const uy = rz * fx - rx * fz;
+  const uz = rx * fy;
+  const c = Math.cos(roll);
+  const s = Math.sin(roll);
+  return vec3(ux * c + rx * s, uy * c, uz * c + rz * s);
 }
 
 // Replaces the game's camera in every draws() call while set (snap --camera): eye, target and fovY; the game's
@@ -237,6 +276,9 @@ export interface Renderer {
   addSkinnedMesh: (data: MeshData, skin: SkinnedData) => number;
   // Uploads instances (INSTANCE_FLOATS each) for MeshRef.instances.
   addInstances: (data: Float32Array) => Instances;
+  // Rewrites an instance set in place with the same number of instances (rice laid down as it is walked over).
+  // Costs an upload of the whole set, so call it when the data changes, not every frame out of habit.
+  updateInstances: (instances: Instances, data: Float32Array) => void;
   // The scene's draws without presenting a frame, for Draw2D.scene() to put under a 2D HUD in Sim.render.
   draws: (world: World, camera: Camera, environment?: Environment) => Draw[];
   render: (world: World, camera: Camera, clear: Color, environment?: Environment) => void;
@@ -538,7 +580,7 @@ export function createRenderer(gpu: RenderGpu): Renderer {
   // Every lit pipeline samples the shadow map, so it exists from the start; it is drawn only when a spot asks.
   const shadowMap = gpu.createTarget(SHADOW_SIZE * 2, SHADOW_SIZE);
   const shadowPipeline = gpu.createPipeline({ wgsl: shader(3), stride: VERTEX_FLOATS * 4, attributes: BASE_ATTRIBUTES, depth: true, blend: false });
-  // One binding per entity and light (key entity * 2 + 1 for the sun).
+  // One binding per world, entity and light (entityKey * 2 + 1 for the sun).
   const shadowBindings = new Map<number, number[]>();
   const shadowUniforms = new Float32Array(UNIFORM_FLOATS);
   const meshes: GpuMesh[] = [];
@@ -718,6 +760,13 @@ export function createRenderer(gpu: RenderGpu): Renderer {
     return { buffer: gpu.createBuffer(BufferUsage.Vertex, f32Bytes(split.data)), count: data.length / INSTANCE_FLOATS, cells: split.cells };
   };
 
+  const updateInstances = (instances: Instances, data: Float32Array): void => {
+    if (data.length / INSTANCE_FLOATS !== instances.count) throw new Error(`updateInstances: ${data.length / INSTANCE_FLOATS} instances for a set of ${instances.count}`);
+    const split = splitCells(data);
+    gpu.writeBuffer(instances.buffer, f32Bytes(split.data));
+    instances.cells = split.cells;
+  };
+
   // Particles: one pipeline, quad and uniform buffer, made on first use; the instance buffer grows as needed.
   const particle = { pipeline: -1, quad: -1, indices: -1, uniforms: -1, bindGroup: -1, instances: -1, capacity: 0 };
   const particleUniforms = new Float32Array(32);
@@ -795,7 +844,7 @@ export function createRenderer(gpu: RenderGpu): Renderer {
       skyUniforms[slot * 4 + 3] = w;
     };
     skyUniforms.fill(0);
-    put(0, view[0], view[4], view[8], tanY * gpu.aspect());
+    put(0, view[0], view[4], view[8], tanY * (camera.aspect ?? gpu.aspect()));
     put(1, view[1], view[5], view[9], tanY);
     put(2, -view[2], -view[6], -view[10], env.time ?? 0);
     put(3, s.zenith.x, s.zenith.y, s.zenith.z, env.exposure ?? 0);
@@ -815,11 +864,11 @@ export function createRenderer(gpu: RenderGpu): Renderer {
   };
 
   const draws = (world: World, gameCamera: Camera, environment?: Environment): Draw[] => {
-    const forced = cameraOverride.camera;
-    const camera: Camera = forced ? { eye: forced.eye, target: forced.target, fovY: forced.fovY, near: gameCamera.near, far: gameCamera.far, layers: gameCamera.layers } : gameCamera;
+    const forced = gameCamera.fixed ? null : cameraOverride.camera;
+    const camera: Camera = forced ? { eye: forced.eye, target: forced.target, fovY: forced.fovY, near: gameCamera.near, far: gameCamera.far, layers: gameCamera.layers, aspect: gameCamera.aspect, roll: gameCamera.roll } : gameCamera;
     const cameraLayers = camera.layers ?? 1;
-    const view = lookAt(camera.eye, camera.target, vec3(0, 1, 0));
-    const viewProjection = multiply(perspective(camera.fovY, gpu.aspect(), camera.near ?? 0.1, camera.far ?? 100), view);
+    const view = lookAt(camera.eye, camera.target, rolledUp(camera));
+    const viewProjection = multiply(perspective(camera.fovY, camera.aspect ?? gpu.aspect(), camera.near ?? 0.1, camera.far ?? 100), view);
     writeScene(camera, environment ?? DEFAULT_ENVIRONMENT);
     const out: Draw[] = [];
     // First, in its own pass (no depth): everything after draws over it.
@@ -838,7 +887,7 @@ export function createRenderer(gpu: RenderGpu): Renderer {
         if (!transform || !mesh || mesh.skinned || meshRef.instances || (meshRef.emissive ?? 0) > 0 || ((meshRef.layers ?? 1) & 1) === 0) continue;
         const model = compose(transform.position, transform.rotation, transform.scale);
         for (const pass of passes) {
-          const key = entity * 2 + pass.sun;
+          const key = entityKey(world, entity) * 2 + pass.sun;
           let binding = shadowBindings.get(key);
           if (!binding) {
             const buffer = gpu.createBuffer(BufferUsage.Uniform, f32Bytes(shadowUniforms));
@@ -864,11 +913,12 @@ export function createRenderer(gpu: RenderGpu): Renderer {
       const instances = meshRef.instances;
       const entityPipeline = mesh.skinned ? skinnedPipeline : instances ? instancedPipeline : pipeline;
       const data = mesh.skinned ? skinnedUniforms : uniforms;
-      let binding = bindings.get(entity);
+      const bindingKey = entityKey(world, entity);
+      let binding = bindings.get(bindingKey);
       if (!binding || binding.texture !== texture) {
         const uniformBuffer = binding?.uniformBuffer ?? gpu.createBuffer(BufferUsage.Uniform, f32Bytes(data));
         binding = { uniformBuffer, bindGroup: gpu.bind(entityPipeline, uniformBuffer, texture.id, shadowMap.id), texture };
-        bindings.set(entity, binding);
+        bindings.set(bindingKey, binding);
       }
 
       const model = compose(transform.position, transform.rotation, transform.scale);
@@ -937,7 +987,7 @@ export function createRenderer(gpu: RenderGpu): Renderer {
   const render = (world: World, camera: Camera, clear: Color, environment?: Environment): void =>
     gpu.frame(clear, draws(world, camera, environment));
 
-  return { addMesh, addSkinnedMesh, addInstances, draws, render };
+  return { addMesh, addSkinnedMesh, addInstances, updateInstances, draws, render };
 }
 
 function meshRadius(positions: Float32Array): number {

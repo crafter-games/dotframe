@@ -65,6 +65,61 @@ test("a mesh off layer 1 shows only to a camera on its layer and casts no shadow
   expect(frames.every((f) => f.draws.length === 0)).toBe(true);
 });
 
+test("Camera.roll turns the view about its direction", () => {
+  const { gpu, writes } = recordingGpu();
+  const renderer = createRenderer(gpu);
+  const { world, entity } = oneBoxWorld();
+  world.meshes.set(entity, { mesh: renderer.addMesh(box()), color: vec3(1, 0, 0) });
+  const mvp = (roll: number): number[] => {
+    renderer.draws(world, { eye: vec3(0, 0, 0), target: vec3(0, 0, -1), fovY: 1, aspect: 1, roll });
+    return Array.from(writes[writes.length - 1].slice(0, 16));
+  };
+  const flat = mvp(0);
+  const turned = mvp(Math.PI / 2);
+  // A quarter turn swaps the x and y rows of the projection (up to sign), and the image is no longer the same.
+  expect(turned).not.toEqual(flat);
+  expect(Math.abs(turned[0])).toBeCloseTo(Math.abs(flat[1]), 5);
+  expect(Math.abs(turned[1])).toBeCloseTo(Math.abs(flat[0]), 5);
+});
+
+test("two worlds drawn by one renderer keep their own entity buffers", () => {
+  const { gpu } = recordingGpu();
+  let created = 0;
+  const make = gpu.createBuffer;
+  gpu.createBuffer = (usage: number, data: Uint8Array): number => {
+    created++;
+    return make(usage, data);
+  };
+  const renderer = createRenderer(gpu);
+  const a = oneBoxWorld();
+  const b = oneBoxWorld();
+  const mesh = renderer.addMesh(box());
+  a.world.meshes.set(a.entity, { mesh, color: vec3(1, 0, 0) });
+  b.world.meshes.set(b.entity, { mesh, color: vec3(0, 1, 0) });
+  const camera = { eye: vec3(0, 0, 0), target: vec3(0, 0, -1), fovY: 1 };
+  renderer.draws(a.world, camera);
+  const afterA = created;
+  renderer.draws(b.world, camera);
+  expect(a.entity).toBe(b.entity);
+  // The second world's entity gets its own uniform buffer instead of rewriting the first one's.
+  expect(created).toBe(afterA + 1);
+});
+
+test("updateInstances rewrites a set in place and keeps its count", () => {
+  const { gpu, writes } = recordingGpu();
+  const renderer = createRenderer(gpu);
+  const data = new Float32Array(INSTANCE_FLOATS * 3);
+  for (let i = 0; i < 3; i++) data.set([i * 20, 0, 0, 1], i * INSTANCE_FLOATS);
+  const set = renderer.addInstances(data);
+  const before = writes.length;
+  data[0] = 5;
+  renderer.updateInstances(set, data);
+  expect(writes.length).toBe(before + 1);
+  expect(set.count).toBe(3);
+  expect(Array.from(writes[writes.length - 1]).includes(5)).toBe(true);
+  expect(() => renderer.updateInstances(set, new Float32Array(INSTANCE_FLOATS))).toThrow();
+});
+
 test("Draw2D.scene() puts 3D draws before the 2D batch in one frame", () => {
   const { gpu, pipelines, frames } = recordingGpu();
   const renderer = createRenderer(gpu);
