@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- `Renderer.updateInstances(set, data)` rewrites an instance set in place (same count). `Camera.aspect` draws into a target of another shape than the surface.
+- `Renderer.updateInstances(set, data)` rewrites an instance set in place (same count). `Camera.aspect` draws into a target of another shape than the surface, and `Camera.roll` turns the view about its direction.
 - Render layers: `MeshRef.layers` and `Camera.layers` (bitmasks, default 1), like Godot's layers and cull mask. A mesh off layer 1 casts no shadow. The Ones uses it for what only the camcorder shows.
 - `replay record --plan plan.json`: go, look, press, wait (frames or until a `state()` path has a value) and expect steps, each able to hold named buttons (`"with": ["crouch"]`), steered through the new optional `Sim.pilot` and `SimRun.pose`. Replaces hand-tuned inputs and per-replay route scripts (The Ones had five copies of one). A failed step names its frame and writes nothing.
 - `assets font --chars-from` collects every character past Latin-1 (it skipped U+0100 to U+02FF, so ō, ā, ł and ş never baked: The Ones' "Gorō (shōbōdan)" drew as "Gor (shbdan)"), and the baker leaves out characters the font lacks instead of baking its .notdef box, and says how many.

@@ -65,6 +65,23 @@ test("a mesh off layer 1 shows only to a camera on its layer and casts no shadow
   expect(frames.every((f) => f.draws.length === 0)).toBe(true);
 });
 
+test("Camera.roll turns the view about its direction", () => {
+  const { gpu, writes } = recordingGpu();
+  const renderer = createRenderer(gpu);
+  const { world, entity } = oneBoxWorld();
+  world.meshes.set(entity, { mesh: renderer.addMesh(box()), color: vec3(1, 0, 0) });
+  const mvp = (roll: number): number[] => {
+    renderer.draws(world, { eye: vec3(0, 0, 0), target: vec3(0, 0, -1), fovY: 1, aspect: 1, roll });
+    return Array.from(writes[writes.length - 1].slice(0, 16));
+  };
+  const flat = mvp(0);
+  const turned = mvp(Math.PI / 2);
+  // A quarter turn swaps the x and y rows of the projection (up to sign), and the image is no longer the same.
+  expect(turned).not.toEqual(flat);
+  expect(Math.abs(turned[0])).toBeCloseTo(Math.abs(flat[1]), 5);
+  expect(Math.abs(turned[1])).toBeCloseTo(Math.abs(flat[0]), 5);
+});
+
 test("updateInstances rewrites a set in place and keeps its count", () => {
   const { gpu, writes } = recordingGpu();
   const renderer = createRenderer(gpu);

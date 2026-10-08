@@ -17,6 +17,34 @@ export interface Camera {
   // Width over height of the image; defaults to the surface's (gpu.aspect). Set it when drawing into a target of
   // another shape, such as a 4:3 tape for an in-game TV.
   aspect?: number;
+  // Turn about the view direction, in radians (positive turns the camera's up toward its right): a hand-held or fallen
+  // camera.
+  roll?: number;
+}
+
+// The up vector for a camera rolled about its view direction.
+function rolledUp(camera: Camera): Vec3 {
+  const roll = camera.roll ?? 0;
+  if (roll === 0) return vec3(0, 1, 0);
+  let fx = camera.target.x - camera.eye.x;
+  let fy = camera.target.y - camera.eye.y;
+  let fz = camera.target.z - camera.eye.z;
+  const fl = Math.hypot(fx, fy, fz) || 1;
+  fx /= fl;
+  fy /= fl;
+  fz /= fl;
+  // right = forward x up(0,1,0); camera up = right x forward.
+  let rx = -fz;
+  let rz = fx;
+  const rl = Math.hypot(rx, rz) || 1;
+  rx /= rl;
+  rz /= rl;
+  const ux = -rz * fy;
+  const uy = rz * fx - rx * fz;
+  const uz = rx * fy;
+  const c = Math.cos(roll);
+  const s = Math.sin(roll);
+  return vec3(ux * c + rx * s, uy * c, uz * c + rz * s);
 }
 
 // Replaces the game's camera in every draws() call while set (snap --camera): eye, target and fovY; the game's
@@ -829,9 +857,9 @@ export function createRenderer(gpu: RenderGpu): Renderer {
 
   const draws = (world: World, gameCamera: Camera, environment?: Environment): Draw[] => {
     const forced = cameraOverride.camera;
-    const camera: Camera = forced ? { eye: forced.eye, target: forced.target, fovY: forced.fovY, near: gameCamera.near, far: gameCamera.far, layers: gameCamera.layers, aspect: gameCamera.aspect } : gameCamera;
+    const camera: Camera = forced ? { eye: forced.eye, target: forced.target, fovY: forced.fovY, near: gameCamera.near, far: gameCamera.far, layers: gameCamera.layers, aspect: gameCamera.aspect, roll: gameCamera.roll } : gameCamera;
     const cameraLayers = camera.layers ?? 1;
-    const view = lookAt(camera.eye, camera.target, vec3(0, 1, 0));
+    const view = lookAt(camera.eye, camera.target, rolledUp(camera));
     const viewProjection = multiply(perspective(camera.fovY, camera.aspect ?? gpu.aspect(), camera.near ?? 0.1, camera.far ?? 100), view);
     writeScene(camera, environment ?? DEFAULT_ENVIRONMENT);
     const out: Draw[] = [];
