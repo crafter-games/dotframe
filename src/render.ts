@@ -772,6 +772,8 @@ export function createRenderer(gpu: RenderGpu): Renderer {
       uniforms[38] = meshRef.alphaCutoff ?? 0;
       uniforms[39] = meshRef.sway ?? 0;
       uniforms.set(scene, 40);
+      // fog.w is the density; 0 skips fog in the fragment shader.
+      if (meshRef.fog === false) uniforms[47] = 0;
       if (mesh.skinned) {
         skinnedUniforms.set(uniforms, 0);
         const joints = meshRef.joints;
