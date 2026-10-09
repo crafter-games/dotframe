@@ -3,7 +3,7 @@ import { createDraw2D } from "../src/draw2d";
 import { createWorld, spawn } from "../src/ecs";
 import type { Color, Draw, PipelineOptions, RenderGpu, Texture } from "../src/gpu";
 import { vec3 } from "../src/math";
-import { createRenderer, INSTANCE_FLOATS, MAX_LIGHTS, MAX_SPOTS } from "../src/render";
+import { createRenderer, INSTANCE_FLOATS, MAX_FOG_VOLUMES, MAX_LIGHTS, MAX_SPOTS } from "../src/render";
 import { createPostPass, POST_PARAMS } from "../src/post";
 import { box } from "../src/shapes";
 
@@ -165,7 +165,7 @@ test("the environment reaches the uniforms: emissive, texture tile, lights, spot
   expect(u[40 + 5 * 4 + 3]).toBe(22);
   expect(u[40 + 6 * 4 + 3]).toBeCloseTo(Math.cos(0.4), 5);
   // Lights past MAX_LIGHTS are dropped: the last slot holds light MAX_LIGHTS - 1.
-  expect(u.length).toBe(40 + 8 * 4 + MAX_LIGHTS * 8 + 40 + MAX_LIGHTS * 8 + (MAX_SPOTS - 1) * 12 + 8);
+  expect(u.length).toBe(40 + 8 * 4 + MAX_LIGHTS * 8 + 40 + MAX_LIGHTS * 8 + (MAX_SPOTS - 1) * 12 + 4 + MAX_FOG_VOLUMES * 8 + 8);
   expect(u[40 + (8 + (MAX_LIGHTS - 1) * 2) * 4 + 3]).toBe(5 + MAX_LIGHTS - 1);
 });
 
@@ -335,4 +335,30 @@ test("several spot lights: the shadowed one takes the main slot, the rest light 
   expect(u[extra + (MAX_SPOTS - 2) * 12 + 3]).toBe(30 + MAX_SPOTS - 3);
   // One shadow map pass, for the shadowed spot only.
   expect(frames.length).toBe(1);
+});
+
+test("fog scattering and fog volumes reach the uniforms, and a mesh with fog off gets none of them", () => {
+  const { gpu, writes } = recordingGpu();
+  const renderer = createRenderer(gpu);
+  const { world, entity } = oneBoxWorld();
+  const mesh = renderer.addMesh(box());
+  world.meshes.set(entity, { mesh, color: vec3(1, 1, 1) });
+  const camera = { eye: vec3(0, 1, 0), target: vec3(0, 1, -1), fovY: 1 };
+  const env = {
+    ambient: vec3(0, 0, 0),
+    fog: { color: vec3(0.5, 0.5, 0.5), density: 0.02, scatter: 0.6, volumes: [{ min: vec3(-40, -0.4, -46), max: vec3(40, 1.2, 34), density: 0.1, falloff: 1.2 }] },
+    lights: [{ position: vec3(0, 1.25, -8), color: vec3(1, 1, 1), range: 9, fog: 2.6 }],
+  };
+  renderer.draws(world, camera, env);
+  const u = writes[writes.length - 1];
+  const at = 40 + 8 * 4 + MAX_LIGHTS * 8 + 40 + MAX_LIGHTS * 8 + (MAX_SPOTS - 1) * 12;
+  expect(u[at]).toBeCloseTo(0.6, 5);
+  expect(u[at + 1]).toBe(1);
+  expect(Array.from(u.slice(at + 4, at + 12)).map((v) => Math.round(v * 100) / 100)).toEqual([-40, -0.4, -46, 0.1, 40, 1.2, 34, 1.2]);
+  // A light's fog energy rides in its color's w.
+  expect(u[40 + 9 * 4 + 3]).toBeCloseTo(2.6, 5);
+  world.meshes.set(entity, { mesh, color: vec3(1, 1, 1), fog: false });
+  renderer.draws(world, camera, env);
+  const off = writes[writes.length - 1];
+  expect([off[47], off[at], off[at + 1]]).toEqual([0, 0, 0]);
 });

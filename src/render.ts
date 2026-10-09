@@ -67,7 +67,19 @@ export interface PointLight {
   // Walls without a shadow map: the light reaches only fragments inside this box, or with outside, only those
   // outside it (a lamp in a room, a street light kept out of the house).
   box?: { min: Vec3; max: Vec3; outside?: boolean };
+  // How much this light glows in the fog when Environment.fog.scatter is on (Godot light_volumetric_fog_energy,
+  // default 1).
+  fog?: number;
 }
+
+// A box of thicker fog (Godot FogVolume): density per meter at its floor, thinning upward by exp(-falloff * height).
+export interface FogVolume {
+  min: Vec3;
+  max: Vec3;
+  density: number;
+  falloff?: number;
+}
+export const MAX_FOG_VOLUMES = 4;
 
 export interface SpotLight extends PointLight {
   direction: Vec3;
@@ -87,7 +99,10 @@ export interface Environment {
   // shadows: static meshes cast shadows from it within this many meters of the eye (an orthographic map that follows
   // the camera, snapped to its texels so edges hold still).
   sun?: { direction: Vec3; color: Vec3; shadows?: number };
-  fog?: { color: Vec3; density: number };
+  // scatter: light the fog in front of a surface throws toward the eye, so point lights get halos (a stand-in for
+  // Godot's volumetric fog, computed in closed form per fragment, no extra pass). volumes add thicker boxes of the
+  // same fog color, at most MAX_FOG_VOLUMES.
+  fog?: { color: Vec3; density: number; scatter?: number; volumes?: FogVolume[] };
   // At most MAX_LIGHTS; extra lights are ignored.
   lights?: PointLight[];
   spot?: SpotLight;
@@ -400,6 +415,9 @@ struct Uniforms {
   lightBoxes: array<vec4f, ${MAX_LIGHTS * 2}>,
   // The spots after the main one: position and range, direction and outer cosine, color and inner cosine.
   spots: array<vec4f, ${(MAX_SPOTS - 1) * 3}>,
+  // x scatter, y fog volume count; then per volume min.xyz and density, max.xyz and falloff.
+  fogScatter: vec4f,
+  fogVolumes: array<vec4f, ${MAX_FOG_VOLUMES * 2}>,
   params: array<vec4f, 2>,
   ${skinned ? `joints: array<mat4x4f, ${MAX_JOINTS}>,` : ""}
 }
@@ -582,6 +600,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
     let d = distance(in.world, u.eye.xyz) * u.fog.w;
     color = mix(u.fog.rgb, color, exp(-d * d));
   }
+  color = volumeFog(in.world, color);
   if (u.eye.w > 0.0) {
     let x = color * u.eye.w;
     color = clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), vec3f(0.0), vec3f(1.0));
@@ -589,6 +608,53 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
   return vec4f(color, 1.0);
 }
 `
+}
+
+// Fog volumes, then the light the fog scatters toward the eye, along the ray from the eye to this fragment.
+fn volumeFog(world: vec3f, base: vec3f) -> vec3f {
+  let count = i32(u.fogScatter.y);
+  if (count == 0 && u.fogScatter.x <= 0.0) { return base; }
+  let e = u.eye.xyz;
+  let ray = world - e;
+  let len = max(length(ray), 0.0001);
+  let v = ray / len;
+  var depth = 0.0;
+  for (var i = 0; i < ${MAX_FOG_VOLUMES}; i++) {
+    if (i >= count) { break; }
+    let lo = u.fogVolumes[i * 2];
+    let hi = u.fogVolumes[i * 2 + 1];
+    // Slab test: the part of the ray inside the box.
+    let inv = 1.0 / select(v, vec3f(0.000001), abs(v) < vec3f(0.000001));
+    let t0 = (lo.xyz - e) * inv;
+    let t1 = (hi.xyz - e) * inv;
+    let near = max(max(min(t0.x, t1.x), min(t0.y, t1.y)), max(min(t0.z, t1.z), 0.0));
+    let far = min(min(max(t0.x, t1.x), max(t0.y, t1.y)), min(max(t0.z, t1.z), len));
+    if (far <= near) { continue; }
+    // Mean of exp(-falloff * height above the floor) over the segment, in closed form.
+    let y0 = e.y + v.y * near - lo.y;
+    let y1 = e.y + v.y * far - lo.y;
+    var mean = 1.0;
+    if (hi.w > 0.0) {
+      mean = select(exp(-hi.w * y0), (exp(-hi.w * y0) - exp(-hi.w * y1)) / (hi.w * (y1 - y0)), abs(y1 - y0) > 0.001);
+    }
+    depth += lo.w * mean * (far - near);
+  }
+  var color = mix(u.fog.rgb, base, exp(-depth));
+  if (u.fogScatter.x > 0.0) {
+    var glow = vec3f(0.0);
+    for (var i = 0; i < ${MAX_LIGHTS}; i++) {
+      let l = u.lights[i];
+      if (l.position.w <= 0.0) { continue; }
+      // 1 / distance² to the light integrated along the ray: (atan((len - t) / h) + atan(t / h)) / h, t the closest
+      // point and h the ray's distance from the light.
+      let t = dot(l.position.xyz - e, v);
+      let h = max(length(l.position.xyz - (e + v * t)), 0.05);
+      let along = (atan((len - t) / h) + atan(t / h)) / h;
+      glow += l.color.rgb * l.color.w * along * falloff(h, l.position.w);
+    }
+    color += glow * u.fogScatter.x * (u.fog.w + depth / len) * 0.25;
+  }
+  return color;
 }
 
 fn falloff(d: f32, range: f32) -> f32 {
@@ -603,14 +669,16 @@ fn falloff(d: f32, range: f32) -> f32 {
 const VERTEX_FLOATS = 8;
 const SKINNED_FLOATS = 16;
 // mvp (16) + model (16) + 10 vec4 + MAX_LIGHTS * 2 vec4 + shadowVP (16) + shadowParams (4) + sunVP (16) +
-// sunParams (4) + MAX_LIGHTS * 2 vec4 of light boxes + 3 vec4 per extra spot + 2 vec4 of material params.
-const UNIFORM_FLOATS = 32 + 10 * 4 + MAX_LIGHTS * 8 + 40 + MAX_LIGHTS * 8 + (MAX_SPOTS - 1) * 12 + 8;
+// sunParams (4) + MAX_LIGHTS * 2 vec4 of light boxes + 3 vec4 per extra spot + fog scatter and volumes + 2 vec4 of
+// material params.
+const UNIFORM_FLOATS = 32 + 10 * 4 + MAX_LIGHTS * 8 + 40 + MAX_LIGHTS * 8 + (MAX_SPOTS - 1) * 12 + 4 + MAX_FOG_VOLUMES * 8 + 8;
 const PARAMS_SLOT = UNIFORM_FLOATS - 8;
 // Where shadowVP, sunVP and the light boxes start in the scene block (which starts at float 40).
 const SHADOW_SLOT = 8 * 4 + MAX_LIGHTS * 8;
 const SUN_SLOT = SHADOW_SLOT + 20;
 const BOX_SLOT = SUN_SLOT + 20;
 const SPOTS_SLOT = BOX_SLOT + MAX_LIGHTS * 8;
+const FOG_SLOT = SPOTS_SLOT + (MAX_SPOTS - 1) * 12;
 
 const DEFAULT_ENVIRONMENT: Environment = {
   ambient: vec3(0.25, 0.25, 0.25),
@@ -756,7 +824,15 @@ export function createRenderer(gpu: RenderGpu): Renderer {
       scene[slot * 4 + 3] = w;
     };
     put(0, camera.eye, env.exposure ?? 0);
-    if (env.fog) put(1, env.fog.color, env.fog.density);
+    if (env.fog) {
+      put(1, env.fog.color, env.fog.density);
+      const volumes = (env.fog.volumes ?? []).slice(0, MAX_FOG_VOLUMES);
+      scene[FOG_SLOT] = env.fog.scatter ?? 0;
+      scene[FOG_SLOT + 1] = volumes.length;
+      volumes.forEach((f: FogVolume, i: number): void => {
+        scene.set([f.min.x, f.min.y, f.min.z, f.density, f.max.x, f.max.y, f.max.z, f.falloff ?? 0], FOG_SLOT + 4 + i * 8);
+      });
+    }
     put(2, env.ambient, 0);
     if (env.sun) {
       put(3, env.sun.direction, 0);
@@ -813,7 +889,7 @@ export function createRenderer(gpu: RenderGpu): Renderer {
     const lights = env.lights ?? [];
     for (let i = 0; i < Math.min(lights.length, MAX_LIGHTS); i++) {
       put(8 + i * 2, lights[i].position, lights[i].range);
-      put(9 + i * 2, lights[i].color, 0);
+      put(9 + i * 2, lights[i].color, lights[i].fog ?? 1);
       const b = lights[i].box;
       if (b) {
         scene.set([b.min.x, b.min.y, b.min.z, b.outside ? 2 : 1, b.max.x, b.max.y, b.max.z, 0], BOX_SLOT + i * 8);
@@ -1013,7 +1089,11 @@ export function createRenderer(gpu: RenderGpu): Renderer {
       uniforms[39] = meshRef.sway ?? 0;
       uniforms.set(scene, 40);
       // fog.w is the density; 0 skips fog in the fragment shader.
-      if (meshRef.fog === false) uniforms[47] = 0;
+      if (meshRef.fog === false) {
+        uniforms[47] = 0;
+        uniforms[40 + FOG_SLOT] = 0;
+        uniforms[40 + FOG_SLOT + 1] = 0;
+      }
       const params = meshRef.params;
       if (params) for (let i = 0; i < Math.min(params.length, 8); i++) uniforms[PARAMS_SLOT + i] = params[i];
       if (mesh.skinned) {
