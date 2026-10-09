@@ -392,3 +392,20 @@ test("glow particles draw after the blended ones through an additive pipeline", 
   expect(pipelines[added.pipeline].blend).toBe(true);
   expect(added.instances).toBe(2);
 });
+
+test("a material's vertex() moves the mesh's positions before the model transform; without one they stay", () => {
+  const { gpu, pipelines } = recordingGpu();
+  const renderer = createRenderer(gpu);
+  const plain = renderer.createMaterial("fn surface(s: SurfaceIn) -> Surface { return Surface(s.color, vec3f(0.0)); }");
+  const wings = renderer.createMaterial("fn vertex(p: vec3f, t: f32, a: vec4f, b: vec4f) -> vec3f { return p + vec3f(0.0, sin(t) * a.x, 0.0); }\nfn surface(s: SurfaceIn) -> Surface { return Surface(s.color, vec3f(0.0)); }");
+  const { world, entity } = oneBoxWorld();
+  const mesh = renderer.addMesh(box());
+  const camera = { eye: vec3(0, 0, 0), target: vec3(0, 0, -1), fovY: 1 };
+  world.meshes.set(entity, { mesh, color: vec3(1, 0, 0), material: plain });
+  const still = pipelines[renderer.draws(world, camera)[0].pipeline].wgsl;
+  expect(still).toContain("let p = position;");
+  world.meshes.set(entity, { mesh, color: vec3(1, 0, 0), material: wings });
+  const moving = pipelines[renderer.draws(world, camera)[0].pipeline].wgsl;
+  expect(moving).toContain("let p = vertex(position, u.sunDir.w, u.params[0], u.params[1]);");
+  expect(moving).toContain("out.position = u.mvp * vec4f(p, 1.0);");
+});
