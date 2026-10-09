@@ -165,7 +165,7 @@ test("the environment reaches the uniforms: emissive, texture tile, lights, spot
   expect(u[40 + 5 * 4 + 3]).toBe(22);
   expect(u[40 + 6 * 4 + 3]).toBeCloseTo(Math.cos(0.4), 5);
   // Lights past MAX_LIGHTS are dropped: the last slot holds light MAX_LIGHTS - 1.
-  expect(u.length).toBe(40 + 8 * 4 + MAX_LIGHTS * 8 + 40 + MAX_LIGHTS * 8);
+  expect(u.length).toBe(40 + 8 * 4 + MAX_LIGHTS * 8 + 40 + MAX_LIGHTS * 8 + 8);
   expect(u[40 + (8 + (MAX_LIGHTS - 1) * 2) * 4 + 3]).toBe(5 + MAX_LIGHTS - 1);
 });
 
@@ -278,4 +278,39 @@ test("every renderer shader is fully interpolated (bun cannot compile WGSL, but 
   renderer.addSkinnedMesh(box(), { positions: new Float32Array(72), normals: new Float32Array(72), joints: new Float32Array(96), weights: new Float32Array(96) });
   expect(pipelines.length).toBe(4);
   for (const p of pipelines) expect(p.wgsl).not.toContain("${");
+});
+
+test("a custom material draws on its own pipeline with its params, and leaves built-in meshes untouched", () => {
+  const plain = recordingGpu();
+  const before = createRenderer(plain.gpu);
+  const one = oneBoxWorld();
+  one.world.meshes.set(one.entity, { mesh: before.addMesh(box()), color: vec3(1, 0, 0) });
+  const camera = { eye: vec3(0, 0, 0), target: vec3(0, 0, -1), fovY: 1 };
+  const plainDraws = before.draws(one.world, camera);
+  const plainUniforms = Array.from(plain.writes[plain.writes.length - 1]);
+
+  const { gpu, pipelines, writes } = recordingGpu();
+  const renderer = createRenderer(gpu);
+  const skin = renderer.createMaterial("fn surface(s: SurfaceIn) -> Surface { return Surface(vec3f(s.params0.x), vec3f(0.0)); }");
+  const { world, entity } = oneBoxWorld();
+  const mesh = renderer.addMesh(box());
+  world.meshes.set(entity, { mesh, color: vec3(1, 0, 0) });
+  // Same scene, same pipelines and uniforms as a renderer that never saw a material.
+  expect(renderer.draws(world, camera)).toEqual(plainDraws);
+  expect(Array.from(writes[writes.length - 1])).toEqual(plainUniforms);
+  expect(pipelines[0].wgsl).toBe(plain.pipelines[0].wgsl);
+
+  world.meshes.set(entity, { mesh, color: vec3(1, 0, 0), material: skin, params: [0.46, 0.5, 0, 0, 1, 2, 3, 4] });
+  const draws = renderer.draws(world, camera);
+  const custom = pipelines[draws[0].pipeline];
+  expect(draws[0].pipeline).not.toBe(plainDraws[0].pipeline);
+  expect(custom.wgsl).toContain("fn surface(s: SurfaceIn)");
+  expect(custom.wgsl).not.toContain("${");
+  const u = writes[writes.length - 1];
+  const at = u.length - 8;
+  expect(Array.from(u.slice(at, at + 8)).map((v) => Math.round(v * 100) / 100)).toEqual([0.46, 0.5, 0, 0, 1, 2, 3, 4]);
+  // One pipeline per material and kind, made once.
+  const count = pipelines.length;
+  renderer.draws(world, camera);
+  expect(pipelines.length).toBe(count);
 });

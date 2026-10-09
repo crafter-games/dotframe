@@ -34,6 +34,10 @@ export interface MeshRef {
   // Render layers the mesh is on, a bitmask (default 1). A camera draws it when they share a layer (Camera.layers).
   // A mesh off layer 1 casts no shadow, so a mesh only one camera sees is not given away by its shadow.
   layers?: number;
+  // A custom material (Renderer.createMaterial) in place of the built-in surface; tex, tile and alphaCutoff are then
+  // the material's to use. params are up to eight floats it reads as SurfaceIn.params0 and params1.
+  material?: number;
+  params?: number[];
 }
 
 export interface Instances {

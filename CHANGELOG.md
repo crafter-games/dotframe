@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Custom material shaders: `Renderer.createMaterial(wgsl)` takes a WGSL `fn surface(s: SurfaceIn) -> Surface` (Godot's `fragment()`: albedo and emission from the world position, normal, UV, view vector, `MeshRef.color`, eight floats of `MeshRef.params`, time and the mesh texture), and `MeshRef.material` draws a mesh with it on static, skinned and instanced meshes. Built-in lighting, shadows, fog and exposure apply unchanged; meshes without a material keep the same shader and uniforms. One pipeline per material and mesh kind, made on first draw; phones run the same shader with no extra pass. The Ones ports `one_skin.gdshader` with it.
 - Post passes render at 0.75 of the asked size on mobile (`gpu.mobile`, `POST_MOBILE_SCALE`). On an iPhone 15 Plus, The Ones' camcorder viewfinder (a second full-screen pass) went from p95 21 ms with 146 ms spikes to p95 17.0 ms.
 - `perf` sets the viewport before opening the game and draws 30 untimed frames at `--frame` before measuring: runs used to start with up to nine one-second "hitches" from the resize and the first shader compiles.
 - Fixed: one renderer drawing two worlds (an in-game TV's set and the scene) reused per-entity GPU buffers across them, since both number entities from 0; buffers are now keyed by `World.id` too.
