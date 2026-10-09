@@ -27,7 +27,7 @@ Status: **has** (dotframe does it), **sub** (the port fakes it acceptably), **pa
 | SpotLight3D | 13 | has | `Environment.spots`, up to `MAX_SPOTS` (4) with `spot`; one shadow map, given to the first spot that asks. Flashlight and camcorder IR light together. A second shadowed spot is not supported | T3 |
 | DirectionalLight3D with shadows | 10 | has | `Environment.sun` with a camera-following ortho shadow map | - |
 | Shadows from point lights, skinned and instanced meshes | 28 `shadow_enabled` | missing | Only static meshes cast, only from the sun and the spot | T4 |
-| Volumetric fog, FogVolume, light_volumetric_fog_energy | 23, 2, 21 | missing | Exponential fog only. The sect tape's mist and back light, the UFO's landed glow, and the night valley lose most of their mood | T5 |
+| Volumetric fog, FogVolume, light_volumetric_fog_energy | 23, 2, 21 | sub | `fog.scatter` (closed-form in-scattering from point lights, `PointLight.fog`) and `fog.volumes` (boxes with height falloff). The sect tape's mist glows around its back light and lanterns. Not covered: spot and sun scattering, anisotropy, edge fade, fog over the sky (only surfaces get it) | T5 |
 | Glow / bloom | 4 | missing | Lamps, lanterns and the vending machine have no halo (postfx halation is a partial stand-in) | T6 |
 | Depth of field (`dof_blur`) | 6 | missing | The tape's hunting autofocus and the news clips' defocus | T6 |
 | SSAO, SSR | 2, 1 | missing | Low priority | - |
