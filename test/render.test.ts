@@ -2,8 +2,8 @@ import { expect, test } from "bun:test";
 import { createDraw2D } from "../src/draw2d";
 import { createWorld, spawn } from "../src/ecs";
 import type { Color, Draw, PipelineOptions, RenderGpu, Texture } from "../src/gpu";
-import { vec3 } from "../src/math";
-import { createRenderer, INSTANCE_FLOATS, MAX_FOG_VOLUMES, MAX_LIGHTS, MAX_SPOTS } from "../src/render";
+import { lookAt, multiply, perspective, vec3 } from "../src/math";
+import { createRenderer, INSTANCE_FLOATS, MAX_FOG_VOLUMES, MAX_LIGHTS, MAX_SPOTS, pickLights } from "../src/render";
 import { createPostPass, POST_PARAMS } from "../src/post";
 import { box } from "../src/shapes";
 
@@ -167,6 +167,23 @@ test("the environment reaches the uniforms: emissive, texture tile, lights, spot
   // Lights past MAX_LIGHTS are dropped: the last slot holds light MAX_LIGHTS - 1.
   expect(u.length).toBe(40 + 8 * 4 + MAX_LIGHTS * 8 + 40 + MAX_LIGHTS * 8 + (MAX_SPOTS - 1) * 12 + 4 + MAX_FOG_VOLUMES * 8 + 8);
   expect(u[40 + (8 + (MAX_LIGHTS - 1) * 2) * 4 + 3]).toBe(5 + MAX_LIGHTS - 1);
+});
+
+test("pickLights drops unlit and out-of-view lights, then keeps the nearest MAX_LIGHTS in order", () => {
+  const eye = vec3(0, 1, 0);
+  const vp = multiply(perspective(1, 1, 0.1, 200), lookAt(eye, vec3(0, 1, -1), vec3(0, 1, 0)));
+  const at = (z: number, range = 2) => ({ position: vec3(0, 1, z), color: vec3(1, 1, 1), range });
+  const behind = at(30);
+  const dark = { ...at(-3), color: vec3(0, 0, 0) };
+  const far = Array.from({ length: MAX_LIGHTS }, (_: unknown, i: number) => at(-40 - i * 5));
+  const near = [at(-4), at(-6)];
+  const picked = pickLights([behind, dark, ...far, ...near], vp, eye);
+  expect(picked.length).toBe(MAX_LIGHTS);
+  expect(picked).not.toContain(behind);
+  expect(picked).not.toContain(dark);
+  // The two near ones win over the farthest two; the order handed in is kept.
+  expect(picked.slice(-2)).toEqual(near);
+  expect(picked.slice(0, MAX_LIGHTS - 2)).toEqual(far.slice(0, MAX_LIGHTS - 2));
 });
 
 test("a sun with shadows draws casters into the right half of the map, and light boxes reach the uniforms", () => {

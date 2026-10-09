@@ -103,7 +103,7 @@ export interface Environment {
   // Godot's volumetric fog, computed in closed form per fragment, no extra pass). volumes add thicker boxes of the
   // same fog color, at most MAX_FOG_VOLUMES.
   fog?: { color: Vec3; density: number; scatter?: number; volumes?: FogVolume[] };
-  // At most MAX_LIGHTS; extra lights are ignored.
+  // Any number: each frame the renderer keeps the MAX_LIGHTS that matter for the view (pickLights).
   lights?: PointLight[];
   spot?: SpotLight;
   // More spot lights, lit together with spot (at most MAX_SPOTS in all). Only one casts shadows, the first that asks
@@ -815,7 +815,7 @@ export function createRenderer(gpu: RenderGpu): Renderer {
   const spotHalf = half(-1);
   const sunHalf = half(1);
   // The per-frame part of the uniforms, written once and copied into every entity's buffer.
-  const writeScene = (camera: Camera, env: Environment): void => {
+  const writeScene = (camera: Camera, env: Environment, viewProjection: Float32Array): void => {
     scene.fill(0);
     const put = (slot: number, v: Vec3, w: number): void => {
       scene[slot * 4] = v.x;
@@ -886,8 +886,8 @@ export function createRenderer(gpu: RenderGpu): Renderer {
       // A fixed 0.15 m along the light, as a fraction of the box depth.
       scene[SUN_SLOT + 17] = 0.15 / depth;
     }
-    const lights = env.lights ?? [];
-    for (let i = 0; i < Math.min(lights.length, MAX_LIGHTS); i++) {
+    const lights = pickLights(env.lights ?? [], viewProjection, camera.eye);
+    for (let i = 0; i < lights.length; i++) {
       put(8 + i * 2, lights[i].position, lights[i].range);
       put(9 + i * 2, lights[i].color, lights[i].fog ?? 1);
       const b = lights[i].box;
@@ -1012,7 +1012,7 @@ export function createRenderer(gpu: RenderGpu): Renderer {
     const cameraLayers = camera.layers ?? 1;
     const view = lookAt(camera.eye, camera.target, rolledUp(camera));
     const viewProjection = multiply(perspective(camera.fovY, camera.aspect ?? gpu.aspect(), camera.near ?? 0.1, camera.far ?? 100), view);
-    writeScene(camera, environment ?? DEFAULT_ENVIRONMENT);
+    writeScene(camera, environment ?? DEFAULT_ENVIRONMENT, viewProjection);
     const out: Draw[] = [];
     // First, in its own pass (no depth): everything after draws over it.
     const skyFirst = skyDraw(camera, view, environment ?? DEFAULT_ENVIRONMENT);
@@ -1220,6 +1220,21 @@ export function splitCells(data: Float32Array): { data: Float32Array; cells: Ins
 
 function transformPoint(m: Float32Array, p: [number, number, number]): [number, number, number] {
   return [m[0] * p[0] + m[4] * p[1] + m[8] * p[2] + m[12], m[1] * p[0] + m[5] * p[1] + m[9] * p[2] + m[13], m[2] * p[0] + m[6] * p[1] + m[10] * p[2] + m[14]];
+}
+
+// The point lights a view draws, at most MAX_LIGHTS: unlit ones (no range or color) and ones whose reach is out of
+// view are dropped; past the cap, those nearest the eye (by the distance to their reach) win, in the given order on
+// ties. A scene can hand over every lantern and fire it has.
+export function pickLights(lights: PointLight[], viewProjection: Float32Array, eye: Vec3): PointLight[] {
+  const lit = lights.filter((l: PointLight): boolean => l.range > 0 && Math.max(l.color.x, l.color.y, l.color.z) > 0 && inView(viewProjection, [l.position.x, l.position.y, l.position.z], l.range));
+  if (lit.length <= MAX_LIGHTS) return lit;
+  const gap = (l: PointLight): number => Math.max(0, Math.hypot(l.position.x - eye.x, l.position.y - eye.y, l.position.z - eye.z) - l.range);
+  return lit
+    .map((l: PointLight, i: number): { l: PointLight; i: number; g: number } => ({ l, i, g: gap(l) }))
+    .sort((a, b): number => a.g - b.g || a.i - b.i)
+    .slice(0, MAX_LIGHTS)
+    .sort((a, b): number => a.i - b.i)
+    .map((e): PointLight => e.l);
 }
 
 // A sphere against the clip-space planes of a view-projection (WebGPU depth 0..1).
