@@ -20,7 +20,7 @@
 #define DF_MAX_PIPELINES 64
 
 enum { DF_USAGE_VERTEX = 1, DF_USAGE_INDEX = 2, DF_USAGE_UNIFORM = 4 };
-enum { DF_PIPELINE_DEPTH = 1, DF_PIPELINE_NO_DEPTH_WRITE = 2, DF_PIPELINE_BLEND = 4 };
+enum { DF_PIPELINE_DEPTH = 1, DF_PIPELINE_NO_DEPTH_WRITE = 2, DF_PIPELINE_BLEND = 4, DF_PIPELINE_ADDITIVE = 8 };
 enum { DF_FORMAT_FLOAT32X2 = 0, DF_FORMAT_FLOAT32X3 = 1, DF_FORMAT_FLOAT32X4 = 2, DF_FORMAT_FLOAT32 = 3, DF_FORMAT_UNORM8X4 = 4 };
 
 static SDL_Window *g_window;
@@ -484,6 +484,10 @@ int32_t df_pipeline(const uint8_t *wgsl, size_t wgsl_len, uint32_t stride, const
   WGPUBlendState blend = WGPU_BLEND_STATE_INIT;
   blend.color = (WGPUBlendComponent){WGPUBlendOperation_Add, WGPUBlendFactor_SrcAlpha, WGPUBlendFactor_OneMinusSrcAlpha};
   blend.alpha = (WGPUBlendComponent){WGPUBlendOperation_Add, WGPUBlendFactor_One, WGPUBlendFactor_OneMinusSrcAlpha};
+  if (flags & DF_PIPELINE_ADDITIVE) {
+    blend.color = (WGPUBlendComponent){WGPUBlendOperation_Add, WGPUBlendFactor_SrcAlpha, WGPUBlendFactor_One};
+    blend.alpha = (WGPUBlendComponent){WGPUBlendOperation_Add, WGPUBlendFactor_Zero, WGPUBlendFactor_One};
+  }
   WGPUColorTargetState target = WGPU_COLOR_TARGET_STATE_INIT;
   target.format = g_format;
   if (flags & DF_PIPELINE_BLEND) target.blend = &blend;

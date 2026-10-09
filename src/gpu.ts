@@ -36,6 +36,8 @@ export interface PipelineOptions {
   depthWrite?: boolean;
   // Standard alpha blending, for 2D and transparent sprites.
   blend: boolean;
+  // With blend: add the color (times its alpha) to the target instead of blending over it (fire, glows).
+  additive?: boolean;
   // A second vertex buffer stepped once per instance (Draw.instanceBuffer), for drawing one mesh many times.
   instanceStride?: number;
   instanceAttributes?: VertexAttribute[];
