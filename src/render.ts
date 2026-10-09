@@ -91,6 +91,9 @@ export interface Environment {
   // At most MAX_LIGHTS; extra lights are ignored.
   lights?: PointLight[];
   spot?: SpotLight;
+  // More spot lights, lit together with spot (at most MAX_SPOTS in all). Only one casts shadows, the first that asks
+  // (spot before spots), on every platform: one map keeps phones at the cost they had.
+  spots?: SpotLight[];
   // Turns on ACES filmic tonemapping at this exposure, so bright lights roll off instead of clipping to white.
   exposure?: number;
   // Seconds, for wind on instanced meshes (MeshRef.sway). Pass simulation time so a frame renders the same twice.
@@ -258,6 +261,7 @@ export const INSTANCE_CELL = 16;
 export const INSTANCE_DETAIL = { size: 0.08, floor: 0.08 };
 
 export const MAX_LIGHTS = 8;
+export const MAX_SPOTS = 4;
 // Joints a skinned mesh can use (Character Creator rigs have ~150); extra joints draw at rest. 256 joints are 16 KB
 // of uniforms, under the 64 KB WebGPU guarantees.
 export const MAX_JOINTS = 256;
@@ -394,6 +398,8 @@ struct Uniforms {
   sunParams: vec4f,
   // Per light: min.xyz and w (0 none, 1 inside, 2 outside), then max.xyz.
   lightBoxes: array<vec4f, ${MAX_LIGHTS * 2}>,
+  // The spots after the main one: position and range, direction and outer cosine, color and inner cosine.
+  spots: array<vec4f, ${(MAX_SPOTS - 1) * 3}>,
   params: array<vec4f, 2>,
   ${skinned ? `joints: array<mat4x4f, ${MAX_JOINTS}>,` : ""}
 }
@@ -561,6 +567,16 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
     let cone = smoothstep(u.spotDir.w, u.spotColor.w, dot(-dir, normalize(u.spotDir.xyz)));
     light += u.spotColor.rgb * max(dot(n, dir), 0.0) * falloff(d, u.spotPos.w) * cone * spotShadow(in.world);
   }
+  for (var i = 0; i < ${MAX_SPOTS - 1}; i++) {
+    let p = u.spots[i * 3];
+    if (p.w <= 0.0) { continue; }
+    let to = p.xyz - in.world;
+    let d = length(to);
+    let dir = to / max(d, 0.0001);
+    let sd = u.spots[i * 3 + 1];
+    let sc = u.spots[i * 3 + 2];
+    light += sc.rgb * max(dot(n, dir), 0.0) * falloff(d, p.w) * smoothstep(sd.w, sc.w, dot(-dir, normalize(sd.xyz)));
+  }
   var color = albedo * (light + vec3f(u.color.w))${surface ? " + s.emission" : ""};
   if (u.fog.w > 0.0) {
     let d = distance(in.world, u.eye.xyz) * u.fog.w;
@@ -587,13 +603,14 @@ fn falloff(d: f32, range: f32) -> f32 {
 const VERTEX_FLOATS = 8;
 const SKINNED_FLOATS = 16;
 // mvp (16) + model (16) + 10 vec4 + MAX_LIGHTS * 2 vec4 + shadowVP (16) + shadowParams (4) + sunVP (16) +
-// sunParams (4) + MAX_LIGHTS * 2 vec4 of light boxes + 2 vec4 of material params.
-const UNIFORM_FLOATS = 32 + 10 * 4 + MAX_LIGHTS * 8 + 40 + MAX_LIGHTS * 8 + 8;
+// sunParams (4) + MAX_LIGHTS * 2 vec4 of light boxes + 3 vec4 per extra spot + 2 vec4 of material params.
+const UNIFORM_FLOATS = 32 + 10 * 4 + MAX_LIGHTS * 8 + 40 + MAX_LIGHTS * 8 + (MAX_SPOTS - 1) * 12 + 8;
 const PARAMS_SLOT = UNIFORM_FLOATS - 8;
 // Where shadowVP, sunVP and the light boxes start in the scene block (which starts at float 40).
 const SHADOW_SLOT = 8 * 4 + MAX_LIGHTS * 8;
 const SUN_SLOT = SHADOW_SLOT + 20;
 const BOX_SLOT = SUN_SLOT + 20;
+const SPOTS_SLOT = BOX_SLOT + MAX_LIGHTS * 8;
 
 const DEFAULT_ENVIRONMENT: Environment = {
   ambient: vec3(0.25, 0.25, 0.25),
@@ -747,14 +764,20 @@ export function createRenderer(gpu: RenderGpu): Renderer {
     }
     // sunDir.w carries the time, sun or not.
     scene[15] = env.time ?? 0;
-    if (env.spot) {
-      put(5, env.spot.position, env.spot.range);
-      put(6, env.spot.direction, Math.cos(env.spot.angle));
-      put(7, env.spot.color, Math.cos(env.spot.angle * 0.6));
-    }
+    // The main slot holds the spot that casts shadows (the first that asks), else the first; the rest follow it.
+    const all = [...(env.spot ? [env.spot] : []), ...(env.spots ?? [])].slice(0, MAX_SPOTS);
+    const shadowed = all.findIndex((sp: SpotLight): boolean => sp.shadows === true);
+    const main = shadowed >= 0 ? shadowed : 0;
+    let slot = 0;
+    all.forEach((sp: SpotLight, i: number): void => {
+      const base = i === main ? 5 : SPOTS_SLOT / 4 + slot++ * 3;
+      put(base, sp.position, sp.range);
+      put(base + 1, sp.direction, Math.cos(sp.angle));
+      put(base + 2, sp.color, Math.cos(sp.angle * 0.6));
+    });
     shadowVP = null;
-    if (env.spot && env.spot.shadows) {
-      const sp = env.spot;
+    if (shadowed >= 0) {
+      const sp = all[shadowed];
       const up = Math.abs(sp.direction.y) > 0.99 ? vec3(0, 0, 1) : vec3(0, 1, 0);
       const target = vec3(sp.position.x + sp.direction.x, sp.position.y + sp.direction.y, sp.position.z + sp.direction.z);
       shadowVP = multiply(perspective(Math.min(sp.angle * 2.2, 3), 1, 0.05, sp.range), lookAt(sp.position, target, up));

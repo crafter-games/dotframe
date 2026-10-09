@@ -3,7 +3,7 @@ import { createDraw2D } from "../src/draw2d";
 import { createWorld, spawn } from "../src/ecs";
 import type { Color, Draw, PipelineOptions, RenderGpu, Texture } from "../src/gpu";
 import { vec3 } from "../src/math";
-import { createRenderer, INSTANCE_FLOATS, MAX_LIGHTS } from "../src/render";
+import { createRenderer, INSTANCE_FLOATS, MAX_LIGHTS, MAX_SPOTS } from "../src/render";
 import { createPostPass, POST_PARAMS } from "../src/post";
 import { box } from "../src/shapes";
 
@@ -165,7 +165,7 @@ test("the environment reaches the uniforms: emissive, texture tile, lights, spot
   expect(u[40 + 5 * 4 + 3]).toBe(22);
   expect(u[40 + 6 * 4 + 3]).toBeCloseTo(Math.cos(0.4), 5);
   // Lights past MAX_LIGHTS are dropped: the last slot holds light MAX_LIGHTS - 1.
-  expect(u.length).toBe(40 + 8 * 4 + MAX_LIGHTS * 8 + 40 + MAX_LIGHTS * 8 + 8);
+  expect(u.length).toBe(40 + 8 * 4 + MAX_LIGHTS * 8 + 40 + MAX_LIGHTS * 8 + (MAX_SPOTS - 1) * 12 + 8);
   expect(u[40 + (8 + (MAX_LIGHTS - 1) * 2) * 4 + 3]).toBe(5 + MAX_LIGHTS - 1);
 });
 
@@ -313,4 +313,26 @@ test("a custom material draws on its own pipeline with its params, and leaves bu
   const count = pipelines.length;
   renderer.draws(world, camera);
   expect(pipelines.length).toBe(count);
+});
+
+test("several spot lights: the shadowed one takes the main slot, the rest light without shadows, past MAX_SPOTS dropped", () => {
+  const { gpu, writes, frames } = recordingGpu();
+  const renderer = createRenderer(gpu);
+  const { world, entity } = oneBoxWorld();
+  world.meshes.set(entity, { mesh: renderer.addMesh(box()), color: vec3(1, 1, 1) });
+  const spot = (range: number, shadows: boolean) => ({ position: vec3(0, 2, 0), direction: vec3(0, 0, -1), color: vec3(1, 1, 1), range, angle: 0.4, shadows });
+  renderer.draws(world, { eye: vec3(0, 2, 0), target: vec3(0, 0, -1), fovY: 1 }, {
+    ambient: vec3(0, 0, 0),
+    spot: spot(16, false),
+    spots: [spot(22, true), ...Array.from({ length: MAX_SPOTS }, (_: unknown, i: number) => spot(30 + i, false))],
+  });
+  const u = writes[writes.length - 1];
+  // The flashlight (shadows) in the main slot; the IR next; then as many as fit.
+  expect(u[40 + 5 * 4 + 3]).toBe(22);
+  const extra = 40 + 8 * 4 + MAX_LIGHTS * 8 + 40 + MAX_LIGHTS * 8;
+  expect(u[extra + 3]).toBe(16);
+  expect(u[extra + 12 + 3]).toBe(30);
+  expect(u[extra + (MAX_SPOTS - 2) * 12 + 3]).toBe(30 + MAX_SPOTS - 3);
+  // One shadow map pass, for the shadowed spot only.
+  expect(frames.length).toBe(1);
 });

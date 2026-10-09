@@ -24,7 +24,7 @@ Status: **has** (dotframe does it), **sub** (the port fakes it acceptably), **pa
 | ShaderMaterial (29 custom shaders: skin, foliage, water, shoji, CRT, dog coat...) | 37 | partial | `Renderer.createMaterial` + `MeshRef.material`/`params`: fragment surface code (albedo, emission) under the built-in lighting. `one_skin` is ported. No vertex hook yet (`one_skin`'s glitch, foliage wind beyond `sway`), and specular, roughness, rim and SSS wait on T9 | T1 |
 | BoxMesh, CylinderMesh, SphereMesh, QuadMesh, PlaneMesh, TorusMesh, PrismMesh, CapsuleMesh | 27, 33, 18, 17, 12, 7, 3, 1 | partial | Engine ships only `box()`. The port writes cylinder, sphere, dome, quad, floor quad and torus itself in `src/scene.ts` | T2 |
 | OmniLight3D | 27 | partial | `PointLight`, at most 8 (`MAX_LIGHTS`), no shadow maps; `PointLight.box` keeps light inside walls as a stand-in | T4 |
-| SpotLight3D | 13 | partial | One spot light per frame. Flashlight and camcorder IR cannot both light; chapter 3's power cut and shoji silhouette want more | T3 |
+| SpotLight3D | 13 | has | `Environment.spots`, up to `MAX_SPOTS` (4) with `spot`; one shadow map, given to the first spot that asks. Flashlight and camcorder IR light together. A second shadowed spot is not supported | T3 |
 | DirectionalLight3D with shadows | 10 | has | `Environment.sun` with a camera-following ortho shadow map | - |
 | Shadows from point lights, skinned and instanced meshes | 28 `shadow_enabled` | missing | Only static meshes cast, only from the sun and the spot | T4 |
 | Volumetric fog, FogVolume, light_volumetric_fog_energy | 23, 2, 21 | missing | Exponential fog only. The sect tape's mist and back light, the UFO's landed glow, and the night valley lose most of their mood | T5 |
