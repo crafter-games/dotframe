@@ -1,6 +1,19 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
+
+- Point lights picked per view (`pickLights`): unlit lights and lights out of the frustum drop, and past `MAX_LIGHTS` the nearest to the eye win. Scenes with 8 or fewer lights in view are unchanged.
+- Glow particles: `Environment.glow` draws billboards additively (`PipelineOptions.additive`, web and native), fading to nothing in fog; `Emitter.colors` is a color ramp over the life and `Emitter.radius` spawns inside a sphere.
+- A material may define `fn vertex(position, time, params0, params1) -> vec3f` to move its mesh's positions before the model transform and skinning, on static and skinned meshes.
+- Static meshes are culled against the frustum and anything scaled to zero is skipped; skinned meshes are always drawn. The Ones' night 4 runs at 60 fps on an iPhone 15 Plus.
+- iOS keeps `Storage` in the app's preferences (`src/native/storage.ts`, shared with macOS and Windows), so saves survive quitting the app.
+- `replay verify --native` reads each replay's inputs and checksums from files next to the binary instead of one huge literal: 33 replays verify in 15 s on scriptc 0.2.7, which never finished compiling the old entry.
+- Limits that drop things warn once: spot lights past `MAX_SPOTS`, fog volumes past `MAX_FOG_VOLUMES`, joints past `MAX_JOINTS`, iOS library mode past 28 of its 32 callbacks, and a plan `wait` that hits its default 6000 frames.
+- `dotframe/src/rig`: posing a skeleton by hand (`createRig`, `solve`, `turn`, `aim`, `headLook`, `stare`, `snap`, `follow`, `twoBoneIk`, `lockRoot`, `eulerYXZ`). `twoBoneIk` also bends a leg that is straight at rest.
+- Four music channels: `playMusic`, `stopMusic`, `pauseMusic` and `setMusicVolume` take an optional channel (default 0, so existing games are unchanged), streamed together on web and mixed in `df_audio.c` natively with no new iOS callback.
+- `UiStyle.align: "left"` and `pad`: labels at the item's edge and a row's value with its arrows on the right, for settings lists.
+- Fixed: on the web a key pressed and released between two frames was never seen; it now reads as down for one frame.
+- `assets slim --decimate <ratio>` or `--decimate file.glb=ratio,...`: quadric edge collapse in TypeScript for static and rigid-skinned meshes (welded across seams, rims slide along themselves, flips rejected, unused vertices dropped). `dotframe.json` `assets.decimate` applies it to iOS bundles. The Ones' tripod went from 9.2 MB to 3.8 MB at 0.35.
 
 - Volumetric fog stand-in: `Environment.fog.scatter` adds the light the fog throws toward the eye, so point lights get halos (`PointLight.fog` scales each one, like Godot's `light_volumetric_fog_energy`), and `fog.volumes` adds up to `MAX_FOG_VOLUMES` boxes of thicker fog with a height falloff (Godot `FogVolume`). Both are closed-form per fragment, no extra pass and no samples, so phones run the same code. Off by default; scenes without them render as before.
 - Several spot lights: `Environment.spots` lights together with `spot`, up to `MAX_SPOTS` (4). The first spot that asks for shadows gets the shadow map and the others light without shadows, on every platform, so phones pay one map as before; each extra spot costs a few ALU ops per fragment. The Ones lights the flashlight and the camcorder IR at once.
