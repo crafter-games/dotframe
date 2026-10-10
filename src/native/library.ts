@@ -17,6 +17,7 @@ import {
   storeNativeTrack,
 } from "./backend";
 import { dfHeight, dfOpen, dfWidth } from "./ffi";
+import { openStorage } from "./storage";
 
 export interface LibraryPlatform {
   gpu: RenderGpu;
@@ -33,16 +34,6 @@ export interface LibraryPlatform {
 }
 
 // In-memory for now: library hosts pass no writable preferences path yet.
-function memoryStorage(): Storage {
-  const values = new Map<string, string>();
-  return {
-    get: (key: string): string | null => values.get(key) ?? null,
-    set: (key: string, value: string): void => {
-      values.set(key, value);
-    },
-  };
-}
-
 export function openLibraryPlatform(options: WindowOptions): LibraryPlatform {
   const status = dfOpen(options.width, options.height, options.title);
   if (status !== 0) throw new Error(`dfOpen failed: ${status}`);
@@ -52,7 +43,7 @@ export function openLibraryPlatform(options: WindowOptions): LibraryPlatform {
     gpu: createNativeRenderGpu(true),
     input: createNativeInput(),
     audio: createNativeAudioPlayer(),
-    storage: memoryStorage(),
+    storage: openStorage(options.title),
     width: dfWidth(),
     height: dfHeight(),
     image: (png: Uint8Array, smooth: boolean, mipmaps = false): Texture => createNativeImage(png, smooth, mipmaps),

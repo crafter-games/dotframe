@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import type { Audio } from "../audio";
 import type { Gpu, Setup, Texture, WindowOptions } from "../gpu";
 import type { Storage } from "../storage";
@@ -11,33 +11,12 @@ import {
   openNativeAudio,
   storeNativeTrack,
 } from "./backend";
-import { dfClose, dfOpen, dfPoll, dfPrefPath } from "./ffi";
+import { dfClose, dfOpen, dfPoll } from "./ffi";
+import { openStorage } from "./storage";
 
 export async function loadBytes(path: string): Promise<Uint8Array> {
   const data = readFileSync(path);
   return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
-}
-
-// Stores values as one JSON object in <prefs>/dotframe/<app>/storage.json, rewritten on every set.
-function openStorage(app: string): Storage {
-  const pathBytes = new Uint8Array(1024);
-  const length = dfPrefPath("dotframe", app.split(":").join("").split("/").join("-"), pathBytes);
-  const file = length > 0 ? `${new TextDecoder().decode(pathBytes.subarray(0, length))}storage.json` : "";
-  const values = new Map<string, string>();
-  if (file !== "" && existsSync(file)) {
-    const saved = JSON.parse(readFileSync(file, "utf8")) as Record<string, string>;
-    for (const key of Object.keys(saved)) values.set(key, saved[key]);
-  }
-  return {
-    get: (key: string): string | null => values.get(key) ?? null,
-    set: (key: string, value: string): void => {
-      values.set(key, value);
-      if (file === "") return;
-      const out: Record<string, string> = {};
-      for (const [k, v] of values) out[k] = v;
-      writeFileSync(file, JSON.stringify(out));
-    },
-  };
 }
 
 export async function run(options: WindowOptions, setup: Setup): Promise<void> {
