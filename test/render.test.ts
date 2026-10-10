@@ -147,7 +147,7 @@ test("the environment reaches the uniforms: emissive, texture tile, lights, spot
   const texture: Texture = { id: 42, width: 4, height: 4 };
   world.meshes.set(entity, { mesh: renderer.addMesh(box()), color: vec3(0.5, 0.5, 0.5), texture, tile: 3, emissive: 2 });
   const lights = Array.from({ length: MAX_LIGHTS + 2 }, (_: unknown, i: number) => ({ position: vec3(i, 1, 0), color: vec3(1, 1, 1), range: 5 + i }));
-  renderer.draws(world, { eye: vec3(0, 2, 0), target: vec3(0, 0, -1), fovY: 1 }, {
+  renderer.draws(world, { eye: vec3(0, 2, 0), target: vec3(0, 0, -5), fovY: 1 }, {
     ambient: vec3(0.1, 0.2, 0.3),
     fog: { color: vec3(0.05, 0.06, 0.07), density: 0.02 },
     lights,
@@ -338,7 +338,7 @@ test("several spot lights: the shadowed one takes the main slot, the rest light 
   const { world, entity } = oneBoxWorld();
   world.meshes.set(entity, { mesh: renderer.addMesh(box()), color: vec3(1, 1, 1) });
   const spot = (range: number, shadows: boolean) => ({ position: vec3(0, 2, 0), direction: vec3(0, 0, -1), color: vec3(1, 1, 1), range, angle: 0.4, shadows });
-  renderer.draws(world, { eye: vec3(0, 2, 0), target: vec3(0, 0, -1), fovY: 1 }, {
+  renderer.draws(world, { eye: vec3(0, 2, 0), target: vec3(0, 0, -5), fovY: 1 }, {
     ambient: vec3(0, 0, 0),
     spot: spot(16, false),
     spots: [spot(22, true), ...Array.from({ length: MAX_SPOTS }, (_: unknown, i: number) => spot(30 + i, false))],
@@ -408,4 +408,17 @@ test("a material's vertex() moves the mesh's positions before the model transfor
   const moving = pipelines[renderer.draws(world, camera)[0].pipeline].wgsl;
   expect(moving).toContain("let p = vertex(position, u.sunDir.w, u.params[0], u.params[1]);");
   expect(moving).toContain("out.position = u.mvp * vec4f(p, 1.0);");
+});
+
+test("meshes out of view or scaled to nothing are not drawn", () => {
+  const { gpu } = recordingGpu();
+  const renderer = createRenderer(gpu);
+  const { world, entity } = oneBoxWorld();
+  const mesh = renderer.addMesh(box());
+  world.meshes.set(entity, { mesh, color: vec3(1, 1, 1) });
+  const ahead = { eye: vec3(0, 0, 0), target: vec3(0, 0, -1), fovY: 1 };
+  expect(renderer.draws(world, ahead).length).toBe(1);
+  expect(renderer.draws(world, { ...ahead, target: vec3(0, 0, 1) }).length).toBe(0);
+  world.transforms.set(entity, { position: vec3(0, 0, -5), rotation: vec3(0, 0, 0), scale: vec3(0, 0, 0) });
+  expect(renderer.draws(world, ahead).length).toBe(0);
 });

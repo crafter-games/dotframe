@@ -1071,9 +1071,17 @@ export function createRenderer(gpu: RenderGpu): Renderer {
       const transform = world.transforms.get(entity);
       const mesh = meshes[meshRef.mesh];
       if (!transform || !mesh || ((meshRef.layers ?? 1) & cameraLayers) === 0) continue;
+      const instances = meshRef.instances;
+      // Meshes scaled to nothing (a hidden prop) or out of view cost no draw and no upload. Instance sets cull their
+      // own cells; skinned meshes are kept (their joints can carry them far from the bind pose's bounds), and
+      // vertex-moved ones get a margin.
+      if (!instances) {
+        const s = Math.max(Math.abs(transform.scale.x), Math.abs(transform.scale.y), Math.abs(transform.scale.z));
+        if (s === 0) continue;
+        if (!mesh.skinned && !inView(viewProjection, [transform.position.x, transform.position.y, transform.position.z], mesh.radius * s * (meshRef.material !== undefined ? 1.5 : 1))) continue;
+      }
 
       const texture = meshRef.texture ?? white;
-      const instances = meshRef.instances;
       const kind = mesh.skinned ? 1 : instances ? 2 : 0;
       let entityPipeline = kind === 1 ? skinnedPipeline : kind === 2 ? instancedPipeline : pipeline;
       const material = meshRef.material;
