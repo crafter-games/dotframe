@@ -72,7 +72,10 @@ render: (draw) => {
 },
 ```
 
-- `Environment`: ambient, a directional `sun`, up to `MAX_LIGHTS` point `lights`, one `spot`, `fog` and `exposure` (ACES). `MeshRef.texture` maps triplanar in world space (`tile` = units per repeat), so boxes and terrain need no UVs; `emissive` adds unlit color.
+- `Environment`: ambient, a directional `sun`, point `lights`, up to `MAX_SPOTS` `spots`, `fog` (with `scatter` and `volumes`) and `exposure` (ACES). Pass every light: the renderer keeps the `MAX_LIGHTS` that matter for the view (lit, in the frustum, nearest the eye), so no hand budgeting. Limits that drop things (spots, fog volumes, joints) warn once. `MeshRef.texture` maps triplanar in world space (`tile` = units per repeat), so boxes and terrain need no UVs; `emissive` adds unlit color.
+- Particles: `Environment.glow` draws billboards additively (fire, sparks, lanterns); `Emitter.colors` is a color ramp over the life, `Emitter.radius` a spawn sphere.
+- Materials: `Renderer.createMaterial(wgsl)` with `fn surface(s)` (Godot's `fragment()`) and optionally `fn vertex(position, time, params0, params1) -> vec3f` (Godot's `vertex()`) to move the mesh before transform and skinning.
+- Culling is automatic: static meshes out of view or scaled to zero are skipped. To hide a prop, scale it to zero. Skinned meshes are always drawn.
 - `box()` is side 1 (-0.5..0.5): scale is the full size.
 - Textures for snap: `platform.image(bytes, smooth)` decodes PNG and JPEG when frames are drawn; set `clear` on the Sim to your sky color.
 - First person: `input.look()` gives mouse movement; `run(..., { pointerLock: true })` on the web. Native returns zero for now.
@@ -83,7 +86,11 @@ render: (draw) => {
 - `dotframe/src/detmath`: deterministic sin, cos, tan, atan, atan2, exp, log, pow, hypot for simulation code.
 - `dotframe/src/checksum`: a fixed-order checksum over numbers.
 - `dotframe/src/netplay` and `dotframe/src/relay-client`: rollback netplay and the relay connection (see netplay); `dotframe/src/native/relay` on native.
-- `dotframe/src/ui`: buttons and arrow rows laid out once for drawing and hit-testing (`column`, `hit`, `drawUi`, `moveFocus`), taps from mouse and touch (`createTap`), and `createReleaseGate` so the press that starts a match does not reach gameplay.
+- `dotframe/src/ui`: buttons and arrow rows laid out once for drawing and hit-testing (`column`, `hit`, `drawUi`, `moveFocus`), taps from mouse and touch (`createTap`), and `createReleaseGate` so the press that starts a match does not reach gameplay. `UiStyle.align: "left"` with `pad` lays out settings lists (label at the edge, value and arrows on the right).
+- `dotframe/src/rig`: posing a skeleton by hand: `createRig`, `solve`, `turn`, `aim`, `headLook`, `stare`, `snap`, `follow`, `twoBoneIk` (walkers and creatures with no clips), `lockRoot`, `eulerYXZ`.
+- Music: `playMusic(track, loop, volume, channel)` and `setMusicVolume`, `pauseMusic`, `stopMusic` take a channel (0 to `MUSIC_CHANNELS - 1`, default 0); the channels stream together, so a layered score crossfades by setting volumes.
+- `Storage` persists on every target, iOS included (the app's preferences): save games there.
+- Web input: a key tapped between two frames reads as down for one frame, so menus and scripted browser presses are not lost.
 - Web: `run(window, setup, { fit: "window" })` fills the browser window; `Draw2D.resize(w, h)` lets the logical canvas follow `gpu.aspect()`.
 
 ## Other guides
