@@ -379,3 +379,16 @@ test("fog scattering and fog volumes reach the uniforms, and a mesh with fog off
   const off = writes[writes.length - 1];
   expect([off[47], off[at], off[at + 1]]).toEqual([0, 0, 0]);
 });
+
+test("glow particles draw after the blended ones through an additive pipeline", () => {
+  const { gpu, pipelines } = recordingGpu();
+  const renderer = createRenderer(gpu);
+  const { world } = oneBoxWorld();
+  const one = [0, 1, -3, 0.2, 1, 0.8, 0.4, 1];
+  const draws = renderer.draws(world, { eye: vec3(0, 1, 0), target: vec3(0, 1, -1), fovY: 1 }, { ambient: vec3(0, 0, 0), particles: one, glow: [...one, ...one] });
+  const [blended, added] = draws.slice(-2);
+  expect(pipelines[blended.pipeline].additive).toBe(false);
+  expect(pipelines[added.pipeline].additive).toBe(true);
+  expect(pipelines[added.pipeline].blend).toBe(true);
+  expect(added.instances).toBe(2);
+});

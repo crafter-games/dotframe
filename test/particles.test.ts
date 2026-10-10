@@ -37,3 +37,21 @@ test("alpha and size follow evenly spaced keys", () => {
   expect(out[7]).toBeCloseTo(0.4);
   expect(out[PARTICLE_FLOATS + 7]).toBeCloseTo(0);
 });
+
+test("a color ramp shades particles over their life and a radius spreads where they are born", () => {
+  const fire = { ...smoke, rate: 1, lifetime: 2, velocity: vec3(0, 0, 0), spread: 0, acceleration: vec3(0, 0, 0), drag: 0, colors: [vec3(1, 0.8, 0.4), vec3(0.6, 0.1, 0.02)], radius: 0.12 };
+  const out: number[] = [];
+  emitParticles(fire, 1, out);
+  // Particle 0 at mid-life is halfway down the ramp; particle 1, just born, has the first color.
+  expect([out[4], out[5], out[6]].map((v: number): number => Math.round(v * 100) / 100)).toEqual([0.8, 0.45, 0.21]);
+  expect([out[PARTICLE_FLOATS + 4], out[PARTICLE_FLOATS + 5], out[PARTICLE_FLOATS + 6]]).toEqual([1, 0.8, 0.4]);
+  const many: number[] = [];
+  emitParticles({ ...fire, rate: 50 }, 1.5, many);
+  let spread = 0;
+  for (let i = 0; i < many.length; i += PARTICLE_FLOATS) {
+    const d = Math.hypot(many[i], many[i + 1] - 1, many[i + 2]);
+    expect(d).toBeLessThanOrEqual(0.12 + 1e-9);
+    spread = Math.max(spread, d);
+  }
+  expect(spread).toBeGreaterThan(0.06);
+});

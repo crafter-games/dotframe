@@ -194,7 +194,12 @@ export async function run(options: WindowOptions, setup: Setup, runOptions: RunO
             targets: [
               {
                 format,
-                blend: pipelineOptions.blend
+                blend: pipelineOptions.blend && pipelineOptions.additive
+                  ? {
+                      color: { srcFactor: "src-alpha", dstFactor: "one", operation: "add" },
+                      alpha: { srcFactor: "zero", dstFactor: "one", operation: "add" },
+                    }
+                  : pipelineOptions.blend
                   ? {
                       color: { srcFactor: "src-alpha", dstFactor: "one-minus-src-alpha", operation: "add" },
                       alpha: { srcFactor: "one", dstFactor: "one-minus-src-alpha", operation: "add" },

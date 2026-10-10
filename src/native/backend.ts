@@ -37,6 +37,7 @@ import {
 
 const PIPELINE_DEPTH = 1;
 const PIPELINE_BLEND = 4;
+const PIPELINE_ADDITIVE = 8;
 const PIPELINE_NO_DEPTH_WRITE = 2;
 
 // Milliseconds the frame calls spent, summed since the last reset: begin (acquiring the target, where a host waits
@@ -68,6 +69,7 @@ export function createNativeRenderGpu(mobile = false): RenderGpu {
       const flags =
         (pipelineOptions.depth ? PIPELINE_DEPTH : 0) |
         (pipelineOptions.blend ? PIPELINE_BLEND : 0) |
+        (pipelineOptions.additive ? PIPELINE_ADDITIVE : 0) |
         (pipelineOptions.depthWrite === false ? PIPELINE_NO_DEPTH_WRITE : 0) |
         ((instanceAttributes.length & 255) << 8) |
         (((pipelineOptions.instanceStride ?? 0) & 65535) << 16);
