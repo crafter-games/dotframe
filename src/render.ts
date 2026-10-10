@@ -306,6 +306,9 @@ export interface Renderer {
   render: (world: World, camera: Camera, clear: Color, environment?: Environment) => void;
   // A material for MeshRef.material: WGSL defining fn surface(s: SurfaceIn) -> Surface (Godot's fragment()). It may
   // sample tex with samp (MeshRef.texture) and read MeshRef.params. Built-in lighting, shadows and fog apply to it.
+  // It may also define fn vertex(position: vec3f, time: f32, params0: vec4f, params1: vec4f) -> vec3f (Godot's
+  // vertex()): the mesh's own position moved before the model transform and skinning (wings, a glitch). Static and
+  // skinned meshes run it; instanced ones and shadow casters keep the rest shape.
   createMaterial: (wgsl: string) => number;
 }
 
@@ -389,6 +392,8 @@ struct Surface {
 // kind 0 static, 1 skinned, 2 instanced, 3 shadow casters. surface is a material's WGSL (createMaterial).
 const shader = (kind: number, surface?: string): string => {
   const skinned = kind === 1;
+  // A material's vertex() hook moves the mesh's own positions (static and skinned meshes).
+  const moved = surface !== undefined && surface.includes("fn vertex(") ? "vertex(position, u.sunDir.w, u.params[0], u.params[1])" : "position";
   return `
 struct Light {
   position: vec4f,
@@ -471,7 +476,7 @@ fn vs_main(@location(0) position: vec3f, @location(1) normal: vec3f, @location(2
     ? `@vertex
 fn vs_main(@location(0) position: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2f, @location(3) joints: vec4f, @location(4) weights: vec4f) -> VertexOut {
   let skin = u.joints[u32(joints.x)] * weights.x + u.joints[u32(joints.y)] * weights.y + u.joints[u32(joints.z)] * weights.z + u.joints[u32(joints.w)] * weights.w;
-  let p = skin * vec4f(position, 1.0);
+  let p = skin * vec4f(${moved}, 1.0);
   var out: VertexOut;
   out.position = u.mvp * p;
   out.normal = (u.model * skin * vec4f(normal, 0.0)).xyz;
@@ -481,10 +486,11 @@ fn vs_main(@location(0) position: vec3f, @location(1) normal: vec3f, @location(2
 }`
     : `@vertex
 fn vs_main(@location(0) position: vec3f, @location(1) normal: vec3f, @location(2) uv: vec2f) -> VertexOut {
+  let p = ${moved};
   var out: VertexOut;
-  out.position = u.mvp * vec4f(position, 1.0);
+  out.position = u.mvp * vec4f(p, 1.0);
   out.normal = (u.model * vec4f(normal, 0.0)).xyz;
-  out.world = (u.model * vec4f(position, 1.0)).xyz;
+  out.world = (u.model * vec4f(p, 1.0)).xyz;
   out.uv = uv;
   return out;
 }`
