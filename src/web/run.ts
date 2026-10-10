@@ -309,12 +309,21 @@ export async function run(options: WindowOptions, setup: Setup, runOptions: RunO
   };
 
   const pressed = new Set<string>();
+  // A key pressed and released between two frames still reads as down for one frame: fresh holds the keys pressed
+  // since the last frame, and a release of one of them waits in late until that frame has run.
+  const fresh = new Set<string>();
+  const late = new Set<string>();
   // window, not globalThis: with Bun's types loaded, globalThis listeners receive a plain Event.
   window.addEventListener("keydown", (event: KeyboardEvent) => {
     if (keyCodes.includes(event.code)) event.preventDefault();
     pressed.add(event.code);
+    fresh.add(event.code);
+    late.delete(event.code);
   });
-  window.addEventListener("keyup", (event: KeyboardEvent) => pressed.delete(event.code));
+  window.addEventListener("keyup", (event: KeyboardEvent) => {
+    if (fresh.has(event.code)) late.add(event.code);
+    else pressed.delete(event.code);
+  });
   window.addEventListener("blur", () => pressed.clear());
   const pointer: Pointer = { x: 0, y: 0, buttons: 0 };
   const trackPointer = (event: PointerEvent): void => {
@@ -505,7 +514,11 @@ export async function run(options: WindowOptions, setup: Setup, runOptions: RunO
   const frame = setup({ gpu, input, audio, storage });
   const start = performance.now();
   const tick = (): void => {
-    if (!frame((performance.now() - start) / 1000)) return;
+    const go = frame((performance.now() - start) / 1000);
+    for (const code of late) pressed.delete(code);
+    late.clear();
+    fresh.clear();
+    if (!go) return;
     requestAnimationFrame(tick);
   };
   requestAnimationFrame(tick);
