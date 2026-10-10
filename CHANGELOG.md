@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.1
+
+- `dotframe skills get` covers 0.3.0: per-view lights and limit warnings, glow particles, material `vertex()`, culling, `src/rig`, music channels, left-aligned UI, persistent `Storage`, `assets slim --decimate`, and the iOS aborts the web tolerates (out-of-range reads).
+
 ## 0.3.0
 
 - Point lights picked per view (`pickLights`): unlit lights and lights out of the frustum drop, and past `MAX_LIGHTS` the nearest to the eye win. Scenes with 8 or fewer lights in view are unchanged.
