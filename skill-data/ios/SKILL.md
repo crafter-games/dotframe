@@ -47,7 +47,9 @@ Templates ship this as `main.ios.ts` over the same `src/setup.ts` web and macOS 
 ## Notes
 
 - Crash with no message? `dotframe device logs ios` copies the newest crash report from the device and prints the exception and crashed thread. build ios also wraps init and frame so a TypeScript throw prints `dotframe: init threw: <message and stack>` to the device log before scriptc's trap aborts.
-- scriptc library mode caps host callbacks at 32. build ios registers only the df* functions the entry reaches (a game without networking uses 27, with the native relay 29); the glue fails with the list if a game goes over.
+- Code the web tolerates aborts here: an array read past its end (`list[i]` that may be undefined, even with `??`), a `Record` read by a key that may be missing, a captured `let`. Bounds-check (`i < list.length ? list[i] : null`). `replay verify --native` catches these in the sim; render code only shows them on the device, so launch with `--console` after changing it.
+- `Storage` is the app's preferences on iOS: saves survive quitting. Test it by killing the app and reopening.
+- scriptc library mode caps host callbacks at 32 (build ios warns from 28). build ios registers only the df* functions the entry reaches (a game without networking uses 27, with the native relay 29); the glue fails with the list if a game goes over.
 - Textures: native has no fixed cap anymore; free what you replace with `gpu.destroyTexture(texture)` (its id is retired, do not draw it again).
 - Online on iOS: `connectRelayNative` and `shareText` from `dotframe/src/native/relay` (see netplay).
 
