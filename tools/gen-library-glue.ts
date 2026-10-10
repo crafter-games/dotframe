@@ -87,3 +87,5 @@ mkdirSync(outDir, { recursive: true });
 writeFileSync(join(outDir, `${app.name}.profile.json`), `${JSON.stringify(profile, null, 2)}\n`);
 writeFileSync(join(outDir, `${app.name}_glue.c`), glue);
 console.log(`${usable.length} callbacks${skipped.length ? `, skipped (unsupported in library mode): ${skipped.join(", ")}` : ""}`);
+// Library mode caps a library at 32 callbacks: say how close a game is, before one more host function breaks the build.
+if (usable.length >= 28) console.warn(`${usable.length} of scriptc library mode's 32 callbacks used: ${32 - usable.length} left for new host functions`);
