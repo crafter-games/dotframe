@@ -795,6 +795,7 @@ export function createRenderer(gpu: RenderGpu): Renderer {
         // A joint past MAX_JOINTS would index outside the array; its weight falls back to joint 0.
         const joint = skin.joints[i * 4 + c];
         interleaved[o + 8 + c] = joint < MAX_JOINTS ? joint : 0;
+        if (joint >= MAX_JOINTS) overLimit("joints in a skin", MAX_JOINTS);
         interleaved[o + 12 + c] = skin.weights[i * 4 + c];
       }
     }
@@ -836,6 +837,7 @@ export function createRenderer(gpu: RenderGpu): Renderer {
     if (env.fog) {
       put(1, env.fog.color, env.fog.density);
       const volumes = (env.fog.volumes ?? []).slice(0, MAX_FOG_VOLUMES);
+      if ((env.fog.volumes ?? []).length > MAX_FOG_VOLUMES) overLimit("fog volumes", MAX_FOG_VOLUMES);
       scene[FOG_SLOT] = env.fog.scatter ?? 0;
       scene[FOG_SLOT + 1] = volumes.length;
       volumes.forEach((f: FogVolume, i: number): void => {
@@ -851,6 +853,7 @@ export function createRenderer(gpu: RenderGpu): Renderer {
     scene[15] = env.time ?? 0;
     // The main slot holds the spot that casts shadows (the first that asks), else the first; the rest follow it.
     const all = [...(env.spot ? [env.spot] : []), ...(env.spots ?? [])].slice(0, MAX_SPOTS);
+    if ((env.spot ? 1 : 0) + (env.spots ?? []).length > MAX_SPOTS) overLimit("spot lights", MAX_SPOTS);
     const shadowed = all.findIndex((sp: SpotLight): boolean => sp.shadows === true);
     const main = shadowed >= 0 ? shadowed : 0;
     let slot = 0;
@@ -1250,6 +1253,14 @@ export function splitCells(data: Float32Array): { data: Float32Array; cells: Ins
 
 function transformPoint(m: Float32Array, p: [number, number, number]): [number, number, number] {
   return [m[0] * p[0] + m[4] * p[1] + m[8] * p[2] + m[12], m[1] * p[0] + m[5] * p[1] + m[9] * p[2] + m[13], m[2] * p[0] + m[6] * p[1] + m[10] * p[2] + m[14]];
+}
+
+// A limit that drops what is past it says so, once per kind per run, instead of failing quietly.
+const warned = new Set<string>();
+function overLimit(what: string, max: number): void {
+  if (warned.has(what)) return;
+  warned.add(what);
+  console.warn(`dotframe render: more than ${max} ${what}; the rest are dropped`);
 }
 
 // The point lights a view draws, at most MAX_LIGHTS: unlit ones (no range or color) and ones whose reach is out of

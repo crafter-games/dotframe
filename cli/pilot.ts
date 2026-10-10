@@ -105,7 +105,7 @@ export function runPlan(sim: Sim, run: SimRun, plan: PlanStep[]): PlanResult {
           }
           push(idle);
         }
-        if (!ok) detail = `${w.until} is ${JSON.stringify(at(run.state(), w.until))}, not ${JSON.stringify(w.is)}, after ${w.max ?? 6000} frames`;
+        if (!ok) detail = `${w.until} is ${JSON.stringify(at(run.state(), w.until))}, not ${JSON.stringify(w.is)}, after ${w.max ?? 6000} frames${w.max === undefined ? " (the default wait; give the step a \"max\")" : ""}`;
       }
     } else if ("expect" in step) {
       kind = "expect";
