@@ -6,11 +6,11 @@ import { CliError, type Ctx, print, which } from "../lib";
 import { ENGINE } from "../native";
 import { slimAssets } from "../slim";
 
-export function assetsSlim(ctx: Ctx, src: string | undefined, out: string | undefined, jpeg: boolean, clips?: string[], rename?: Record<string, string>): void {
+export function assetsSlim(ctx: Ctx, src: string | undefined, out: string | undefined, jpeg: boolean, clips?: string[], rename?: Record<string, string>, decimate?: Record<string, number>): void {
   if (!src || !out) throw new CliError("USAGE", "assets slim needs a source and an output (two folders, or two .glb files)", "dotframe assets slim assets dist/web/assets", "core");
   if (!existsSync(src)) throw new CliError("NOT_FOUND", `nothing at ${src}`, "pass the game's assets folder, or one .glb", "core");
   if (resolve(src) === resolve(out)) throw new CliError("USAGE", "the output must differ from the source", "write to the build output, for example dist/web/assets", "core");
-  const report = slimAssets(src, out, { jpeg, clips, rename });
+  const report = slimAssets(src, out, { jpeg, clips, rename, decimate });
   const mb = (n: number): string => `${(n / 1048576).toFixed(1)} MB`;
   print(ctx, report, () =>
     [

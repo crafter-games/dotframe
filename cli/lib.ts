@@ -67,7 +67,8 @@ export interface Config {
   targets: Record<string, Target>;
   relay?: { provider: "dokploy"; compose: string } | { provider: "fly"; app: string; config: string; region?: string };
   links?: { path: string; target: string }[];
-  assets?: { localOnly?: string[] };
+  // decimate: assets slim --decimate for every build that slims the bundle ({"*": 0.5} or {"giant.glb": 0.35}).
+  assets?: { localOnly?: string[]; decimate?: Record<string, number> };
   // Tools the build needs besides bun (for example ffmpeg); doctor checks them and docker images install them.
   requires?: string[];
   // How dotframe compare gets the original game's picture of a shot (a port's source engine, such as Godot): argv
