@@ -12,6 +12,7 @@ import type { Audio } from "../audio";
 import { mipChain } from "../mips";
 import { type Input, keyCodes, type Look, type Pointer, type Touch } from "../input";
 import type { Storage } from "../storage";
+import { MUSIC_CHANNELS } from "../audio";
 
 // Engine buffers are always plain ArrayBuffer-backed; the casts below satisfy TS 5.9+ WebGPU typings, which reject
 // Uint8Array<ArrayBufferLike> (it could be a SharedArrayBuffer).
@@ -387,15 +388,15 @@ export async function run(options: WindowOptions, setup: Setup, runOptions: RunO
   master.connect(audioContext.destination);
   const resume = (): void => {
     if (audioContext.state === "suspended") audioContext.resume();
-    if (music && musicWanted && music.paused) music.play().catch(() => {});
+    for (const m of music) if (m.element && m.wanted && m.element.paused) m.element.play().catch(() => {});
   };
   globalThis.addEventListener("keydown", resume);
   globalThis.addEventListener("pointerdown", resume);
   const sounds: AudioBuffer[] = [];
   const tracks: string[] = [];
-  let music: HTMLAudioElement | null = null;
-  let musicWanted = false;
-  let musicVolume = 1;
+  // One streamed element per music channel.
+  const music: { element: HTMLAudioElement | null; wanted: boolean; volume: number }[] = Array.from({ length: MUSIC_CHANNELS }, () => ({ element: null, wanted: false, volume: 1 }));
+  const channelOf = (c: number): { element: HTMLAudioElement | null; wanted: boolean; volume: number } | undefined => music[c];
   let masterVolume = 0.8;
   const voices = new Map<number, { source: AudioBufferSourceNode; gain: GainNode; panner: StereoPannerNode }>();
   let nextVoice = 1;
@@ -462,35 +463,42 @@ export async function run(options: WindowOptions, setup: Setup, runOptions: RunO
       tracks.push(URL.createObjectURL(new Blob([new Uint8Array(mp3)], { type: "audio/mpeg" })));
       return tracks.length - 1;
     },
-    playMusic: (track: number, loop: boolean, volume: number): void => {
-      music?.pause();
+    playMusic: (track: number, loop: boolean, volume: number, channel = 0): void => {
+      const m = channelOf(channel);
       const url = tracks[track];
-      if (!url) return;
-      music = new globalThis.Audio(url);
-      music.loop = loop;
-      musicVolume = volume;
-      music.volume = musicVolume * masterVolume;
-      musicWanted = true;
-      music.play().catch(() => {});
+      if (!m || !url) return;
+      m.element?.pause();
+      m.element = new globalThis.Audio(url);
+      m.element.loop = loop;
+      m.volume = volume;
+      m.element.volume = Math.min(1, m.volume * masterVolume);
+      m.wanted = true;
+      m.element.play().catch(() => {});
     },
-    stopMusic: (): void => {
-      music?.pause();
-      music = null;
-      musicWanted = false;
+    stopMusic: (channel = 0): void => {
+      const m = channelOf(channel);
+      if (!m) return;
+      m.element?.pause();
+      m.element = null;
+      m.wanted = false;
     },
-    pauseMusic: (paused: boolean): void => {
-      musicWanted = !paused;
-      if (paused) music?.pause();
-      else music?.play().catch(() => {});
+    pauseMusic: (paused: boolean, channel = 0): void => {
+      const m = channelOf(channel);
+      if (!m) return;
+      m.wanted = !paused;
+      if (paused) m.element?.pause();
+      else m.element?.play().catch(() => {});
     },
-    setMusicVolume: (volume: number): void => {
-      musicVolume = volume;
-      if (music) music.volume = musicVolume * masterVolume;
+    setMusicVolume: (volume: number, channel = 0): void => {
+      const m = channelOf(channel);
+      if (!m) return;
+      m.volume = volume;
+      if (m.element) m.element.volume = Math.min(1, m.volume * masterVolume);
     },
     setMasterVolume: (volume: number): void => {
       masterVolume = volume;
       master.gain.value = volume;
-      if (music) music.volume = musicVolume * masterVolume;
+      for (const m of music) if (m.element) m.element.volume = Math.min(1, m.volume * masterVolume);
     },
   };
 

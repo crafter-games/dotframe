@@ -1,6 +1,9 @@
 import { dcos, dsin } from "./detmath";
 
-// Backend-agnostic audio: decoded sound effects, square tones and one streamed music track.
+// Backend-agnostic audio: decoded sound effects, square tones and up to MUSIC_CHANNELS streamed music tracks at once.
+
+// Music channels: tracks that stream together, each with its own volume (a layered score crossfades between them).
+export const MUSIC_CHANNELS = 4;
 
 // Synchronous playback controls, usable in scriptc library mode (iOS) where promises are unavailable.
 export interface AudioPlayer {
@@ -8,10 +11,11 @@ export interface AudioPlayer {
   play: (sound: number, volume: number, rate: number) => void;
   // Square wave decaying exponentially to silence over duration seconds.
   tone: (frequency: number, duration: number, volume: number) => void;
-  playMusic: (track: number, loop: boolean, volume: number) => void;
-  stopMusic: () => void;
-  pauseMusic: (paused: boolean) => void;
-  setMusicVolume: (volume: number) => void;
+  // channel: 0 to MUSIC_CHANNELS - 1 (0 when left out).
+  playMusic: (track: number, loop: boolean, volume: number, channel?: number) => void;
+  stopMusic: (channel?: number) => void;
+  pauseMusic: (paused: boolean, channel?: number) => void;
+  setMusicVolume: (volume: number, channel?: number) => void;
   setMasterVolume: (volume: number) => void;
   // A voice you can steer: returns its id (0 when it cannot play). Looping voices run until stopVoice.
   start: (sound: number, volume: number, rate: number, loop: boolean) => number;

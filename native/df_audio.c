@@ -63,15 +63,21 @@ static int32_t g_tone_count;
 static Track g_tracks[MAX_TRACKS];
 static int32_t g_track_count;
 
-static drmp3 g_music;
-static int g_music_open;
-static int g_music_loop;
-static int g_music_paused;
-static float g_music_volume = 1.0f;
-static float g_music_buffer[4096 * 2];
-static uint64_t g_music_buffered;
-static double g_music_position;
-static double g_music_step;
+// Music channels play streamed tracks at the same time (layered scores: a drone, a tension bed, a climax), each with
+// its own loop, pause and volume.
+#define MUSIC_CHANNELS 4
+typedef struct {
+  drmp3 mp3;
+  int open;
+  int loop;
+  int paused;
+  float volume;
+  float buffer[4096 * 2];
+  uint64_t buffered;
+  double position;
+  double step;
+} Music;
+static Music g_music[MUSIC_CHANNELS];
 static float g_master = 0.8f;
 
 // Sample of channel c (0 left, 1 right) at frame i; mono sounds feed both channels.
@@ -81,29 +87,29 @@ static float sample(const Sound *sound, uint64_t i, int c) {
 
 static float clampf(float v) { return v < -1.0f ? -1.0f : v > 1.0f ? 1.0f : v; }
 
-// Pulls the next music frame pair through a small linear resampler; returns 0 at the end of a non-looping track.
-static int music_frame(float *left, float *right) {
-  while (g_music_position + 1.0 >= (double)g_music_buffered) {
-    if (g_music_buffered >= 1) {
+// Pulls a channel's next frame pair through a small linear resampler; returns 0 at the end of a non-looping track.
+static int music_frame(Music *m, float *left, float *right) {
+  while (m->position + 1.0 >= (double)m->buffered) {
+    if (m->buffered >= 1) {
       // Keep the last frame so interpolation stays continuous across refills.
-      g_music_buffer[0] = g_music_buffer[(g_music_buffered - 1) * 2];
-      g_music_buffer[1] = g_music_buffer[(g_music_buffered - 1) * 2 + 1];
-      g_music_position -= (double)(g_music_buffered - 1);
-      g_music_buffered = 1;
+      m->buffer[0] = m->buffer[(m->buffered - 1) * 2];
+      m->buffer[1] = m->buffer[(m->buffered - 1) * 2 + 1];
+      m->position -= (double)(m->buffered - 1);
+      m->buffered = 1;
     }
-    uint64_t read = drmp3_read_pcm_frames_f32(&g_music, 4095, g_music_buffer + g_music_buffered * 2);
+    uint64_t read = drmp3_read_pcm_frames_f32(&m->mp3, 4095, m->buffer + m->buffered * 2);
     if (read == 0) {
-      if (!g_music_loop || !drmp3_seek_to_pcm_frame(&g_music, 0)) return 0;
-      read = drmp3_read_pcm_frames_f32(&g_music, 4095, g_music_buffer + g_music_buffered * 2);
+      if (!m->loop || !drmp3_seek_to_pcm_frame(&m->mp3, 0)) return 0;
+      read = drmp3_read_pcm_frames_f32(&m->mp3, 4095, m->buffer + m->buffered * 2);
       if (read == 0) return 0;
     }
-    g_music_buffered += read;
+    m->buffered += read;
   }
-  uint64_t i = (uint64_t)g_music_position;
-  float t = (float)(g_music_position - (double)i);
-  *left = g_music_buffer[i * 2] * (1 - t) + g_music_buffer[(i + 1) * 2] * t;
-  *right = g_music_buffer[i * 2 + 1] * (1 - t) + g_music_buffer[(i + 1) * 2 + 1] * t;
-  g_music_position += g_music_step;
+  uint64_t i = (uint64_t)m->position;
+  float t = (float)(m->position - (double)i);
+  *left = m->buffer[i * 2] * (1 - t) + m->buffer[(i + 1) * 2] * t;
+  *right = m->buffer[i * 2 + 1] * (1 - t) + m->buffer[(i + 1) * 2 + 1] * t;
+  m->position += m->step;
   return 1;
 }
 
@@ -159,16 +165,18 @@ static void SDLCALL mix(void *userdata, SDL_AudioStream *stream, int additional,
       if (tone->elapsed >= tone->duration) g_tones[k] = g_tones[--g_tone_count];
       else k++;
     }
-    if (g_music_open && !g_music_paused) {
+    for (int c = 0; c < MUSIC_CHANNELS; c++) {
+      Music *m = &g_music[c];
+      if (!m->open || m->paused) continue;
       for (int f = 0; f < frames; f++) {
         float left, right;
-        if (!music_frame(&left, &right)) {
-          drmp3_uninit(&g_music);
-          g_music_open = 0;
+        if (!music_frame(m, &left, &right)) {
+          drmp3_uninit(&m->mp3);
+          m->open = 0;
           break;
         }
-        out[f * 2] += left * g_music_volume;
-        out[f * 2 + 1] += right * g_music_volume;
+        out[f * 2] += left * m->volume;
+        out[f * 2 + 1] += right * m->volume;
       }
     }
     SDL_UnlockMutex(g_lock);
@@ -271,46 +279,61 @@ int32_t df_track(const uint8_t *mp3, size_t len) {
   return g_track_count++;
 }
 
-int32_t df_music_play(int32_t track, uint8_t loop, double volume) {
-  if (!g_stream || track < 0 || track >= g_track_count) return -1;
+static Music *channel(int32_t c) { return c >= 0 && c < MUSIC_CHANNELS ? &g_music[c] : NULL; }
+
+int32_t df_music_play_on(int32_t c, int32_t track, uint8_t loop, double volume) {
+  Music *m = channel(c);
+  if (!g_stream || !m || track < 0 || track >= g_track_count) return -1;
   SDL_LockMutex(g_lock);
-  if (g_music_open) drmp3_uninit(&g_music);
-  g_music_open = drmp3_init_memory(&g_music, g_tracks[track].data, g_tracks[track].size, NULL);
-  g_music_loop = loop;
-  g_music_paused = 0;
-  g_music_volume = (float)volume;
-  g_music_buffered = 0;
-  g_music_position = 0;
-  g_music_step = g_music_open ? (double)g_music.sampleRate / OUTPUT_RATE : 1.0;
+  if (m->open) drmp3_uninit(&m->mp3);
+  m->open = drmp3_init_memory(&m->mp3, g_tracks[track].data, g_tracks[track].size, NULL);
+  m->loop = loop;
+  m->paused = 0;
+  m->volume = (float)volume;
+  m->buffered = 0;
+  m->position = 0;
+  m->step = m->open ? (double)m->mp3.sampleRate / OUTPUT_RATE : 1.0;
   SDL_UnlockMutex(g_lock);
-  return g_music_open ? 0 : -2;
+  return m->open ? 0 : -2;
 }
 
-void df_music_stop(void) {
+static void music_stop_on(int32_t c) {
+  Music *m = channel(c);
+  if (!m) return;
   SDL_LockMutex(g_lock);
-  if (g_music_open) drmp3_uninit(&g_music);
-  g_music_open = 0;
+  if (m->open) drmp3_uninit(&m->mp3);
+  m->open = 0;
   SDL_UnlockMutex(g_lock);
 }
 
-void df_music_pause(uint8_t paused) {
+static void music_pause_on(int32_t c, uint8_t paused) {
+  Music *m = channel(c);
+  if (!m) return;
   SDL_LockMutex(g_lock);
-  g_music_paused = paused;
+  m->paused = paused;
   SDL_UnlockMutex(g_lock);
 }
 
-void df_music_volume(double volume) {
+static void music_volume_on(int32_t c, double volume) {
+  Music *m = channel(c);
+  if (!m) return;
   SDL_LockMutex(g_lock);
-  g_music_volume = (float)volume;
+  m->volume = (float)volume;
   SDL_UnlockMutex(g_lock);
 }
+
+int32_t df_music_play(int32_t track, uint8_t loop, double volume) { return df_music_play_on(0, track, loop, volume); }
+void df_music_stop(void) { music_stop_on(0); }
+void df_music_pause(uint8_t paused) { music_pause_on(0, paused); }
+void df_music_volume(double volume) { music_volume_on(0, volume); }
 
 void df_master_volume(double volume) { g_master = (float)volume; }
 
 // Number of currently mixing sound and tone voices, for tests and diagnostics.
 int32_t df_audio_active(void) {
   SDL_LockMutex(g_lock);
-  int32_t active = g_voice_count + g_tone_count + (g_music_open && !g_music_paused ? 1 : 0);
+  int32_t active = g_voice_count + g_tone_count;
+  for (int c = 0; c < MUSIC_CHANNELS; c++) active += g_music[c].open && !g_music[c].paused ? 1 : 0;
   SDL_UnlockMutex(g_lock);
   return active;
 }
@@ -319,8 +342,10 @@ void df_audio_close(void) {
   while (SDL_GetAtomicInt(&g_decoding) > 0) SDL_Delay(1);
   if (g_stream) SDL_DestroyAudioStream(g_stream);
   g_stream = NULL;
-  if (g_music_open) drmp3_uninit(&g_music);
-  g_music_open = 0;
+  for (int c = 0; c < MUSIC_CHANNELS; c++) {
+    if (g_music[c].open) drmp3_uninit(&g_music[c].mp3);
+    g_music[c].open = 0;
+  }
   for (int32_t i = 0; i < g_sound_count; i++) free(g_sounds[i].frames);
   for (int32_t i = 0; i < g_track_count; i++) free(g_tracks[i].data);
   g_sound_count = g_track_count = g_voice_count = g_tone_count = 0;
@@ -365,11 +390,14 @@ int32_t df_voice(int32_t op, double a, double b, double c, double d) {
 // One host call for music and volume, because scriptc library mode (iOS) caps a library at 32 callbacks.
 // op 0 plays track a (loop when b != 0) at volume c, 1 stops, 2 pauses (a != 0) or resumes, 3 sets the music volume
 // to a, 4 sets the master volume to a. Returns df_music_play's result for op 0, else 0.
+// op / 8 picks the music channel (0 to 3) for ops 0 to 3, so layered scores need no more host callbacks.
 int32_t df_music(int32_t op, double a, double b, double c) {
-  if (op == 0) return df_music_play((int32_t)a, b != 0, c);
-  if (op == 1) df_music_stop();
-  else if (op == 2) df_music_pause(a != 0);
-  else if (op == 3) df_music_volume(a);
+  int32_t ch = op / 8;
+  op %= 8;
+  if (op == 0) return df_music_play_on(ch, (int32_t)a, b != 0, c);
+  if (op == 1) music_stop_on(ch);
+  else if (op == 2) music_pause_on(ch, a != 0);
+  else if (op == 3) music_volume_on(ch, a);
   else if (op == 4) df_master_volume(a);
   return 0;
 }

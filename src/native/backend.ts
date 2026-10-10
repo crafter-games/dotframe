@@ -166,12 +166,13 @@ export function createNativeAudioPlayer(): AudioPlayer {
   return {
     play: (sound: number, volume: number, rate: number): void => dfPlay(sound, volume, rate),
     tone: (frequency: number, duration: number, volume: number): void => dfTone(frequency, duration, volume),
-    playMusic: (track: number, loop: boolean, volume: number): void => {
-      dfMusic(0, track, loop ? 1 : 0, volume);
+    // The channel rides in the op (op + 8 * channel; df_audio.c df_music).
+    playMusic: (track: number, loop: boolean, volume: number, channel = 0): void => {
+      dfMusic(channel * 8, track, loop ? 1 : 0, volume);
     },
-    stopMusic: (): void => void dfMusic(1, 0, 0, 0),
-    pauseMusic: (paused: boolean): void => void dfMusic(2, paused ? 1 : 0, 0, 0),
-    setMusicVolume: (volume: number): void => void dfMusic(3, volume, 0, 0),
+    stopMusic: (channel = 0): void => void dfMusic(1 + channel * 8, 0, 0, 0),
+    pauseMusic: (paused: boolean, channel = 0): void => void dfMusic(2 + channel * 8, paused ? 1 : 0, 0, 0),
+    setMusicVolume: (volume: number, channel = 0): void => void dfMusic(3 + channel * 8, volume, 0, 0),
     setMasterVolume: (volume: number): void => void dfMusic(4, volume, 0, 0),
     start: (sound: number, volume: number, rate: number, loop: boolean): number => dfVoice(0, sound, volume, rate, loop ? 1 : 0),
     setVoice: (voice: number, volume: number, pan: number): void => void dfVoice(1, voice, volume, pan, 0),
