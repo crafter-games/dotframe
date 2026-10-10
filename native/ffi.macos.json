@@ -68,6 +68,16 @@
       "returns": "i32"
     },
     {
+      "name": "dfPrefPathByte",
+      "symbol": "df_pref_path_byte",
+      "params": [
+        "string",
+        "string",
+        "i32"
+      ],
+      "returns": "i32"
+    },
+    {
       "name": "dfBuffer",
       "symbol": "df_buffer",
       "params": [
