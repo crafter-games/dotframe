@@ -93,6 +93,10 @@ export interface UiStyle {
   focusFill: string;
   text: string;
   disabledText: string;
+  // Where a button's label sits ("center" by default); "left" also puts a row's label left and its value right,
+  // for a settings list. pad is the inset from the item's edge (12 by default).
+  align?: "left" | "center";
+  pad?: number;
 }
 
 export const DEFAULT_STYLE: UiStyle = { font: "24px sans-serif", fill: "#24213a", focusFill: "#3d3866", text: "#ffffff", disabledText: "#77748f" };
@@ -107,6 +111,16 @@ export function drawUi(draw: Draw2D, items: UiItem[], focus: string, style: UiSt
     draw.fillRect(r.x, r.y, r.w, r.h);
     draw.setFillStyle(it.disabled ? style.disabledText : style.text);
     const cy = r.y + r.h / 2;
+    const pad = style.pad ?? 12;
+    if (style.align === "left") {
+      draw.setTextAlign("left");
+      draw.fillText(it.label, r.x + pad, cy);
+      if (it.kind === "row") {
+        draw.setTextAlign("right");
+        draw.fillText(`<  ${it.value}  >`, r.x + r.w - pad, cy);
+      }
+      continue;
+    }
     if (it.kind === "row") {
       draw.setTextAlign("left");
       draw.fillText("<", r.x + 12, cy);

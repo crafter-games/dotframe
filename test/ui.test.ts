@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import type { Input, Pointer, Touch } from "../src/input";
-import { column, createReleaseGate, createTap, hit, moveFocus } from "../src/ui";
+import type { Draw2D } from "../src/draw2d";
+import { column, createReleaseGate, createTap, DEFAULT_STYLE, drawUi, hit, moveFocus } from "../src/ui";
 
 function fakeInput(): Input & { pointerState: Pointer; touchList: Touch[] } {
   const state = { pointerState: { x: 0, y: 0, buttons: 0 } as Pointer, touchList: [] as Touch[] };
@@ -76,4 +77,13 @@ test("disarm drops the press that changed screens", () => {
   tap.update(input);
   input.pointerState = { x: 0.3, y: 0.3, buttons: 0 };
   expect(tap.update(input)).toEqual({ x: 0.3, y: 0.3 });
+});
+
+test("left-aligned styles put labels at the item's edge and a row's value on the right", () => {
+  const calls: string[] = [];
+  const draw = new Proxy({}, { get: (_t, name: string) => (...args: unknown[]) => void calls.push(`${name}(${args.join(",")})`) }) as unknown as Draw2D;
+  const items = column([{ id: "vol", kind: "row", label: "Volume", value: "80 %" }], { x: 100, y: 0, width: 400, itemHeight: 40, gap: 0 });
+  drawUi(draw, items, "vol", { ...DEFAULT_STYLE, align: "left", pad: 10 });
+  expect(calls).toContain("fillText(Volume,110,20)");
+  expect(calls).toContain("fillText(<  80 %  >,490,20)");
 });
