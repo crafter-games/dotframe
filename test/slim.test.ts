@@ -151,3 +151,27 @@ test("slimAssets packs a .gltf with an external .bin and image into one GLB", as
 	const model = loadGlb(new Uint8Array(readFileSync(join(dir, "out.glb"))));
 	expect(model.primitives).toHaveLength(1);
 });
+
+test("decimate halves a curved grid's faces and keeps its corners", async () => {
+  const { decimate } = await import("../cli/decimate");
+  const pos: number[] = [];
+  const idx: number[] = [];
+  const grid: number[][] = [];
+  for (let z = 0; z <= 10; z++) {
+    grid.push(
+      Array.from({ length: 11 }, (_: unknown, x: number): number => {
+        pos.push(x, Math.sin(x * 0.3) * 0.1, z);
+        return pos.length / 3 - 1;
+      }),
+    );
+  }
+  for (let z = 0; z < 10; z++) for (let x = 0; x < 10; x++) idx.push(grid[z][x], grid[z + 1][x], grid[z][x + 1], grid[z][x + 1], grid[z + 1][x], grid[z + 1][x + 1]);
+  const out = decimate(Float32Array.from(pos), Uint32Array.from(idx), 0.5);
+  expect(out.length / 3).toBeLessThanOrEqual(100);
+  expect(out.length / 3).toBeGreaterThan(20);
+  for (const c of [grid[0][0], grid[0][10], grid[10][0], grid[10][10]]) expect(out.includes(c)).toBe(true);
+});
+
+test("slimGlb takes a ratio on a one-triangle mesh", () => {
+  expect(slimGlb(fixture(), undefined, undefined, undefined, 0.5)).not.toBeNull();
+});

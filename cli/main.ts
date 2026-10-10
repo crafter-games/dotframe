@@ -159,7 +159,7 @@ dotframe device logs <target> [--json]
 install puts the built app on targets.<target>.device with devicectl (gated like deploy). logs copies the newest
 crash report of the app's process from the device into .dotframe/logs and prints the exception, termination and
 the crashed thread's frames (read-only on the device).`,
-  assets: `dotframe assets slim <src> <out> [--no-jpeg] [--clips a,b,...] [--rename a=b,...] [--json]
+  assets: `dotframe assets slim <src> <out> [--no-jpeg] [--clips a,b,...] [--rename a=b,...] [--decimate r | file=r,...] [--json]
 dotframe assets font <font.ttf> <out> [--size 48] [--chars-from <dir>] [--dry-run] [--json]
 
 Copies src to out. Every .glb keeps only what loadGlb reads: POSITION, NORMAL, TEXCOORD_0, JOINTS_0 and WEIGHTS_0,
@@ -168,9 +168,12 @@ maps go, and opaque PNG base colors become JPEG through ffmpeg. Sources stay unt
 rewrite does not understand is copied as it is and noted. iOS builds slim their bundle the same way.
 --clips keeps only the named animations (exact, or after "Armature|") in each GLB that has any of them, to import
 a model whose library ships far more clips than the game plays; GLBs with none of them keep theirs.
+--decimate keeps that ratio of each mesh's triangles (quadric edge collapse, welded across seams; rims slide only
+along themselves), for static and rigid-skinned meshes: one ratio for every GLB, or file=ratio for the heavy ones.
 
   dotframe assets slim assets dist/web/assets
   dotframe assets slim tools/dog assets/models --clips walk_fwd_01,run_fwd_01
+  dotframe assets slim assets dist/web/assets --decimate giant_tripod.glb=0.35
   dotframe assets slim tools/dog/dog.glb assets/models/dog.glb --clips walk_fwd_01 --rename walk_fwd_01=walk
 
 src and out may be two .glb files instead of folders, to import one model; src may also be a .gltf with its .bin and
@@ -240,6 +243,7 @@ const { values, positionals } = parseArgs({
     "no-jpeg": { type: "boolean" },
     clips: { type: "string" },
     rename: { type: "string" },
+    decimate: { type: "string" },
     size: { type: "string" },
     "chars-from": { type: "string" },
     from: { type: "string" },
@@ -297,6 +301,7 @@ try {
       values["no-jpeg"] !== true,
       typeof values.clips === "string" ? values.clips.split(",").map((c: string): string => c.trim()).filter(Boolean) : undefined,
       typeof values.rename === "string" ? Object.fromEntries(values.rename.split(",").map((p: string): string[] => p.split("=").map((x: string): string => x.trim())).filter((p: string[]): boolean => p.length === 2 && p[0] !== "" && p[1] !== "")) : undefined,
+      typeof values.decimate === "string" ? decimateArg(values.decimate) : undefined,
     );
   else if (command === "assets" && rest[0] === "font") assetsFont(ctx, rest[1], rest[2], typeof values.size === "string" ? values.size : undefined, typeof values["chars-from"] === "string" ? values["chars-from"] : undefined);
   else if (command === "doctor") await doctor(ctx, values.fix === true, values.docker === true);
@@ -307,4 +312,16 @@ try {
   else throw new CliError("UNKNOWN_COMMAND", `unknown command: ${positionals.join(" ")}`, "dotframe --help");
 } catch (error) {
   fail(ctx, error);
+}
+
+// "0.5" applies to every GLB; "a.glb=0.3,b.glb=0.5" to the named ones.
+function decimateArg(text: string): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const part of text.split(",").map((p: string): string => p.trim()).filter(Boolean)) {
+    const [name, value] = part.includes("=") ? part.split("=").map((x: string): string => x.trim()) : ["*", part];
+    const r = Number(value);
+    if (!(r > 0 && r <= 1)) throw new CliError("BAD_ARG", `--decimate ${part}: the ratio must be above 0 and at most 1`, "--decimate 0.5 or --decimate giant.glb=0.3", "core");
+    out[name] = r;
+  }
+  return out;
 }

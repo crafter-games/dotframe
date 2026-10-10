@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative } from "node:path";
+import { decimateGlb } from "./decimate";
 
 // Vertex attributes loadGlb reads. Everything else (TANGENT, TEXCOORD_1, COLOR_0, morph targets) is dead weight.
 const KEPT_ATTRIBUTES = ["POSITION", "NORMAL", "TEXCOORD_0", "JOINTS_0", "WEIGHTS_0"];
@@ -135,7 +136,7 @@ function hasChunk(bytes: Uint8Array, name: string): boolean {
 // uses something the rewrite does not understand (extra buffers, sparse accessors, required extensions), so the
 // caller copies it unchanged. clips keeps only the animations with those names (exact, or after "Armature|");
 // a GLB with none of them keeps all of its own. rename then gives kept animations the names a game plays them by.
-export function slimGlb(bytes: Uint8Array, recode?: (image: SlimImage) => { bytes: Uint8Array; mimeType: string } | null, clips?: string[], rename?: Record<string, string>): Uint8Array | null {
+export function slimGlb(bytes: Uint8Array, recode?: (image: SlimImage) => { bytes: Uint8Array; mimeType: string } | null, clips?: string[], rename?: Record<string, string>, ratio?: number): Uint8Array | null {
   const parts = readGlb(bytes);
   if (!parts) return null;
   const doc = structuredClone(parts.doc);
@@ -152,6 +153,7 @@ export function slimGlb(bytes: Uint8Array, recode?: (image: SlimImage) => { byte
   }
   if ((doc.buffers?.length ?? 0) > 1 || (doc.extensionsRequired ?? []).some((e: string) => !KNOWN_REQUIRED.includes(e)) || (doc.accessors ?? []).some((a: Json) => a.sparse)) return null;
   if ((doc.images ?? []).some((i: Json) => i.bufferView === undefined)) return null;
+  if (ratio !== undefined && ratio < 1) parts.bin = decimateGlb(doc, parts.bin, ratio);
 
   for (const mesh of doc.meshes ?? []) {
     for (const p of mesh.primitives) {
@@ -346,8 +348,15 @@ export function ffmpegAvailable(): boolean {
   return spawnSync("ffmpeg", ["-version"]).status === 0;
 }
 
+// --decimate takes one ratio for every model ("0.5", stored under "*") or one per model by file name
+// ("giant_tripod.glb=0.3"); a named file wins over "*".
+function ratioFor(decimate: Record<string, number> | undefined, rel: string): number | undefined {
+  if (!decimate) return undefined;
+  return decimate[basename(rel)] ?? decimate[rel] ?? decimate["*"];
+}
+
 // Copies src to out, slimming every .glb on the way. Other files are copied as they are.
-export function slimAssets(src: string, out: string, options: { jpeg?: boolean; quality?: number; clips?: string[]; rename?: Record<string, string> } = {}): SlimReport {
+export function slimAssets(src: string, out: string, options: { jpeg?: boolean; quality?: number; clips?: string[]; rename?: Record<string, string>; decimate?: Record<string, number> } = {}): SlimReport {
   const jpeg = options.jpeg !== false && ffmpegAvailable();
   const quality = options.quality ?? 3;
   const report: SlimReport = { before: 0, after: 0, files: [], jpeg };
@@ -360,7 +369,7 @@ export function slimAssets(src: string, out: string, options: { jpeg?: boolean; 
     if (from.toLowerCase().endsWith(".glb") || gltf) {
       const packed = gltf ? packGltf(from) : new Uint8Array(readFileSync(from));
       if (!packed) throw new Error(`${from}: a buffer or image is missing or inline`);
-      const slim = slimGlb(packed, jpeg ? (image) => (image.opaque && image.mimeType === "image/png" ? (b => b && { bytes: b, mimeType: "image/jpeg" })(pngToJpeg(image.bytes, quality)) : null) : undefined, options.clips, options.rename);
+      const slim = slimGlb(packed, jpeg ? (image) => (image.opaque && image.mimeType === "image/png" ? (b => b && { bytes: b, mimeType: "image/jpeg" })(pngToJpeg(image.bytes, quality)) : null) : undefined, options.clips, options.rename, ratioFor(options.decimate, rel));
       if (slim && (gltf || slim.byteLength < before)) {
         writeFileSync(to, slim);
         after = slim.byteLength;
