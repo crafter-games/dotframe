@@ -2,13 +2,15 @@
 // rewritten on every set. On iOS that is the app's own Library, so a save survives quitting the app.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import type { Storage } from "../storage";
-import { dfPrefPath } from "./ffi";
+import { dfPrefPathByte } from "./ffi";
 
 // Stores values as one JSON object in <prefs>/dotframe/<app>/storage.json, rewritten on every set.
 export function openStorage(app: string): Storage {
-  const pathBytes = new Uint8Array(1024);
-  const length = dfPrefPath("dotframe", app.split(":").join("").split("/").join("-"), pathBytes);
-  const file = length > 0 ? `${new TextDecoder().decode(pathBytes.subarray(0, length))}storage.json` : "";
+  // Read a byte at a time: iOS library mode's callbacks cannot fill a buffer.
+  const name = app.split(":").join("").split("/").join("-");
+  const bytes: number[] = [];
+  for (let b = dfPrefPathByte("dotframe", name, 0); b >= 0 && bytes.length < 1024; b = dfPrefPathByte("dotframe", name, bytes.length)) bytes.push(b);
+  const file = bytes.length > 0 ? `${new TextDecoder().decode(new Uint8Array(bytes))}storage.json` : "";
   const values = new Map<string, string>();
   if (file !== "" && existsSync(file)) {
     const saved = JSON.parse(readFileSync(file, "utf8")) as Record<string, string>;

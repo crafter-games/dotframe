@@ -5,6 +5,7 @@ export declare function dfGamepadAxis(pad: number, axis: number): number;
 export declare function dfGamepadButton(pad: number, button: number): boolean;
 export declare function dfMouse(field: number): number;
 export declare function dfPrefPath(org: string, app: string, out: Uint8Array): number;
+export declare function dfPrefPathByte(org: string, app: string, index: number): number;
 export declare function dfWidth(): number;
 export declare function dfHeight(): number;
 export declare function dfBuffer(usage: number, data: Uint8Array): number;

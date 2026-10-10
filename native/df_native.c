@@ -316,6 +316,16 @@ int32_t df_pref_path(const uint8_t *org, size_t org_len, const uint8_t *app, siz
   return (int32_t)len;
 }
 
+// The same directory one byte at a time (-1 past its end or when there is none), for hosts whose callbacks take no
+// writable buffer (iOS library mode). The path is looked up once per org/app and kept.
+int32_t df_pref_path_byte(const uint8_t *org, size_t org_len, const uint8_t *app, size_t app_len, int32_t index) {
+  static char cached[1024];
+  static int32_t cached_len = -2;
+  if (cached_len == -2) cached_len = df_pref_path(org, org_len, app, app_len, (uint8_t *)cached, sizeof cached);
+  return index >= 0 && index < cached_len ? (uint8_t)cached[index] : -1;
+}
+
+
 int32_t df_width(void) { return g_width; }
 int32_t df_height(void) { return g_height; }
 
