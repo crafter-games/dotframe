@@ -7,7 +7,7 @@
 //
 // Turn-based games pass `owner`: while one player owns the input (their turn), the other player's input is fed as
 // neutral on both peers, so the owner never waits for the network and the other peer plays the turn back as its
-// inputs arrive, without predicting it.
+// inputs arrive, without predicting it. Frames owned by NOBODY use neither input and never wait.
 //
 // The simulation is anything with the shape of the CLI's SimRun: step, save, restore, checksum. `dotframe desync`
 // tests the same contract.
@@ -62,7 +62,7 @@ export interface RollbackOptions<S = unknown> {
   // read a shorter round trip, think it is further ahead and stall again. Without it the round trip counts frames.
   clock?: () => number;
   // Turn-based games: the port whose input the next step uses, read from the sim's current state; -1 when both
-  // matter. The other port's input is replaced by `neutral` for that step.
+  // matter, NOBODY when neither does (a countdown, a cutscene). Inputs that do not count are fed as `neutral`.
   owner?: () => number;
 }
 
@@ -92,6 +92,9 @@ export interface Rollback {
   sumAt: (frame: number) => number | undefined;
   stats: () => RollbackStats;
 }
+
+// `owner` value for frames that use neither input: both peers run them without the network.
+export const NOBODY = 2;
 
 const SUM_EVERY = 30;
 // Weight of each new sample in the round-trip and lead averages (an exponential moving average over about 10 ticks).
@@ -138,11 +141,13 @@ export function createRollback<S>(options: RollbackOptions<S>): Rollback {
   }
 
   // A remote input that does not count cannot mispredict.
-  const mispredicted = (f: number, value: number): boolean => ownerAt[f] !== localPort && used[f] !== value;
+  // Whether a port's input feeds a frame with owner `o`.
+  const counts = (o: number, port: number): boolean => o !== NOBODY && o !== 1 - port;
+  const mispredicted = (f: number, value: number): boolean => counts(ownerAt[f], remotePort) && used[f] !== value;
 
   // A frame the local port owned is final once every frame before it is: its owner was read from a final state.
   const advanceFinal = (): void => {
-    while (final < frame && (final < confirmed || ownerAt[final] === localPort)) final += 1;
+    while (final < frame && (final < confirmed || !counts(ownerAt[final], remotePort))) final += 1;
   };
 
   const remoteFor = (f: number): number => {
@@ -155,9 +160,9 @@ export function createRollback<S>(options: RollbackOptions<S>): Rollback {
     const o = owner ? owner() : -1;
     ownerAt[f] = o;
     const inputs = [neutral, neutral];
-    inputs[localPort] = o === remotePort ? neutral : (local[f] ?? neutral);
+    inputs[localPort] = counts(o, localPort) ? (local[f] ?? neutral) : neutral;
     const r = remoteFor(f);
-    inputs[remotePort] = o === localPort ? neutral : r;
+    inputs[remotePort] = counts(o, remotePort) ? r : neutral;
     used[f] = r;
     sim.step(inputs);
     sums[f] = sim.checksum();
@@ -232,7 +237,8 @@ export function createRollback<S>(options: RollbackOptions<S>): Rollback {
     // is played back as it arrives instead of predicted (a prediction there is wrong as soon as they move).
     const next = owner && final === frame ? owner() : -1;
     const watching = next === remotePort && frame >= confirmed;
-    if (watching || (next !== localPort && (frame - final >= maxRollback || ahead > AHEAD_TOLERANCE))) {
+    const free = next === localPort || next === NOBODY;
+    if (watching || (!free && (frame - final >= maxRollback || ahead > AHEAD_TOLERANCE))) {
       if (!watching) stats.stalls += 1;
       send(frame + inputDelay);
       return false;
