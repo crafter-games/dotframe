@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { createClock } from "../clock";
 import type { Audio } from "../audio";
 import type { Gpu, Setup, Texture, WindowOptions } from "../gpu";
 import type { Storage } from "../storage";
@@ -59,10 +60,10 @@ export async function run(options: WindowOptions, setup: Setup): Promise<void> {
   const frame = setup({ gpu, input, audio, storage });
   // DF_FRAMES bounds the run for headless checks.
   const maxFrames = Number(process.env.DF_FRAMES ?? "0");
-  const start = performance.now();
+  const clock = createClock((): number => performance.now() / 1000);
   let index = 0;
   while (dfPoll()) {
-    if (!frame((performance.now() - start) / 1000)) break;
+    if (!frame(clock())) break;
     // Let promise callbacks queued by game code (asset loads, timers) run, as the browser does between frames.
     await Promise.resolve();
     index++;
