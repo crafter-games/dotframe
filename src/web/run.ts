@@ -1,3 +1,4 @@
+import { createClock } from "../clock";
 import {
   BufferUsage,
   type Color,
@@ -511,10 +512,18 @@ export async function run(options: WindowOptions, setup: Setup, runOptions: RunO
     },
   };
 
+  // A hidden tab stops requestAnimationFrame; silence it too, and restore on return.
+  document.addEventListener("visibilitychange", (): void => {
+    if (document.hidden) {
+      audioContext.suspend();
+      for (const m of music) m.element?.pause();
+    } else resume();
+  });
+
   const frame = setup({ gpu, input, audio, storage });
-  const start = performance.now();
+  const clock = createClock((): number => performance.now() / 1000);
   const tick = (): void => {
-    const go = frame((performance.now() - start) / 1000);
+    const go = frame(clock());
     for (const code of late) pressed.delete(code);
     late.clear();
     fresh.clear();
