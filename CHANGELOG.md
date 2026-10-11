@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.2
 
 - Netplay `owner` option for turn-based games: the port whose input the next step uses, read from the sim. The other port's input is fed as neutral on both peers, so the player with the turn never waits for the network, and the other peer plays the turn back as it arrives instead of predicting and rolling it back. `owner` may return `NOBODY` for frames that use neither input (a countdown), which never wait either. Craft Ones on a 2-second round trip: the shooter plays every turn with 0 stalls.
 - Netplay heals a gap in the link: each input message carries `got` (how many of the peer's inputs arrived in a row) and inputs are resent from there, instead of only the last 8 frames. A socket that dropped for 3 seconds used to stall the match forever.
