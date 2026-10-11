@@ -6,9 +6,9 @@ description: Rollback netplay for dotframe games. Use when building or debugging
 
 ## The engine
 
-`dotframe/src/netplay` is a game-agnostic rollback engine: `createRollback({ sim, transport, localPort, neutral, inputDelay, maxRollback, resimulating })`, where `sim` is anything with `step(inputs)`, `save()`, `restore(s)` and `checksum()` (the Sim contract's shape). Call `tick(localInput)` once per fixed step; it returns whether a frame was simulated. `stats()` has rollbacks, stalls, round trip and the first desynced frame; `sumAt(frame)` gives this peer's checksum.
+`dotframe/src/netplay` is a game-agnostic rollback engine: `createRollback({ sim, transport, localPort, neutral, inputDelay, maxRollback, resimulating })`, where `sim` is anything with `step(inputs)`, `save()`, `restore(s)` and `checksum()` (the Sim contract's shape). Call `tick(localInput)` once per fixed step; it returns whether a frame was simulated. Turn-based games also pass `owner: () => port` (the port whose input the next step uses, -1 when both count): the other port's input is fed as neutral on both peers, so the player with the turn never waits on the network and the other peer plays the turn back as it arrives. The sim must not need the non-owner's input in those frames; anything only one viewer should see (a map toggle) stays out of the step. `stats()` has rollbacks, stalls, round trip and the first desynced frame; `sumAt(frame)` gives this peer's checksum.
 
-`dotframe/src/relay-client` (web only) connects to a relay: `connectRelay(url, room)` gives `status()`, `slot()`, game messages (`send`/`receive`) and the `transport` for createRollback. Use `dotframe/src/checksum` for checksums and `dotframe/src/detmath` for any trig, exp, log or pow in simulation code.
+`dotframe/src/relay-client` (web only) connects to a relay: `connectRelay(url, room)` reconnects a dropped socket to the same slot and gives `status()`, `slot()`, game messages (`send`/`receive`) and the `transport` for createRollback. Use `dotframe/src/checksum` for checksums and `dotframe/src/detmath` for any trig, exp, log or pow in simulation code.
 
 ```sh
 dotframe relay serve                  # local relay on :8787, same protocol as production
