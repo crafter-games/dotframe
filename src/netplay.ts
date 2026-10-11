@@ -5,6 +5,10 @@
 //
 // The relay client (web only) is in src/relay-client.
 //
+// Turn-based games pass `owner`: while one player owns the input (their turn), the other player's input is fed as
+// neutral on both peers, so the owner never waits for the network and the other peer plays the turn back as its
+// inputs arrive, without predicting it. Frames owned by NOBODY use neither input and never wait.
+//
 // The simulation is anything with the shape of the CLI's SimRun: step, save, restore, checksum. `dotframe desync`
 // tests the same contract.
 
@@ -20,6 +24,9 @@ export interface InputMessage {
   // The sender's current frame, and the latest `now` it has received from us (an echo, to measure the round trip).
   now: number;
   ack: number;
+  // How many of our inputs the sender holds in a row from frame 0. Inputs are resent from there, so a gap in the
+  // link (a dropped socket, a relay that lost messages while a peer was away) heals once messages flow again.
+  got?: number;
   // Consecutive inputs starting at frame `from`.
   from: number;
   inputs: number[];
@@ -54,6 +61,9 @@ export interface RollbackOptions<S = unknown> {
   // Wall clock in ms (performance.now). With it the round trip is measured in time, so a peer that stalls does not
   // read a shorter round trip, think it is further ahead and stall again. Without it the round trip counts frames.
   clock?: () => number;
+  // Turn-based games: the port whose input the next step uses, read from the sim's current state; -1 when both
+  // matter, NOBODY when neither does (a countdown, a cutscene). Inputs that do not count are fed as `neutral`.
+  owner?: () => number;
 }
 
 export interface RollbackStats {
@@ -76,12 +86,15 @@ export interface Rollback {
   tick: (localInput: number) => boolean;
   // Applies received input and rolls back without advancing.
   settle: () => void;
-  // Highest frame below which both peers' inputs are known (the state there is final).
+  // Highest frame below which the state is final: both inputs known, or the remote one replaced by ownership.
   confirmedFrame: () => number;
   // This peer's checksum after simulating `frame`, final once frame < confirmedFrame().
   sumAt: (frame: number) => number | undefined;
   stats: () => RollbackStats;
 }
+
+// `owner` value for frames that use neither input: both peers run them without the network.
+export const NOBODY = 2;
 
 const SUM_EVERY = 30;
 // Weight of each new sample in the round-trip and lead averages (an exponential moving average over about 10 ticks).
@@ -90,7 +103,7 @@ const FRAME_MS = 1000 / 60;
 // Frames of estimated lead before a peer waits for the other. One frame was inside link jitter: both peers kept
 // reading themselves ahead and stalled every few frames.
 const AHEAD_TOLERANCE = 2;
-// Inputs resent with every message so a late peer catches up without acknowledgments.
+// Inputs resent with every message beyond what the peer reports holding, against jitter in `got`.
 const RESEND = 8;
 
 export function createRollback<S>(options: RollbackOptions<S>): Rollback {
@@ -106,6 +119,13 @@ export function createRollback<S>(options: RollbackOptions<S>): Rollback {
   let frame = 0;
   // Every remote input below this frame is known.
   let confirmed = inputDelay;
+  // Every frame below this has a final state: its remote input is confirmed or does not count (ownership).
+  let final = inputDelay;
+  // Our inputs the peer holds in a row, from its latest `got`; -1 until a peer that reports it answers.
+  let peerGot = -1;
+  // Port that owned each simulated frame, -1 for both.
+  const ownerAt: number[] = [];
+  const owner = options.owner;
   let peerNow = 0;
   let rtt = 0;
   let ahead = 0;
@@ -120,6 +140,16 @@ export function createRollback<S>(options: RollbackOptions<S>): Rollback {
     remote[f] = neutral;
   }
 
+  // A remote input that does not count cannot mispredict.
+  // Whether a port's input feeds a frame with owner `o`.
+  const counts = (o: number, port: number): boolean => o !== NOBODY && o !== 1 - port;
+  const mispredicted = (f: number, value: number): boolean => counts(ownerAt[f], remotePort) && used[f] !== value;
+
+  // A frame the local port owned is final once every frame before it is: its owner was read from a final state.
+  const advanceFinal = (): void => {
+    while (final < frame && (final < confirmed || !counts(ownerAt[final], remotePort))) final += 1;
+  };
+
   const remoteFor = (f: number): number => {
     if (f < confirmed) return remote[f];
     return confirmed > 0 ? remote[confirmed - 1] : neutral;
@@ -127,10 +157,12 @@ export function createRollback<S>(options: RollbackOptions<S>): Rollback {
 
   const simulate = (f: number): void => {
     snapshots[f] = sim.save();
+    const o = owner ? owner() : -1;
+    ownerAt[f] = o;
     const inputs = [neutral, neutral];
-    inputs[localPort] = local[f] ?? neutral;
+    inputs[localPort] = counts(o, localPort) ? (local[f] ?? neutral) : neutral;
     const r = remoteFor(f);
-    inputs[remotePort] = r;
+    inputs[remotePort] = counts(o, remotePort) ? r : neutral;
     used[f] = r;
     sim.step(inputs);
     sums[f] = sim.checksum();
@@ -141,7 +173,7 @@ export function createRollback<S>(options: RollbackOptions<S>): Rollback {
 
   const compareSums = (): void => {
     for (const [f, sum] of peerSums) {
-      if (f >= confirmed || f >= frame) continue;
+      if (f >= final || f >= frame) continue;
       if (sums[f] !== sum && stats.desync < 0) stats.desync = f;
       peerSums.delete(f);
     }
@@ -160,17 +192,18 @@ export function createRollback<S>(options: RollbackOptions<S>): Rollback {
         const sample = clock && sent !== undefined ? (clock() - sent) / FRAME_MS : frame - message.ack;
         rtt = rtt * (1 - SMOOTHING) + Math.max(0, sample) * SMOOTHING;
       }
+      if (message.got !== undefined && message.got > peerGot) peerGot = message.got;
       for (let i = 0; i < message.inputs.length; i++) {
         const f = message.from + i;
         if (f < confirmed) continue;
         if (f !== confirmed) break;
         remote[f] = message.inputs[i];
         confirmed = f + 1;
-        if (f < frame && used[f] !== remote[f] && f < rollbackTo) rollbackTo = f;
+        if (f < frame && mispredicted(f, remote[f]) && f < rollbackTo) rollbackTo = f;
       }
     }
     // Frames after the last confirmed one were predicted from it; a new confirmation can change them too.
-    for (let f = confirmed; f < frame && rollbackTo === frame; f++) if (used[f] !== remoteFor(f)) rollbackTo = f;
+    for (let f = confirmed; f < frame && rollbackTo === frame; f++) if (mispredicted(f, remoteFor(f))) rollbackTo = f;
 
     if (rollbackTo < frame) {
       const snapshot = snapshots[rollbackTo];
@@ -183,6 +216,12 @@ export function createRollback<S>(options: RollbackOptions<S>): Rollback {
         options.resimulating?.(false);
       }
     }
+    advanceFinal();
+  };
+
+  const send = (end: number): void => {
+    const from = Math.max(0, peerGot < 0 ? end - RESEND : Math.min(peerGot, end - RESEND));
+    transport.send({ t: "input", now: frame, ack: peerNow, got: confirmed, from, inputs: local.slice(from, end) });
   };
 
   const step = (localInput: number): boolean => {
@@ -194,18 +233,22 @@ export function createRollback<S>(options: RollbackOptions<S>): Rollback {
     // old; its current frame is about that plus half the round trip. Waiting on the raw gap instead would make both
     // peers wait for each other and play at round-trip speed.
     ahead = ahead * (1 - SMOOTHING) + (frame - (peerNow + rtt / 2)) * SMOOTHING;
-    if (frame - confirmed >= maxRollback || ahead > AHEAD_TOLERANCE) {
-      stats.stalls += 1;
-      const from = Math.max(0, frame + inputDelay - RESEND);
-      transport.send({ t: "input", now: frame, ack: peerNow, from, inputs: local.slice(from, frame + inputDelay) });
+    // With ownership, a final state names who plays next: the local owner never waits, and a remote owner's turn
+    // is played back as it arrives instead of predicted (a prediction there is wrong as soon as they move).
+    const next = owner && final === frame ? owner() : -1;
+    const watching = next === remotePort && frame >= confirmed;
+    const free = next === localPort || next === NOBODY;
+    if (watching || (!free && (frame - final >= maxRollback || ahead > AHEAD_TOLERANCE))) {
+      if (!watching) stats.stalls += 1;
+      send(frame + inputDelay);
       return false;
     }
     local[frame + inputDelay] = localInput;
-    const from = Math.max(0, frame + inputDelay + 1 - RESEND);
-    transport.send({ t: "input", now: frame, ack: peerNow, from, inputs: local.slice(from, frame + inputDelay + 1) });
+    send(frame + inputDelay + 1);
     simulate(frame);
     frame += 1;
-    while (sentSums + SUM_EVERY < confirmed && sentSums + SUM_EVERY < frame) {
+    advanceFinal();
+    while (sentSums + SUM_EVERY < final && sentSums + SUM_EVERY < frame) {
       sentSums += SUM_EVERY;
       transport.send({ t: "sum", frame: sentSums, sum: sums[sentSums] });
     }
@@ -224,7 +267,7 @@ export function createRollback<S>(options: RollbackOptions<S>): Rollback {
       return advanced;
     },
     settle,
-    confirmedFrame: (): number => Math.min(confirmed, frame),
+    confirmedFrame: (): number => final,
     sumAt: (f: number): number | undefined => sums[f],
     stats: (): RollbackStats => stats,
   };

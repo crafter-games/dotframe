@@ -23,19 +23,45 @@ function drain<T>(queue: T[]): T[] {
   return out;
 }
 
+// Wait between reconnect attempts after a socket that had joined the room drops.
+const RETRY_MS = 1000;
+
+// A dropped socket reconnects to the same room and slot on a later poll (status "connecting" meanwhile), as on the web.
 export function connectRelayNative<A = unknown>(url: string, room: string): RelayLink<A> {
-  const socket = dfWsOpen(`${url}${url.includes("?") ? "&" : "?"}room=${encodeURIComponent(room)}`);
-    const decoder = new TextDecoder();
-  let status = socket < 0 ? "closed" : "connecting";
+  const client = Math.random().toString(36).slice(2);
   let slot = -1;
+  const dial = (): number =>
+    dfWsOpen(`${url}${url.includes("?") ? "&" : "?"}room=${encodeURIComponent(room)}&client=${client}${slot >= 0 ? `&slot=${slot}` : ""}`);
+  let socket = dial();
+  const decoder = new TextDecoder();
+  let status = socket < 0 ? "closed" : "connecting";
+  let closed = false;
+  let retryAt = -1;
   const app: A[] = [];
   const net: NetMessage[] = [];
 
   // Drains the native inbox into the game and netplay queues. Called by every read, so polling happens per frame.
   const pump = (): void => {
+    if (closed) return;
+    if (retryAt >= 0) {
+      if (performance.now() < retryAt) return;
+      retryAt = -1;
+      socket = dial();
+      if (socket < 0) retryAt = performance.now() + RETRY_MS;
+    }
     if (socket < 0) return;
     const state = dfWsState(socket);
-    if (state === STATE_CLOSED || state === STATE_ERROR) status = "closed";
+    if (state === STATE_CLOSED || state === STATE_ERROR) {
+      // Only a socket that had joined comes back; a first connection that fails stays closed.
+      if (slot < 0) {
+        status = "closed";
+        return;
+      }
+      dfWsClose(socket);
+      status = "connecting";
+      retryAt = performance.now() + RETRY_MS;
+      return;
+    }
     for (let len = dfWsNext(socket); len >= 0; len = dfWsNext(socket)) {
       const bytes = new Uint8Array(len);
       for (let i = 0; i < len; i++) bytes[i] = dfWsByte(socket, i);
@@ -82,6 +108,7 @@ export function connectRelayNative<A = unknown>(url: string, room: string): Rela
     },
     close: (): void => {
       if (socket >= 0) dfWsClose(socket);
+      closed = true;
       status = "closed";
     },
   };

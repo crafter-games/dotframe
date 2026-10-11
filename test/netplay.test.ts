@@ -143,3 +143,119 @@ test("a peer on an equal link does not stall: both run at full speed", () => {
   }
   for (const r of rollbacks) expect(r.stats().stalls).toBeLessThan(30);
 });
+
+// A link that loses everything sent between ticks `from` and `to`, like a socket that drops and reconnects.
+function cutLink(latency: number, from: number, to: number): { a: Transport; b: Transport; advance: () => void } {
+  const net = link(latency, 0);
+  let now = 0;
+  const cut = (t: Transport): Transport => ({
+    send: (message: NetMessage): void => {
+      if (now < from || now >= to) t.send(message);
+    },
+    receive: t.receive,
+  });
+  return {
+    a: cut(net.a),
+    b: cut(net.b),
+    advance: (): void => {
+      now += 1;
+      net.advance();
+    },
+  };
+}
+
+test("a link that drops for three seconds heals once messages flow again", () => {
+  const net = cutLink(9, 600, 780);
+  const peers = [sim(), sim()];
+  const rollbacks = [0, 1].map((port) =>
+    createRollback({ sim: peers[port], transport: port === 0 ? net.a : net.b, localPort: port, neutral: 0, inputDelay: DELAY, maxRollback: 20 }),
+  );
+  const frames = [0, 0];
+  for (let tick = 0; tick < FRAMES * 3 && Math.min(...frames) < FRAMES; tick++) {
+    for (const port of [0, 1]) if (frames[port] < FRAMES && rollbacks[port].tick(input(port, frames[port]))) frames[port] += 1;
+    net.advance();
+  }
+  for (let i = 0; i < 40; i++) {
+    for (const r of rollbacks) r.settle();
+    net.advance();
+  }
+  const reference = sim();
+  for (let f = 0; f < FRAMES; f++) reference.step([0, 1].map((p) => (f < DELAY ? 0 : input(p, f - DELAY))));
+  expect(frames).toEqual([FRAMES, FRAMES]);
+  for (const r of rollbacks) expect(r.stats().desync).toBe(-1);
+  expect(peers[0].checksum()).toBe(reference.checksum());
+  expect(peers[1].checksum()).toBe(reference.checksum());
+});
+
+// Turns of TURN frames: only the player with the turn moves, but both players' inputs feed the edge detection
+// (like a game that tracks the previous input of every seat), so a remote input that leaked into a turn it does
+// not own would change the state.
+const TURN = 300;
+interface TurnState {
+  turn: number;
+  left: number;
+  x: number[];
+  previous: number[];
+}
+function turnSim(): NetSim<TurnState> & { state: TurnState; owner: () => number } {
+  let s: TurnState = { turn: 0, left: TURN, x: [0, 0], previous: [0, 0] };
+  return {
+    get state(): TurnState {
+      return s;
+    },
+    owner: (): number => s.turn,
+    step: (inputs: number[]): void => {
+      const pressed = inputs[s.turn] & ~s.previous[s.turn];
+      s.x[s.turn] += (inputs[s.turn] & 1) + (pressed & 2) * 5;
+      s.previous = inputs.slice();
+      s.left -= 1;
+      if (s.left === 0) {
+        s.turn = 1 - s.turn;
+        s.left = TURN;
+      }
+    },
+    save: (): TurnState => ({ turn: s.turn, left: s.left, x: s.x.slice(), previous: s.previous.slice() }),
+    restore: (saved: TurnState): void => {
+      s = { turn: saved.turn, left: saved.left, x: saved.x.slice(), previous: saved.previous.slice() };
+    },
+    checksum: (): number => createChecksum().add(s.turn).add(s.left).add(s.x[0]).add(s.x[1]).add(s.previous[0]).add(s.previous[1]).value(),
+  };
+}
+
+test("with ownership, the player with the turn never waits on a 2-second round trip", () => {
+  const net = link(60, 0); // 1 s each way
+  const peers = [turnSim(), turnSim()];
+  const rollbacks = [0, 1].map((port) =>
+    createRollback({ sim: peers[port], transport: port === 0 ? net.a : net.b, localPort: port, neutral: 0, inputDelay: DELAY, maxRollback: 60, owner: peers[port].owner }),
+  );
+  const frames = [0, 0];
+  // Peer 0 owns the first turn: it plays all of it in TURN ticks even though nothing arrives for a second.
+  for (let tick = 0; tick < TURN; tick++) {
+    for (const port of [0, 1]) if (rollbacks[port].tick(input(port, frames[port]))) frames[port] += 1;
+    net.advance();
+  }
+  expect(frames[0]).toBe(TURN);
+  expect(rollbacks[0].stats().stalls).toBe(0);
+  // Peer 1 watches the turn as it arrives: never predicted, never rolled back.
+  expect(frames[1]).toBeLessThan(TURN - 50);
+  for (let tick = 0; tick < 20000 && Math.min(...frames) < FRAMES * 2; tick++) {
+    for (const port of [0, 1]) if (frames[port] < FRAMES * 2 && rollbacks[port].tick(input(port, frames[port]))) frames[port] += 1;
+    net.advance();
+  }
+  for (let i = 0; i < 200; i++) {
+    for (const r of rollbacks) r.settle();
+    net.advance();
+  }
+  const reference = turnSim();
+  for (let f = 0; f < FRAMES * 2; f++) {
+    const inputs = [0, 1].map((p) => (f < DELAY || p !== reference.owner() ? 0 : input(p, f - DELAY)));
+    reference.step(inputs);
+  }
+  expect(frames).toEqual([FRAMES * 2, FRAMES * 2]);
+  for (const r of rollbacks) {
+    expect(r.stats().desync).toBe(-1);
+    expect(r.stats().rollbacks).toBe(0);
+  }
+  expect(peers[0].checksum()).toBe(reference.checksum());
+  expect(peers[1].checksum()).toBe(reference.checksum());
+});
