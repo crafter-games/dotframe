@@ -9,7 +9,7 @@ Status: S5 in progress (porting Crafter Smash). `examples/canvas2d` exercises `s
 Put this badge in your game's README:
 
 ```html
-<a href="https://github.com/crafter-games/dotframe">
+<a href="https://dotframe.crafter.games">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/crafter-games/dotframe/main/assets/badge/made-with-dotframe-dark.svg">
     <img alt="Made with dotframe" src="https://raw.githubusercontent.com/crafter-games/dotframe/main/assets/badge/made-with-dotframe-light.svg" height="32">
