@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.3
 
 - Web Canvas 2D fallback: without WebGPU (an older phone, an insecure `http://` origin, no adapter) `run()` draws 2D games through Canvas 2D instead of throwing. `createDraw2D` returns the Canvas 2D Draw2D for that gpu, with the same coordinates, state rules and SDF text layout (glyph masks are rendered from the atlas on the CPU and cached), so games need no changes. 3D calls throw "needs WebGPU" and the page says so. `?renderer=canvas2d` forces it for testing.
 
