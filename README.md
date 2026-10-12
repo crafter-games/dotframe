@@ -4,6 +4,21 @@ TS-first game engine. One TypeScript codebase runs on the web (WebGPU) and compi
 
 Status: S5 in progress (porting Crafter Smash). `examples/canvas2d` exercises `src/draw2d.ts`, an immediate-mode 2D layer modeled on Canvas2D (transforms, alpha, concave paths, arcs, strokes, PNG sprites) so Canvas2D games port mechanically. Before that, S4: `examples/smash-lite` is a two-player platform fighter: keyboard and gamepad input, fixed-step AABB physics, hitstun, knockback that scales with damage, and KOs. `DF_DEMO=1` (native) or `?demo` (web) lets scripted players fight, which is how CI captures it. Earlier slices: `examples/suzanne` loads a glTF mesh, spawns three entities in a minimal ECS and renders them lit with depth and a perspective camera. The same game code renders in the browser (WebGPU) and in native macOS and Windows binaries (SDL3 + wgpu-native through a flat C shim). CI runs both binaries and captures them with [cuse](https://github.com/crafter-agents/cuse).
 
+## Made with dotframe
+
+Put this badge in your game's README:
+
+```html
+<a href="https://github.com/crafter-games/dotframe">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/crafter-games/dotframe/main/assets/badge/made-with-dotframe-dark.svg">
+    <img alt="Made with dotframe" src="https://raw.githubusercontent.com/crafter-games/dotframe/main/assets/badge/made-with-dotframe-light.svg" height="32">
+  </picture>
+</a>
+```
+
+Games: [Espresso perfecto](https://github.com/crafter-games/espresso), [Craft Ones](https://github.com/crafter-games/craft-ones), [Crafter Smash](https://github.com/crafter-games/crafter-smash-dotframe).
+
 ## CLI
 
 `dotframe` is an agent-first CLI over the engine. The simulation is deterministic, so an agent can play a game without a screen, render a frame with the real renderer, and catch netplay desyncs before a real match.

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="196" height="32" viewBox="0 0 196 32" role="img" aria-label="Made with dotframe">
+  <title>Made with dotframe</title>
+  <rect x="0.5" y="0.5" width="195" height="31" rx="6" fill="#f2eee8" stroke="#d9d3ca"/>
+  <g fill="none" stroke="#101014" stroke-width="1.6">
+    <path d="M14 9h-4v14h4M22 9h4v14h-4"/>
+  </g>
+  <circle cx="18" cy="16" r="2.6" fill="#a970ff"/>
+  <text x="36" y="20.5" fill="#5c5966" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="10" letter-spacing="0.8">MADE WITH</text>
+  <line x1="102.5" y1="8" x2="102.5" y2="24" stroke="#d9d3ca"/>
+  <text x="112" y="21" fill="#101014" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" font-weight="700">dotframe</text>
+</svg>
