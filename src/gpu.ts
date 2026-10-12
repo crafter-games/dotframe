@@ -89,6 +89,8 @@ export interface RenderGpu {
   // A phone or tablet: the renderer thins small instanced meshes with distance there (see INSTANCE_DETAIL in
   // src/render). Set by the platform (the iOS host, a coarse pointer on the web); desktops leave it off.
   mobile?: boolean;
+  // Set by the web's Canvas 2D fallback (no WebGPU): createDraw2D draws through Canvas 2D, 3D calls throw.
+  canvas2d?: boolean;
 }
 
 export interface Gpu extends RenderGpu {

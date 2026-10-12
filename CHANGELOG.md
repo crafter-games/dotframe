@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Web Canvas 2D fallback: without WebGPU (an older phone, an insecure `http://` origin, no adapter) `run()` draws 2D games through Canvas 2D instead of throwing. `createDraw2D` returns the Canvas 2D Draw2D for that gpu, with the same coordinates, state rules and SDF text layout (glyph masks are rendered from the atlas on the CPU and cached), so games need no changes. 3D calls throw "needs WebGPU" and the page says so. `?renderer=canvas2d` forces it for testing.
+
 ## 0.3.2
 
 - Netplay `owner` option for turn-based games: the port whose input the next step uses, read from the sim. The other port's input is fed as neutral on both peers, so the player with the turn never waits for the network, and the other peer plays the turn back as it arrives instead of predicting and rolling it back. `owner` may return `NOBODY` for frames that use neither input (a countdown), which never wait either. Craft Ones on a 2-second round trip: the shooter plays every turn with 0 stalls.
