@@ -13,6 +13,7 @@ dotframe deploy web --prod --yes     # only after the human approved the plan
 
 ## Rules
 
+- Browsers without WebGPU (older phones, `http://` on a LAN address, a blocked adapter) run 2D games through the Canvas 2D fallback automatically: same `Draw2D` calls, SDF text drawn on the CPU, sound and input unchanged. 3D calls (`createPipeline`, `scene`, render targets) show "needs WebGPU" on the page instead. Check a game on it with `?renderer=canvas2d`.
 - Deploy only the built folder (`targets.web.out`). The CLI refuses a folder that looks like source (repo root, `.git`, `dotframe.json`): that mistake once put the wrong game in production.
 - Do not connect the repo to Vercel's Git integration for these games. A push deploys the repo root.
 - Templates ship `scripts/build-web.ts`, which does both of the next points. Keep it when you change the build.

@@ -349,7 +349,16 @@ export function parseFont(font: string): FontSpec {
   return { size, italic: font.slice(0, Math.max(start, 0)).includes("italic"), families };
 }
 
+// Backends without a GPU register a Draw2D here (the web's Canvas 2D fallback, src/web/canvas2d.ts); createDraw2D
+// hands a gpu marked canvas2d to it, so games call createDraw2D the same way on every target.
+const fallbacks: ((gpu: RenderGpu, width: number, height: number) => Draw2D)[] = [];
+
+export function registerDraw2DFallback(make: (gpu: RenderGpu, width: number, height: number) => Draw2D): void {
+  fallbacks.push(make);
+}
+
 export function createDraw2D(gpu: RenderGpu, width: number, height: number): Draw2D {
+  if (gpu.canvas2d === true && fallbacks.length > 0) return fallbacks[0](gpu, width, height);
   const pipeline = gpu.createPipeline({
     wgsl: shader,
     stride: WORDS_PER_VERTEX * 4,

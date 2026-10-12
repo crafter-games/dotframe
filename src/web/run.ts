@@ -3,6 +3,7 @@ import {
   BufferUsage,
   type Color,
   type Draw,
+  type Frame,
   type Gpu,
   type PipelineOptions,
   type Setup,
@@ -14,6 +15,7 @@ import { mipChain } from "../mips";
 import { type Input, keyCodes, type Look, type Pointer, type Touch } from "../input";
 import type { Storage } from "../storage";
 import { MUSIC_CHANNELS } from "../audio";
+import { createCanvasGpu } from "./canvas2d";
 
 // Engine buffers are always plain ArrayBuffer-backed; the casts below satisfy TS 5.9+ WebGPU typings, which reject
 // Uint8Array<ArrayBufferLike> (it could be a SharedArrayBuffer).
@@ -43,12 +45,21 @@ export interface RunOptions {
   pointerLock?: boolean;
 }
 
+// A WebGPU device, or null when the browser has none (an older phone, an insecure origin, a blocked adapter).
+async function openDevice(): Promise<GPUDevice | null> {
+  if (!navigator.gpu) return null;
+  try {
+    const adapter = await navigator.gpu.requestAdapter();
+    return adapter ? await adapter.requestDevice() : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function run(options: WindowOptions, setup: Setup, runOptions: RunOptions = {}): Promise<void> {
-  if (!navigator.gpu) throw new Error("WebGPU is not available in this browser");
-  const adapter = await navigator.gpu.requestAdapter();
-  if (!adapter) throw new Error("No WebGPU adapter");
-  const device = await adapter.requestDevice();
-  device.addEventListener("uncapturederror", (event: Event): void => gpuError(`WebGPU: ${(event as GPUUncapturedErrorEvent).error.message}`));
+  // ?renderer=canvas2d forces the fallback, to check a game on it from a browser that has WebGPU.
+  const forced = new URLSearchParams(globalThis.location?.search ?? "").get("renderer") === "canvas2d";
+  const device = forced ? null : await openDevice();
 
   document.title = options.title;
   const canvas = document.createElement("canvas");
@@ -70,244 +81,9 @@ export async function run(options: WindowOptions, setup: Setup, runOptions: RunO
   sizeCanvas();
   document.body.appendChild(canvas);
 
-  const context = canvas.getContext("webgpu");
-  if (!context) throw new Error("Could not create a WebGPU canvas context");
-  const format = navigator.gpu.getPreferredCanvasFormat();
-  context.configure({ device, format, alphaMode: "opaque" });
-  const createDepth = (): GPUTexture =>
-    device.createTexture({ size: [canvas.width, canvas.height], format: "depth24plus", usage: GPUTextureUsage.RENDER_ATTACHMENT });
-  let depthTexture = createDepth();
-  if (fill) {
-    window.addEventListener("resize", (): void => {
-      sizeCanvas();
-      depthTexture.destroy();
-      depthTexture = createDepth();
-    });
-  }
-
-  const pipelines: GPURenderPipeline[] = [];
-  const buffers: GPUBuffer[] = [];
-  const bindGroups: GPUBindGroup[] = [];
-  const textureViews: GPUTextureView[] = [];
-  const textures: (GPUTexture | null)[] = [];
-  const textureSmooth: boolean[] = [];
-  // Nearest keeps pixel art crisp; linear suits fonts and photos.
-  const nearest = device.createSampler({ magFilter: "nearest", minFilter: "nearest" });
-  const linear = device.createSampler({ magFilter: "linear", minFilter: "linear" });
-  const mipmapped = device.createSampler({ magFilter: "linear", minFilter: "linear", mipmapFilter: "linear", addressModeU: "repeat", addressModeV: "repeat", maxAnisotropy: 8 });
-  const textureMips: boolean[] = [];
-  // Uploads a box-filtered mip chain (src/mips.ts, the same filter as the native backend).
-  const uploadMipmapped = (width: number, height: number, rgba: Uint8Array): Texture => {
-    const levels = mipChain(width, height, rgba);
-    const texture = device.createTexture({ size: [width, height], format: "rgba8unorm", mipLevelCount: levels.length, usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
-    levels.forEach((l, i: number): void => {
-      device.queue.writeTexture({ texture, mipLevel: i }, l.data as Uint8Array<ArrayBuffer>, { bytesPerRow: l.width * 4, rowsPerImage: l.height }, [l.width, l.height]);
-    });
-    textures.push(texture);
-    textureViews.push(texture.createView());
-    textureSmooth.push(true);
-    textureMips[textureViews.length - 1] = true;
-    return { id: textureViews.length - 1, width, height };
-  };
-  const uploadTexture = (
-    width: number,
-    height: number,
-    smooth: boolean,
-    write: (texture: GPUTexture) => void,
-  ): Texture => {
-    const texture = device.createTexture({
-      size: [width, height],
-      format: "rgba8unorm",
-      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
-    });
-    write(texture);
-    textures.push(texture);
-    textureViews.push(texture.createView());
-    textureSmooth.push(smooth);
-    return { id: textureViews.length - 1, width, height };
-  };
-  const depthPipelines = new Set<number>();
-  const targetDepths = new Map<number, GPUTexture>();
-
-  const gpu: Gpu = {
-    createTarget: (width: number, height: number): Texture => {
-      const texture = device.createTexture({ size: [width, height], format, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
-      textures.push(texture);
-      textureViews.push(texture.createView());
-      textureSmooth.push(true);
-      const id = textureViews.length - 1;
-      targetDepths.set(id, device.createTexture({ size: [width, height], format: "depth24plus", usage: GPUTextureUsage.RENDER_ATTACHMENT }));
-      return { id, width, height };
-    },
-    createBuffer: (usage: number, data: Uint8Array): number => {
-      let flags = GPUBufferUsage.COPY_DST;
-      if (usage & BufferUsage.Vertex) flags |= GPUBufferUsage.VERTEX;
-      if (usage & BufferUsage.Index) flags |= GPUBufferUsage.INDEX;
-      if (usage & BufferUsage.Uniform) flags |= GPUBufferUsage.UNIFORM;
-      const buffer = device.createBuffer({ size: Math.ceil(data.byteLength / 4) * 4, usage: flags });
-      device.queue.writeBuffer(buffer, 0, data as Uint8Array<ArrayBuffer>);
-      buffers.push(buffer);
-      return buffers.length - 1;
-    },
-    writeBuffer: (buffer: number, data: Uint8Array): void => {
-      const target = buffers[buffer];
-      if (target) device.queue.writeBuffer(target, 0, data as Uint8Array<ArrayBuffer>);
-    },
-    destroyBuffer: (buffer: number): void => {
-      buffers[buffer]?.destroy();
-    },
-    createPipeline: (pipelineOptions: PipelineOptions): number => {
-      const module = device.createShaderModule({ code: pipelineOptions.wgsl });
-      module.getCompilationInfo().then((info: GPUCompilationInfo): void => {
-        for (const m of info.messages) {
-          if (m.type !== "error") continue;
-          const line = pipelineOptions.wgsl.split("\n")[m.lineNum - 1]?.trim() ?? "";
-          gpuError(`WGSL error at line ${m.lineNum}:${m.linePos}: ${m.message}${line ? ` (${line})` : ""}`);
-        }
-      });
-      const buffersLayout: GPUVertexBufferLayout[] =
-        pipelineOptions.stride > 0
-          ? [
-              {
-                arrayStride: pipelineOptions.stride,
-                attributes: pipelineOptions.attributes.map((attribute) => ({
-                  format: vertexFormats[attribute.format] ?? "float32x3",
-                  offset: attribute.offset,
-                  shaderLocation: attribute.location,
-                })),
-              },
-            ]
-          : [];
-      const instanceAttributes = pipelineOptions.instanceAttributes ?? [];
-      if (instanceAttributes.length > 0) {
-        buffersLayout.push({
-          arrayStride: pipelineOptions.instanceStride ?? 0,
-          stepMode: "instance",
-          attributes: instanceAttributes.map((attribute) => ({ format: vertexFormats[attribute.format] ?? "float32x3", offset: attribute.offset, shaderLocation: attribute.location })),
-        });
-      }
-      pipelines.push(
-        device.createRenderPipeline({
-          layout: "auto",
-          vertex: { module, entryPoint: "vs_main", buffers: buffersLayout },
-          fragment: {
-            module,
-            entryPoint: "fs_main",
-            targets: [
-              {
-                format,
-                blend: pipelineOptions.blend && pipelineOptions.additive
-                  ? {
-                      color: { srcFactor: "src-alpha", dstFactor: "one", operation: "add" },
-                      alpha: { srcFactor: "zero", dstFactor: "one", operation: "add" },
-                    }
-                  : pipelineOptions.blend
-                  ? {
-                      color: { srcFactor: "src-alpha", dstFactor: "one-minus-src-alpha", operation: "add" },
-                      alpha: { srcFactor: "one", dstFactor: "one-minus-src-alpha", operation: "add" },
-                    }
-                  : undefined,
-              },
-            ],
-          },
-          primitive: pipelineOptions.depth ? { cullMode: "back" } : {},
-          depthStencil: pipelineOptions.depth
-            ? { format: "depth24plus", depthWriteEnabled: pipelineOptions.depthWrite ?? true, depthCompare: "less" }
-            : undefined,
-        }),
-      );
-      if (pipelineOptions.depth) depthPipelines.add(pipelines.length - 1);
-      return pipelines.length - 1;
-    },
-    bind: (pipeline: number, buffer: number, texture: number, texture2 = -1): number => {
-      const entries: GPUBindGroupEntry[] = [];
-      if (buffer >= 0) entries.push({ binding: 0, resource: { buffer: buffers[buffer] } });
-      if (texture >= 0) {
-        entries.push({ binding: 1, resource: textureViews[texture] });
-        entries.push({ binding: 2, resource: textureMips[texture] ? mipmapped : textureSmooth[texture] ? linear : nearest });
-      }
-      if (texture2 >= 0) {
-        entries.push({ binding: 3, resource: textureViews[texture2] });
-        entries.push({ binding: 4, resource: linear });
-      }
-      bindGroups.push(device.createBindGroup({ layout: pipelines[pipeline].getBindGroupLayout(0), entries }));
-      return bindGroups.length - 1;
-    },
-    destroyTexture: (texture: Texture): void => {
-      textures[texture.id]?.destroy();
-      textures[texture.id] = null;
-      targetDepths.get(texture.id)?.destroy();
-      targetDepths.delete(texture.id);
-    },
-    createTexture: (width: number, height: number, rgba: Uint8Array, smooth: boolean, mipmaps = false): Texture =>
-      mipmaps ? uploadMipmapped(width, height, rgba) : uploadTexture(width, height, smooth, (texture) =>
-        device.queue.writeTexture({ texture }, rgba as Uint8Array<ArrayBuffer>, { bytesPerRow: width * 4, rowsPerImage: height }, [width, height]),
-      ),
-    createImage: async (png: Uint8Array, smooth: boolean, mipmaps = false): Promise<Texture> => {
-      const bitmap = await createImageBitmap(new Blob([new Uint8Array(png)], { type: "image/png" }), { premultiplyAlpha: "none" });
-      if (mipmaps) {
-        // The pixels are needed on the CPU to build the chain.
-        const canvas2d = new OffscreenCanvas(bitmap.width, bitmap.height);
-        const ctx = canvas2d.getContext("2d");
-        if (ctx) {
-          ctx.drawImage(bitmap, 0, 0);
-          const pixels = ctx.getImageData(0, 0, bitmap.width, bitmap.height).data;
-          return uploadMipmapped(bitmap.width, bitmap.height, new Uint8Array(pixels.buffer, pixels.byteOffset, pixels.byteLength));
-        }
-      }
-      return uploadTexture(bitmap.width, bitmap.height, smooth, (texture) =>
-        device.queue.copyExternalImageToTexture({ source: bitmap }, { texture }, [bitmap.width, bitmap.height]),
-      );
-    },
-    frame: (clear: Color, draws: Draw[], target?: Texture): void => {
-      const encoder = device.createCommandEncoder();
-      const colorView = target ? textureViews[target.id] : context.getCurrentTexture().createView();
-      const depthView = target ? (targetDepths.get(target.id) ?? depthTexture).createView() : depthTexture.createView();
-      // Pipelines without depth cannot run in a pass with a depth attachment, so a frame that mixes them (a 3D
-      // scene under a 2D HUD) splits into consecutive passes: the first clears, the rest load what came before.
-      let from = 0;
-      let first = true;
-      while (from < draws.length || first) {
-        const usesDepth = from < draws.length && depthPipelines.has(draws[from].pipeline);
-        let to = from;
-        while (to < draws.length && depthPipelines.has(draws[to].pipeline) === usesDepth) to++;
-        const pass = encoder.beginRenderPass({
-          colorAttachments: [
-            {
-              view: colorView,
-              loadOp: first ? "clear" : "load",
-              storeOp: "store",
-              clearValue: { r: clear.r, g: clear.g, b: clear.b, a: 1 },
-            },
-          ],
-          depthStencilAttachment: usesDepth
-            ? { view: depthView, depthLoadOp: "clear", depthStoreOp: "store", depthClearValue: 1 }
-            : undefined,
-        });
-        for (const draw of draws.slice(from, to)) {
-          const pipeline = pipelines[draw.pipeline];
-          if (!pipeline) continue;
-          pass.setPipeline(pipeline);
-          if (draw.bindGroup >= 0) pass.setBindGroup(0, bindGroups[draw.bindGroup]);
-          if (draw.vertexBuffer >= 0) pass.setVertexBuffer(0, buffers[draw.vertexBuffer]);
-          const instances = draw.instances ?? 1;
-          if (draw.instanceBuffer !== undefined && draw.instanceBuffer >= 0) pass.setVertexBuffer(1, buffers[draw.instanceBuffer]);
-          if (draw.indexBuffer >= 0) {
-            pass.setIndexBuffer(buffers[draw.indexBuffer], "uint32");
-            pass.drawIndexed(draw.count, instances, draw.first, 0, draw.firstInstance ?? 0);
-          } else {
-            pass.draw(draw.count, instances, draw.first, draw.firstInstance ?? 0);
-          }
-        }
-        pass.end();
-        first = false;
-        from = to;
-      }
-      device.queue.submit([encoder.finish()]);
-    },
-    aspect: (): number => canvas.width / Math.max(canvas.height, 1),
-    mobile: typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches,
-  };
+  if (fill) window.addEventListener("resize", sizeCanvas);
+  // Without WebGPU, 2D games draw through Canvas 2D (src/web/canvas2d.ts); 3D calls fail with a clear message.
+  const gpu: Gpu = device ? createWebGpu(device, canvas, fill) : createCanvasGpu(canvas);
 
   const pressed = new Set<string>();
   // A key pressed and released between two frames still reads as down for one frame: fresh holds the keys pressed
@@ -520,10 +296,30 @@ export async function run(options: WindowOptions, setup: Setup, runOptions: RunO
     } else resume();
   });
 
-  const frame = setup({ gpu, input, audio, storage });
+  // On the Canvas 2D fallback a 3D game fails at its first pipeline or scene: say so on the page, not just the console.
+  const unsupported = (error: unknown): never => {
+    if (!device) {
+      const note = document.createElement("p");
+      note.textContent = error instanceof Error ? error.message : String(error);
+      note.style.cssText = "position:fixed;inset:0;margin:0;display:grid;place-items:center;padding:24px;font:16px/1.5 system-ui,sans-serif;text-align:center;background:#111;color:#eee";
+      document.body.appendChild(note);
+    }
+    throw error;
+  };
+  let frame: Frame;
+  try {
+    frame = setup({ gpu, input, audio, storage });
+  } catch (error) {
+    unsupported(error);
+  }
   const clock = createClock((): number => performance.now() / 1000);
   const tick = (): void => {
-    const go = frame(clock());
+    let go = false;
+    try {
+      go = frame(clock());
+    } catch (error) {
+      unsupported(error);
+    }
     for (const code of late) pressed.delete(code);
     late.clear();
     fresh.clear();
@@ -531,4 +327,245 @@ export async function run(options: WindowOptions, setup: Setup, runOptions: RunO
     requestAnimationFrame(tick);
   };
   requestAnimationFrame(tick);
+}
+
+function createWebGpu(device: GPUDevice, canvas: HTMLCanvasElement, fill: boolean): Gpu {
+  device.addEventListener("uncapturederror", (event: Event): void => gpuError(`WebGPU: ${(event as GPUUncapturedErrorEvent).error.message}`));
+  const context = canvas.getContext("webgpu");
+  if (!context) throw new Error("Could not create a WebGPU canvas context");
+  const format = navigator.gpu.getPreferredCanvasFormat();
+  context.configure({ device, format, alphaMode: "opaque" });
+  const createDepth = (): GPUTexture =>
+    device.createTexture({ size: [canvas.width, canvas.height], format: "depth24plus", usage: GPUTextureUsage.RENDER_ATTACHMENT });
+  let depthTexture = createDepth();
+  if (fill) {
+    window.addEventListener("resize", (): void => {
+      depthTexture.destroy();
+      depthTexture = createDepth();
+    });
+  }
+
+  const pipelines: GPURenderPipeline[] = [];
+  const buffers: GPUBuffer[] = [];
+  const bindGroups: GPUBindGroup[] = [];
+  const textureViews: GPUTextureView[] = [];
+  const textures: (GPUTexture | null)[] = [];
+  const textureSmooth: boolean[] = [];
+  // Nearest keeps pixel art crisp; linear suits fonts and photos.
+  const nearest = device.createSampler({ magFilter: "nearest", minFilter: "nearest" });
+  const linear = device.createSampler({ magFilter: "linear", minFilter: "linear" });
+  const mipmapped = device.createSampler({ magFilter: "linear", minFilter: "linear", mipmapFilter: "linear", addressModeU: "repeat", addressModeV: "repeat", maxAnisotropy: 8 });
+  const textureMips: boolean[] = [];
+  // Uploads a box-filtered mip chain (src/mips.ts, the same filter as the native backend).
+  const uploadMipmapped = (width: number, height: number, rgba: Uint8Array): Texture => {
+    const levels = mipChain(width, height, rgba);
+    const texture = device.createTexture({ size: [width, height], format: "rgba8unorm", mipLevelCount: levels.length, usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
+    levels.forEach((l, i: number): void => {
+      device.queue.writeTexture({ texture, mipLevel: i }, l.data as Uint8Array<ArrayBuffer>, { bytesPerRow: l.width * 4, rowsPerImage: l.height }, [l.width, l.height]);
+    });
+    textures.push(texture);
+    textureViews.push(texture.createView());
+    textureSmooth.push(true);
+    textureMips[textureViews.length - 1] = true;
+    return { id: textureViews.length - 1, width, height };
+  };
+  const uploadTexture = (
+    width: number,
+    height: number,
+    smooth: boolean,
+    write: (texture: GPUTexture) => void,
+  ): Texture => {
+    const texture = device.createTexture({
+      size: [width, height],
+      format: "rgba8unorm",
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+    });
+    write(texture);
+    textures.push(texture);
+    textureViews.push(texture.createView());
+    textureSmooth.push(smooth);
+    return { id: textureViews.length - 1, width, height };
+  };
+  const depthPipelines = new Set<number>();
+  const targetDepths = new Map<number, GPUTexture>();
+
+  return {
+    createTarget: (width: number, height: number): Texture => {
+      const texture = device.createTexture({ size: [width, height], format, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
+      textures.push(texture);
+      textureViews.push(texture.createView());
+      textureSmooth.push(true);
+      const id = textureViews.length - 1;
+      targetDepths.set(id, device.createTexture({ size: [width, height], format: "depth24plus", usage: GPUTextureUsage.RENDER_ATTACHMENT }));
+      return { id, width, height };
+    },
+    createBuffer: (usage: number, data: Uint8Array): number => {
+      let flags = GPUBufferUsage.COPY_DST;
+      if (usage & BufferUsage.Vertex) flags |= GPUBufferUsage.VERTEX;
+      if (usage & BufferUsage.Index) flags |= GPUBufferUsage.INDEX;
+      if (usage & BufferUsage.Uniform) flags |= GPUBufferUsage.UNIFORM;
+      const buffer = device.createBuffer({ size: Math.ceil(data.byteLength / 4) * 4, usage: flags });
+      device.queue.writeBuffer(buffer, 0, data as Uint8Array<ArrayBuffer>);
+      buffers.push(buffer);
+      return buffers.length - 1;
+    },
+    writeBuffer: (buffer: number, data: Uint8Array): void => {
+      const target = buffers[buffer];
+      if (target) device.queue.writeBuffer(target, 0, data as Uint8Array<ArrayBuffer>);
+    },
+    destroyBuffer: (buffer: number): void => {
+      buffers[buffer]?.destroy();
+    },
+    createPipeline: (pipelineOptions: PipelineOptions): number => {
+      const module = device.createShaderModule({ code: pipelineOptions.wgsl });
+      module.getCompilationInfo().then((info: GPUCompilationInfo): void => {
+        for (const m of info.messages) {
+          if (m.type !== "error") continue;
+          const line = pipelineOptions.wgsl.split("\n")[m.lineNum - 1]?.trim() ?? "";
+          gpuError(`WGSL error at line ${m.lineNum}:${m.linePos}: ${m.message}${line ? ` (${line})` : ""}`);
+        }
+      });
+      const buffersLayout: GPUVertexBufferLayout[] =
+        pipelineOptions.stride > 0
+          ? [
+              {
+                arrayStride: pipelineOptions.stride,
+                attributes: pipelineOptions.attributes.map((attribute) => ({
+                  format: vertexFormats[attribute.format] ?? "float32x3",
+                  offset: attribute.offset,
+                  shaderLocation: attribute.location,
+                })),
+              },
+            ]
+          : [];
+      const instanceAttributes = pipelineOptions.instanceAttributes ?? [];
+      if (instanceAttributes.length > 0) {
+        buffersLayout.push({
+          arrayStride: pipelineOptions.instanceStride ?? 0,
+          stepMode: "instance",
+          attributes: instanceAttributes.map((attribute) => ({ format: vertexFormats[attribute.format] ?? "float32x3", offset: attribute.offset, shaderLocation: attribute.location })),
+        });
+      }
+      pipelines.push(
+        device.createRenderPipeline({
+          layout: "auto",
+          vertex: { module, entryPoint: "vs_main", buffers: buffersLayout },
+          fragment: {
+            module,
+            entryPoint: "fs_main",
+            targets: [
+              {
+                format,
+                blend: pipelineOptions.blend && pipelineOptions.additive
+                  ? {
+                      color: { srcFactor: "src-alpha", dstFactor: "one", operation: "add" },
+                      alpha: { srcFactor: "zero", dstFactor: "one", operation: "add" },
+                    }
+                  : pipelineOptions.blend
+                  ? {
+                      color: { srcFactor: "src-alpha", dstFactor: "one-minus-src-alpha", operation: "add" },
+                      alpha: { srcFactor: "one", dstFactor: "one-minus-src-alpha", operation: "add" },
+                    }
+                  : undefined,
+              },
+            ],
+          },
+          primitive: pipelineOptions.depth ? { cullMode: "back" } : {},
+          depthStencil: pipelineOptions.depth
+            ? { format: "depth24plus", depthWriteEnabled: pipelineOptions.depthWrite ?? true, depthCompare: "less" }
+            : undefined,
+        }),
+      );
+      if (pipelineOptions.depth) depthPipelines.add(pipelines.length - 1);
+      return pipelines.length - 1;
+    },
+    bind: (pipeline: number, buffer: number, texture: number, texture2 = -1): number => {
+      const entries: GPUBindGroupEntry[] = [];
+      if (buffer >= 0) entries.push({ binding: 0, resource: { buffer: buffers[buffer] } });
+      if (texture >= 0) {
+        entries.push({ binding: 1, resource: textureViews[texture] });
+        entries.push({ binding: 2, resource: textureMips[texture] ? mipmapped : textureSmooth[texture] ? linear : nearest });
+      }
+      if (texture2 >= 0) {
+        entries.push({ binding: 3, resource: textureViews[texture2] });
+        entries.push({ binding: 4, resource: linear });
+      }
+      bindGroups.push(device.createBindGroup({ layout: pipelines[pipeline].getBindGroupLayout(0), entries }));
+      return bindGroups.length - 1;
+    },
+    destroyTexture: (texture: Texture): void => {
+      textures[texture.id]?.destroy();
+      textures[texture.id] = null;
+      targetDepths.get(texture.id)?.destroy();
+      targetDepths.delete(texture.id);
+    },
+    createTexture: (width: number, height: number, rgba: Uint8Array, smooth: boolean, mipmaps = false): Texture =>
+      mipmaps ? uploadMipmapped(width, height, rgba) : uploadTexture(width, height, smooth, (texture) =>
+        device.queue.writeTexture({ texture }, rgba as Uint8Array<ArrayBuffer>, { bytesPerRow: width * 4, rowsPerImage: height }, [width, height]),
+      ),
+    createImage: async (png: Uint8Array, smooth: boolean, mipmaps = false): Promise<Texture> => {
+      const bitmap = await createImageBitmap(new Blob([new Uint8Array(png)], { type: "image/png" }), { premultiplyAlpha: "none" });
+      if (mipmaps) {
+        // The pixels are needed on the CPU to build the chain.
+        const canvas2d = new OffscreenCanvas(bitmap.width, bitmap.height);
+        const ctx = canvas2d.getContext("2d");
+        if (ctx) {
+          ctx.drawImage(bitmap, 0, 0);
+          const pixels = ctx.getImageData(0, 0, bitmap.width, bitmap.height).data;
+          return uploadMipmapped(bitmap.width, bitmap.height, new Uint8Array(pixels.buffer, pixels.byteOffset, pixels.byteLength));
+        }
+      }
+      return uploadTexture(bitmap.width, bitmap.height, smooth, (texture) =>
+        device.queue.copyExternalImageToTexture({ source: bitmap }, { texture }, [bitmap.width, bitmap.height]),
+      );
+    },
+    frame: (clear: Color, draws: Draw[], target?: Texture): void => {
+      const encoder = device.createCommandEncoder();
+      const colorView = target ? textureViews[target.id] : context.getCurrentTexture().createView();
+      const depthView = target ? (targetDepths.get(target.id) ?? depthTexture).createView() : depthTexture.createView();
+      // Pipelines without depth cannot run in a pass with a depth attachment, so a frame that mixes them (a 3D
+      // scene under a 2D HUD) splits into consecutive passes: the first clears, the rest load what came before.
+      let from = 0;
+      let first = true;
+      while (from < draws.length || first) {
+        const usesDepth = from < draws.length && depthPipelines.has(draws[from].pipeline);
+        let to = from;
+        while (to < draws.length && depthPipelines.has(draws[to].pipeline) === usesDepth) to++;
+        const pass = encoder.beginRenderPass({
+          colorAttachments: [
+            {
+              view: colorView,
+              loadOp: first ? "clear" : "load",
+              storeOp: "store",
+              clearValue: { r: clear.r, g: clear.g, b: clear.b, a: 1 },
+            },
+          ],
+          depthStencilAttachment: usesDepth
+            ? { view: depthView, depthLoadOp: "clear", depthStoreOp: "store", depthClearValue: 1 }
+            : undefined,
+        });
+        for (const draw of draws.slice(from, to)) {
+          const pipeline = pipelines[draw.pipeline];
+          if (!pipeline) continue;
+          pass.setPipeline(pipeline);
+          if (draw.bindGroup >= 0) pass.setBindGroup(0, bindGroups[draw.bindGroup]);
+          if (draw.vertexBuffer >= 0) pass.setVertexBuffer(0, buffers[draw.vertexBuffer]);
+          const instances = draw.instances ?? 1;
+          if (draw.instanceBuffer !== undefined && draw.instanceBuffer >= 0) pass.setVertexBuffer(1, buffers[draw.instanceBuffer]);
+          if (draw.indexBuffer >= 0) {
+            pass.setIndexBuffer(buffers[draw.indexBuffer], "uint32");
+            pass.drawIndexed(draw.count, instances, draw.first, 0, draw.firstInstance ?? 0);
+          } else {
+            pass.draw(draw.count, instances, draw.first, draw.firstInstance ?? 0);
+          }
+        }
+        pass.end();
+        first = false;
+        from = to;
+      }
+      device.queue.submit([encoder.finish()]);
+    },
+    aspect: (): number => canvas.width / Math.max(canvas.height, 1),
+    mobile: typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches,
+  };
 }
