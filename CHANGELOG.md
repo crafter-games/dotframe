@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- `dotframe new` records `replays/smoke.json` (600 mashed frames) after installing, so `bun run test` verifies a golden replay from the first minute.
+- `doctor` passes on a fresh project: template placeholders (deploy scope, iOS bundle id and team) and tools or packs for a target you have not set up (scriptc, zig, xcodegen, vercel, agent-browser) are warnings now. Only Bun, config, sim and code problems fail.
+- Running `dotframe` without Bun prints how to install it instead of `env: bun: No such file or directory`. The npm bin is a small Node launcher (`cli/bin.cjs`) that hands off to Bun.
+
 ## 0.3.3
 
 - Web Canvas 2D fallback: without WebGPU (an older phone, an insecure `http://` origin, no adapter) `run()` draws 2D games through Canvas 2D instead of throwing. `createDraw2D` returns the Canvas 2D Draw2D for that gpu, with the same coordinates, state rules and SDF text layout (glyph masks are rendered from the atlas on the CPU and cached), so games need no changes. 3D calls throw "needs WebGPU" and the page says so. `?renderer=canvas2d` forces it for testing.
