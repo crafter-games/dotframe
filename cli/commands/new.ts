@@ -47,6 +47,12 @@ export async function create(ctx: Ctx, name: string | undefined, template: strin
       throw new CliError("STEP_FAILED", `${step.label}: ${r.tail}`, fix, "game-design");
     }
   }
+  // A golden replay from the start, so `bun run test` has something to verify.
+  if (install) {
+    const step = { label: "record replay", argv: [process.execPath, resolve(import.meta.dir, "../main.ts"), "replay", "record", "replays/smoke.json", "--mash", "7", "--frames", "600"] };
+    const r = await exec(ctx, dir, step);
+    if (r.code !== 0) throw new CliError("STEP_FAILED", `${step.label}: ${r.tail}`, `cd ${name} && dotframe replay record replays/smoke.json --mash 7`, "core");
+  }
   print(ctx, { dir, template, gitInit: !insideRepo, next: [`cd ${name}`, "dotframe sim --mash 7 --json", "dotframe dev"] }, (): string => `created ${dir} (${template})\nnext: cd ${name} && dotframe sim --mash 7 && dotframe dev`);
 }
 

@@ -23,7 +23,8 @@ interface Check {
 
 const tool = (bin: string, why: string, fix: string, skill: string): Check => {
   const path = which(bin);
-  return { check: `tool:${bin}`, ok: path !== null, detail: path ?? `missing (${why})`, fix: path ? "" : fix, skill };
+  // Only Bun is needed to run anything; the rest belong to one target and warn until that target is used.
+  return { check: `tool:${bin}`, ok: path !== null, warn: bin !== "bun", detail: path ?? `missing (${why})`, fix: path ? "" : fix, skill };
 };
 
 // /usr/bin/xcodebuild exists with only Command Line Tools, and fails when run, so run it.
@@ -61,13 +62,13 @@ export async function doctor(ctx: Ctx, fix: boolean, docker = false): Promise<vo
     }
     for (const [name, t] of Object.entries(config.targets)) {
       if (t.native?.platform === "ios" && t.native.bundleId.startsWith("com.example.")) {
-        checks.push({ check: `ios:${name}:bundleId`, ok: false, detail: `bundle id ${t.native.bundleId} is the template placeholder; Apple will not register it`, fix: `dotframe config set targets.${name}.native.bundleId '"<reverse domain you own>.<game>"'`, skill: "ios" });
+        checks.push({ check: `ios:${name}:bundleId`, ok: false, warn: true, detail: `bundle id ${t.native.bundleId} is the template placeholder; Apple will not register it`, fix: `dotframe config set targets.${name}.native.bundleId '"<reverse domain you own>.<game>"'`, skill: "ios" });
       }
       if (t.native?.platform === "ios" && t.native.team === "YOUR_TEAM_ID") {
-        checks.push({ check: `ios:${name}`, ok: false, detail: "the iOS team is still the template placeholder", fix: `dotframe config set targets.${name}.native.team '"<Apple team id>"'`, skill: "ios" });
+        checks.push({ check: `ios:${name}`, ok: false, warn: true, detail: "the iOS team is still the template placeholder", fix: `dotframe config set targets.${name}.native.team '"<Apple team id>"'`, skill: "ios" });
       }
       if (t.deploy?.provider === "vercel" && t.deploy.scope === "your-vercel-team") {
-        checks.push({ check: `deploy:${name}`, ok: false, detail: "deploy scope is still the template placeholder", fix: `dotframe config set targets.${name}.deploy.scope '"<vercel team>"'`, skill: "export-web" });
+        checks.push({ check: `deploy:${name}`, ok: false, warn: true, detail: "deploy scope is still the template placeholder", fix: `dotframe config set targets.${name}.deploy.scope '"<vercel team>"'`, skill: "export-web" });
       }
     }
     for (const [name, t] of Object.entries(config.targets)) {
@@ -222,7 +223,7 @@ async function nativeReplayCheck(ctx: Ctx, config: Config, platform: string): Pr
   const dir = join(config.root, "replays");
   const files = existsSync(dir) ? readdirSync(dir).filter((f: string): boolean => f.endsWith(".json")).sort() : [];
   if (files.length === 0) return { ...base, ok: true, warn: true, detail: "no replays/*.json to run natively", fix: "dotframe replay record replays/<name>.json --inputs <file.jsonl>" };
-  if (!which("scriptc")) return { ...base, ok: false, detail: "scriptc not found", fix: "npm i -g scriptc" };
+  if (!which("scriptc")) return { ...base, ok: false, warn: true, detail: "scriptc not found", fix: "npm i -g scriptc" };
   try {
     const started = performance.now();
     const replays = files.map((f: string) => {
@@ -244,7 +245,7 @@ async function nativeReplayCheck(ctx: Ctx, config: Config, platform: string): Pr
 // without C or linking: as const tuples and other patterns that work on the web fail here, not on the phone.
 async function nativeCheck(ctx: Ctx, config: Config, name: string, native: NonNullable<Target["native"]>): Promise<Check> {
   const base = { check: `native:${name}`, skill: native.platform };
-  if (!which("scriptc")) return { ...base, ok: false, detail: "scriptc not found", fix: "npm i -g scriptc" };
+  if (!which("scriptc")) return { ...base, ok: false, warn: true, detail: "scriptc not found", fix: "npm i -g scriptc" };
   const quiet = { ...ctx, json: true, dryRun: false };
   try {
     const started = performance.now();
@@ -253,8 +254,8 @@ async function nativeCheck(ctx: Ctx, config: Config, name: string, native: NonNu
     return { ...base, ok: true, detail: `${native.entry} compiles with scriptc (${Math.round(performance.now() - started)} ms)`, fix: "" };
   } catch (error) {
     if (!(error instanceof CliError)) throw error;
-    // Missing tools or packs have their own checks; this one is about the code.
-    if (error.code !== "STEP_FAILED") return { ...base, ok: false, detail: error.message.split("\n")[0], fix: error.fix };
+    // A missing toolchain means the target is not set up yet, not that the code is wrong: warn, the build itself fails.
+    if (error.code !== "STEP_FAILED") return { ...base, ok: false, warn: true, detail: error.message.split("\n")[0], fix: error.fix };
     const first = error.message.split("\n").find((l: string): boolean => /error SC\d+/.test(l)) ?? error.message.split("\n")[0];
     return { ...base, ok: false, detail: `scriptc rejects ${native.entry}: ${first.replace(/^.*?\.dotframe\/check\/[^/]+\/(game|tree)\//, "")}`, fix: `read ${error.log}; the macos skill lists what scriptc rejects` };
   }
