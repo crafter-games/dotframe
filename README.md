@@ -1,12 +1,69 @@
+<div align="center">
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/logo/dotframe-dark.svg">
+  <img alt="dotframe" src="assets/logo/dotframe-light.svg" width="72">
+</picture>
+
 # dotframe
 
-TS-first game engine. One TypeScript codebase runs on the web (WebGPU) and compiles to native macOS and Windows binaries with [scriptc](https://scriptc.dev), with no JavaScript engine in the binary.
+The game engine your agent can play.
 
-Status: S5 in progress (porting Crafter Smash). `examples/canvas2d` exercises `src/draw2d.ts`, an immediate-mode 2D layer modeled on Canvas2D (transforms, alpha, concave paths, arcs, strokes, PNG sprites) so Canvas2D games port mechanically. Before that, S4: `examples/smash-lite` is a two-player platform fighter: keyboard and gamepad input, fixed-step AABB physics, hitstun, knockback that scales with damage, and KOs. `DF_DEMO=1` (native) or `?demo` (web) lets scripted players fight, which is how CI captures it. Earlier slices: `examples/suzanne` loads a glTF mesh, spawns three entities in a minimal ECS and renders them lit with depth and a perspective camera. The same game code renders in the browser (WebGPU) and in native macOS and Windows binaries (SDL3 + wgpu-native through a flat C shim). CI runs both binaries and captures them with [cuse](https://github.com/crafter-agents/cuse).
+[![npm](https://img.shields.io/npm/v/dotframe?style=flat-square&labelColor=17140f&color=6b2cf5)](https://www.npmjs.com/package/dotframe)
+[![downloads](https://img.shields.io/npm/dm/dotframe?style=flat-square&labelColor=17140f&color=6b2cf5)](https://www.npmjs.com/package/dotframe)
+[![license](https://img.shields.io/npm/l/dotframe?style=flat-square&labelColor=17140f&color=6b2cf5)](LICENSE)
+
+[dotframe.crafter.games](https://dotframe.crafter.games)
+
+</div>
+
+One TypeScript codebase for the web (WebGPU, with a Canvas 2D fallback for 2D games), iPhone, macOS, Windows and Discord. Native builds compile with [scriptc](https://scriptc.dev), so there is no JavaScript engine in the binary. Every frame is deterministic, so an agent can play the game headless, render any frame, and catch a netplay desync.
+
+## Install
+
+```sh
+npm i -g dotframe                      # needs Bun on PATH
+npx skills add crafter-games/dotframe  # the agent skill
+```
+
+## Quick start
+
+```sh
+dotframe new my-game --template blank  # fighter, platformer, blank
+cd my-game && dotframe dev
+```
+
+Agents start with `dotframe skills get core`.
+
+## CLI
+
+```sh
+dotframe sim --mash 7 --frames 600 --json   # headless run: state + checksum
+dotframe snap --frame 300 --mash 7          # render one frame through WebGPU
+dotframe replay record replays/a.json --mash 7
+dotframe replay verify replays/*.json       # replays are the tests
+dotframe desync --latency 120ms --jitter 30ms
+dotframe build web|ios|macos|discord
+dotframe deploy web --prod --dry-run        # external actions need --yes
+dotframe doctor --fix
+```
+
+Every command takes `--json`. Errors carry a `code`, a `fix`, and the `skill` to read.
+
+A game opts in with a `dotframe.json` (targets, deploy, relay) and a `sim` module that default-exports `defineSim` from `src/sim.ts`.
 
 ## Made with dotframe
 
-Put this badge in your game's README:
+[Espresso perfecto](https://github.com/crafter-games/espresso) · [Craft Ones](https://github.com/crafter-games/craft-ones) · [Crafter Smash](https://github.com/crafter-games/crafter-smash-dotframe) · [The Ones](https://github.com/crafter-games/the-ones-game)
+
+Shipped one? Add the badge:
+
+<a href="https://dotframe.crafter.games">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/badge/made-with-dotframe-dark.svg">
+    <img alt="Made with dotframe" src="assets/badge/made-with-dotframe-light.svg" height="32">
+  </picture>
+</a>
 
 ```html
 <a href="https://dotframe.crafter.games">
@@ -17,57 +74,9 @@ Put this badge in your game's README:
 </a>
 ```
 
-Games: [Espresso perfecto](https://github.com/crafter-games/espresso), [Craft Ones](https://github.com/crafter-games/craft-ones), [Crafter Smash](https://github.com/crafter-games/crafter-smash-dotframe).
+## More
 
-## CLI
+- [docs/internals.md](docs/internals.md): source layout, vendored SDL3 and wgpu-native, building examples by hand
+- [CHANGELOG.md](CHANGELOG.md)
 
-`dotframe` is an agent-first CLI over the engine. The simulation is deterministic, so an agent can play a game without a screen, render a frame with the real renderer, and catch netplay desyncs before a real match.
-
-```sh
-npm i -g dotframe                           # needs Bun on PATH
-npx skills add crafter-games/dotframe      # installs the agent skill stub
-dotframe new my-game --template fighter     # fighter, platformer, blank
-dotframe sim --mash 7 --frames 600 --json   # headless run: state + checksum
-dotframe snap --frame 300 --mash 7          # one frame through WebGPU (agent-browser)
-dotframe replay record replays/a.json --mash 7 && dotframe replay verify replays/*.json
-dotframe desync --latency 120ms --jitter 30ms
-dotframe build web|ios|macos|discord
-dotframe deploy web --prod --dry-run        # external actions need --yes
-dotframe doctor --fix
-dotframe skills list                        # guides bundled with this version
-```
-
-A game opts in with a `dotframe.json` (targets, deploy, relay, vendor links, local-only assets) and a `sim` module that default-exports `defineSim` from `src/sim.ts`. Agents start with `dotframe skills get core`. Every command takes `--json`; errors carry a `code`, a `fix`, and the `skill` to read.
-
-- `cli/`: the CLI (Bun). `skill-data/`: the guides served by `dotframe skills`. `skills/dotframe`: the discovery stub that `npx skills add crafter-games/dotframe` installs. `templates/`: the `dotframe new` templates.
-
-## Layout
-
-- `native/df_native.c`: flat C ABI over SDL3 and wgpu-native. scriptc FFI accepts scalars and byte spans only, so the shim owns every WebGPU struct.
-- `src/gpu.ts`: backend-agnostic types for game code. Backends are plain objects of functions, because scriptc compiles structural types as record copies and a class cannot stand in for an interface.
-- `src/math.ts`, `src/ecs.ts`, `src/gltf.ts`, `src/render.ts`: column-major matrices, a Map-per-component ECS, a `.glb` reader (positions, normals, indices) and a lit mesh renderer.
-- `src/input.ts`, `src/physics.ts`, `src/shapes.ts`: engine key ids mapped per backend (SDL scancodes, `KeyboardEvent.code`, first gamepad), side-view AABB physics, and a unit box mesh.
-- `src/draw2d.ts`: Canvas2D-style layer batched into one vertex buffer, one draw per texture. Setters replace property assignment (`setFillStyle` for `ctx.fillStyle =`). PNGs decode with stb_image natively and `createImageBitmap` on the web.
-- `src/audio.ts`, `native/df_audio.c`: sound effects (MP3, volume, playback rate), square tones and one streamed music track. Native mixes in C over SDL3 audio with dr_mp3; the web uses Web Audio and an `<audio>` element. `examples/audio-check` plays a known timeline that CI records with SDL's disk driver and verifies with `tools/check-audio.ts` (segments, 880 Hz tone, 262 Hz music, silence after stop).
-- `test/`: `bun test` covers color parsing, triangulation and physics (landing, walls, ceilings, falling off edges).
-- `src/native`: FFI declarations and the native run loop. `native/ffi.{macos,windows}.json` bind them for every example.
-- `src/web`: the browser run loop over `navigator.gpu`.
-- `examples/*`: `game.ts` is shared; `main.native.ts` and `main.web.ts` pick the backend.
-- `assets/audio/*.mp3`: original test sounds generated with ffmpeg.
-- `assets/fonts/*`: Bangers and Archivo Black (SIL OFL, see `tools/fonts/`) baked into SDF atlases by `tools/bake-font.c`.
-- `assets/crafter.png`: original 16x16 two-frame sprite, generated by `tools/make-sprite.ts`.
-- `assets/suzanne.glb`: Blender's Suzanne from the Khronos glTF sample assets (CC0, Norbert Nopper / UX3D), packed geometry-only.
-- `scripts/build-native.sh`: builds an example for `macos` or `windows`.
-
-## Vendored dependencies (not committed)
-
-- wgpu-native `v29.0.1.1` prebuilt (`wgpu-macos-aarch64-release`, `wgpu-windows-x86_64-gnu-release`) in `vendor/wgpu/{macos,windows}`.
-- SDL3 `3.4.16` source in `vendor/SDL3-3.4.16`, built static into `vendor/build/sdl-{macos,windows}`. Windows is cross-built with zig via `vendor/toolchain/zig-windows.cmake`.
-
-## Build
-
-```sh
-scripts/build-native.sh macos triangle
-scripts/build-native.sh windows triangle   # needs zig and @scriptc/runtime-win32-x64-msvc
-scripts/build-web.sh triangle               # then serve build/web/triangle
-```
+MIT
