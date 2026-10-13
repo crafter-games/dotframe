@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.4
 
 - `dotframe new` records `replays/smoke.json` (600 mashed frames) after installing, so `bun run test` verifies a golden replay from the first minute.
 - `doctor` passes on a fresh project: template placeholders (deploy scope, iOS bundle id and team) and tools or packs for a target you have not set up (scriptc, zig, xcodegen, vercel, agent-browser) are warnings now. Only Bun, config, sim and code problems fail.
