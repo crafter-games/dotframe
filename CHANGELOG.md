@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.5
+
+- `doctor` also warns, instead of failing, when a native target has no vendored SDL3 and wgpu-native or no scriptc iOS runtime yet. A fresh project on a clean machine exits 0.
+
 ## 0.3.4
 
 - `dotframe new` records `replays/smoke.json` (600 mashed frames) after installing, so `bun run test` verifies a golden replay from the first minute.

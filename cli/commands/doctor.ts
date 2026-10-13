@@ -76,13 +76,13 @@ export async function doctor(ctx: Ctx, fix: boolean, docker = false): Promise<vo
       checks.push(await nativeCheck(ctx, config, name, t.native));
       checks.push(nativeTrapCheck(resolve(config.root, t.native.entry), name, t.native.platform));
       const v = vendorStatus(t.native.platform);
-      checks.push({ check: `vendor:${name}`, ok: v.missing.length === 0, detail: v.missing.length === 0 ? `${v.dir} (${v.sdl})` : `missing in ${v.dir}: ${v.missing.join(", ")}`, fix: v.missing.length === 0 ? "" : vendorFix(t.native.platform), skill: t.native.platform });
+      checks.push({ check: `vendor:${name}`, ok: v.missing.length === 0, warn: true, detail: v.missing.length === 0 ? `${v.dir} (${v.sdl})` : `missing in ${v.dir}: ${v.missing.join(", ")}`, fix: v.missing.length === 0 ? "" : vendorFix(t.native.platform), skill: t.native.platform });
       checks.push(tool("scriptc", "native builds", "npm i -g scriptc", t.native.platform));
       if (t.native.platform === "windows") checks.push(tool("zig", "windows cross builds", "brew install zig", "macos"));
       if (t.native.platform === "ios") {
         checks.push(tool("xcodegen", "iOS project", "brew install xcodegen", "ios"));
         const pack = await iosRuntimePack(ctx, config.root);
-        checks.push({ check: `ios-runtime:${name}`, ok: pack.path !== null, detail: pack.path ? `@scriptc/runtime-ios-arm64 ${pack.want}` : pack.found ? `runtime pack ${pack.found} does not match scriptc ${pack.want}` : `@scriptc/runtime-ios-arm64 ${pack.want} not installed`, fix: pack.path ? "" : iosPackFix(pack.want), skill: "ios" });
+        checks.push({ check: `ios-runtime:${name}`, ok: pack.path !== null, warn: true, detail: pack.path ? `@scriptc/runtime-ios-arm64 ${pack.want}` : pack.found ? `runtime pack ${pack.found} does not match scriptc ${pack.want}` : `@scriptc/runtime-ios-arm64 ${pack.want} not installed`, fix: pack.path ? "" : iosPackFix(pack.want), skill: "ios" });
       }
     }
     const native = Object.values(config.targets).find((t) => t.native)?.native;
