@@ -27,6 +27,20 @@ const tool = (bin: string, why: string, fix: string, skill: string): Check => {
   return { check: `tool:${bin}`, ok: path !== null, warn: bin !== "bun", detail: path ?? `missing (${why})`, fix: path ? "" : fix, skill };
 };
 
+// The oldest scriptc that compiles the templates natively. Before 0.2.0 it cannot read native/ffi.*.json
+// ("unsupported ffi_format 7"); 0.2.0 rejects src/draw2d.ts.
+const SCRIPTC_MIN = [0, 2, 1];
+
+const scriptcCheck = (skill: string): Check => {
+  const found = tool("scriptc", "native builds", "npm i -g scriptc", skill);
+  if (!found.ok) return found;
+  const version = Bun.spawnSync(["scriptc", "--version"]).stdout.toString().trim();
+  const parts = version.split(".").map(Number);
+  const i = SCRIPTC_MIN.findIndex((want: number, j: number): boolean => (parts[j] ?? 0) !== want);
+  if (i === -1 || (parts[i] ?? 0) > SCRIPTC_MIN[i]) return { ...found, detail: `${found.detail} (${version})` };
+  return { ...found, ok: false, detail: `scriptc ${version} is older than ${SCRIPTC_MIN.join(".")} and cannot build dotframe natively`, fix: "npm i -g scriptc@latest" };
+};
+
 // /usr/bin/xcodebuild exists with only Command Line Tools, and fails when run, so run it.
 function xcodeCheck(): Check {
   const base = { check: "tool:xcodebuild", skill: "ios" };
@@ -77,10 +91,12 @@ export async function doctor(ctx: Ctx, fix: boolean, docker = false): Promise<vo
       checks.push(nativeTrapCheck(resolve(config.root, t.native.entry), name, t.native.platform));
       const v = vendorStatus(t.native.platform);
       checks.push({ check: `vendor:${name}`, ok: v.missing.length === 0, warn: true, detail: v.missing.length === 0 ? `${v.dir} (${v.sdl})` : `missing in ${v.dir}: ${v.missing.join(", ")}`, fix: v.missing.length === 0 ? "" : vendorFix(t.native.platform), skill: t.native.platform });
-      checks.push(tool("scriptc", "native builds", "npm i -g scriptc", t.native.platform));
+      checks.push(scriptcCheck(t.native.platform));
       if (t.native.platform === "windows") checks.push(tool("zig", "windows cross builds", "brew install zig", "macos"));
       if (t.native.platform === "ios") {
         checks.push(tool("xcodegen", "iOS project", "brew install xcodegen", "ios"));
+        // The pack must match scriptc's version; without scriptc the tool check above already says what to install.
+        if (!which("scriptc")) continue;
         const pack = await iosRuntimePack(ctx, config.root);
         checks.push({ check: `ios-runtime:${name}`, ok: pack.path !== null, warn: true, detail: pack.path ? `@scriptc/runtime-ios-arm64 ${pack.want}` : pack.found ? `runtime pack ${pack.found} does not match scriptc ${pack.want}` : `@scriptc/runtime-ios-arm64 ${pack.want} not installed`, fix: pack.path ? "" : iosPackFix(pack.want), skill: "ios" });
       }
@@ -96,7 +112,7 @@ export async function doctor(ctx: Ctx, fix: boolean, docker = false): Promise<vo
     if (targets.some((t: string): boolean => t === "web" || t === "discord")) {
       checks.push(tool("vercel", "deploy web", "npm i -g vercel", "export-web"), tool("agent-browser", "dotframe snap", "npm i -g agent-browser && agent-browser install", "core"));
     }
-    if (targets.includes("ios") || targets.includes("macos")) checks.push(tool("scriptc", "native builds", "npm i -g scriptc", "macos"));
+    if (targets.includes("ios") || targets.includes("macos")) checks.push(scriptcCheck("macos"));
     if (targets.includes("ios")) checks.push(tool("xcodegen", "iOS project", "brew install xcodegen", "ios"), xcodeCheck());
     if (config.relay) checks.push(config.relay.provider === "fly" ? tool("fly", "relay deploy", "brew install flyctl && fly auth login", "relay") : tool("vps", "relay deploy", "install the vps CLI and log in to the crafter profile", "relay"));
     for (const link of config.links ?? []) {
