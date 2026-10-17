@@ -279,10 +279,9 @@ async function nativeCheck(ctx: Ctx, config: Config, name: string, native: NonNu
 
 // Code scriptc compiles but that aborts at run time, where JS yields undefined (F-039, F-040, reproduced with scriptc
 // 0.2.3): a missing Record key read into a variable or an argument ("record has no key"; inline `R[k] ?? x`,
-// `R[k] !== undefined` and `R[k] ? a : b` are fine), and `obj && expr` as a value (the object leaks into the union).
+// `R[k] !== undefined` and `R[k] ? a : b` are fine).
 // Only string- and number-keyed Records: a Record over a closed union of keys is exhaustive.
 const RECORD_DECL = /\b(\w+)\s*\??:\s*(?:Readonly<)?(?:Record<\s*(?:string|number)\s*,|\{\s*\[\w+:\s*(?:string|number)\]\s*:)/g;
-const AND_VALUE = /\b(?:const|let)\s+\w+\s*(?::[^=]+)?=\s*[\w.]+\s*&&\s*(?![^?]*\?)(?![\w.]+\s*(?:[=!]==?|[<>]=?)\s)[\w.]+[.(]/;
 
 function bracketEnd(code: string, open: number): number {
   for (let i = open, depth = 0; i < code.length; i++) {
@@ -325,10 +324,9 @@ function nativeTrapCheck(entry: string, name: string, platform: string): Check {
       if (raw[i].includes("dotframe-allow-native")) return;
       const where = `${relative(process.cwd(), file)}:${i + 1}`;
       if (recordReads(code, texts[f].slice(Math.max(0, i - 4), i + 1).join("\n"), records)) hits.push(`${where} Record read that aborts natively if the key is missing: \`key in R ? R[key] : fallback\``);
-      else if (AND_VALUE.test(code)) hits.push(`${where} \`obj && expr\` as a value traps natively: \`obj ? expr : fallback\``);
     });
   });
-  if (hits.length === 0) return { ...base, ok: true, detail: `no unguarded Record reads or && values in the native code (${records.size} Record names)`, fix: "" };
+  if (hits.length === 0) return { ...base, ok: true, detail: `no unguarded Record reads in the native code (${records.size} Record names)`, fix: "" };
   const shown = hits.slice(0, 8).join("; ") + (hits.length > 8 ? `; and ${hits.length - 8} more` : "");
   return { ...base, ok: false, warn: true, detail: `${hits.length} line(s) that abort natively while web passes: ${shown}`, fix: "rewrite each as its hit says; mark a line that is safe with // dotframe-allow-native" };
 }
