@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.6
+
+- Web: a key pressed and released within a frame that runs no fixed step is no longer lost. It reads as down until the game reads it, so fast taps register on displays faster than the step rate.
+- `doctor` no longer crashes when scriptc is missing on a project with an iOS target; it warns with the install command. It also warns when scriptc is older than 0.2.1, the oldest that builds the templates, instead of reporting it as ok.
+- `doctor` drops the `obj && expr` native-trap rule: it flagged boolean `&&` expressions that run fine natively, and the object case it targeted is now a scriptc compile error that the native compile check reports.
+
 ## 0.3.5
 
 - `doctor` also warns, instead of failing, when a native target has no vendored SDL3 and wgpu-native or no scriptc iOS runtime yet. A fresh project on a clean machine exits 0.
