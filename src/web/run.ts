@@ -13,6 +13,7 @@ import {
 import type { Audio } from "../audio";
 import { mipChain } from "../mips";
 import { type Input, keyCodes, type Look, type Pointer, type Touch } from "../input";
+import { createKeyLatch } from "./keys";
 import type { Storage } from "../storage";
 import { MUSIC_CHANNELS } from "../audio";
 import { createCanvasGpu } from "./canvas2d";
@@ -85,23 +86,14 @@ export async function run(options: WindowOptions, setup: Setup, runOptions: RunO
   // Without WebGPU, 2D games draw through Canvas 2D (src/web/canvas2d.ts); 3D calls fail with a clear message.
   const gpu: Gpu = device ? createWebGpu(device, canvas, fill) : createCanvasGpu(canvas);
 
-  const pressed = new Set<string>();
-  // A key pressed and released between two frames still reads as down for one frame: fresh holds the keys pressed
-  // since the last frame, and a release of one of them waits in late until that frame has run.
-  const fresh = new Set<string>();
-  const late = new Set<string>();
+  const keys = createKeyLatch();
   // window, not globalThis: with Bun's types loaded, globalThis listeners receive a plain Event.
   window.addEventListener("keydown", (event: KeyboardEvent) => {
     if (keyCodes.includes(event.code)) event.preventDefault();
-    pressed.add(event.code);
-    fresh.add(event.code);
-    late.delete(event.code);
+    keys.press(event.code);
   });
-  window.addEventListener("keyup", (event: KeyboardEvent) => {
-    if (fresh.has(event.code)) late.add(event.code);
-    else pressed.delete(event.code);
-  });
-  window.addEventListener("blur", () => pressed.clear());
+  window.addEventListener("keyup", (event: KeyboardEvent) => keys.release(event.code));
+  window.addEventListener("blur", () => keys.clear());
   const pointer: Pointer = { x: 0, y: 0, buttons: 0 };
   const trackPointer = (event: PointerEvent): void => {
     const rect = canvas.getBoundingClientRect();
@@ -133,9 +125,9 @@ export async function run(options: WindowOptions, setup: Setup, runOptions: RunO
   // Gamepad slots in connection order, matching the native backend.
   const gamepad = (pad: number): Gamepad | null => navigator.getGamepads?.().filter((g) => g !== null)[pad] ?? null;
   const input: Input = {
-    down: (key: number): boolean => pressed.has(keyCodes[key] ?? ""),
+    down: (key: number): boolean => keys.down(keyCodes[key] ?? ""),
     firstDown: (): number => {
-      for (let key = 0; key < keyCodes.length; key++) if (pressed.has(keyCodes[key])) return key;
+      for (let key = 0; key < keyCodes.length; key++) if (keys.down(keyCodes[key])) return key;
       return -1;
     },
     axis: (pad: number, axis: number): number => gamepad(pad)?.axes[axis] ?? 0,
@@ -320,9 +312,7 @@ export async function run(options: WindowOptions, setup: Setup, runOptions: RunO
     } catch (error) {
       unsupported(error);
     }
-    for (const code of late) pressed.delete(code);
-    late.clear();
-    fresh.clear();
+    keys.endFrame();
     if (!go) return;
     requestAnimationFrame(tick);
   };
