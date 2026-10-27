@@ -13,7 +13,7 @@ import {
 import type { Audio } from "../audio";
 import { mipChain } from "../mips";
 import { type Input, keyCodes, type Look, type Pointer, type Touch } from "../input";
-import { createKeyLatch } from "./keys";
+import { createKeyLatch, isGameKey } from "./keys";
 import type { Storage } from "../storage";
 import { MUSIC_CHANNELS } from "../audio";
 import { createCanvasGpu } from "./canvas2d";
@@ -89,7 +89,8 @@ export async function run(options: WindowOptions, setup: Setup, runOptions: RunO
   const keys = createKeyLatch();
   // window, not globalThis: with Bun's types loaded, globalThis listeners receive a plain Event.
   window.addEventListener("keydown", (event: KeyboardEvent) => {
-    if (keyCodes.includes(event.code)) event.preventDefault();
+    if (!isGameKey(event, keyCodes)) return;
+    event.preventDefault();
     keys.press(event.code);
   });
   window.addEventListener("keyup", (event: KeyboardEvent) => keys.release(event.code));
