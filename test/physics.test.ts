@@ -1,23 +1,11 @@
 import { expect, test } from "bun:test";
 import { vec3 } from "../src/math";
-import {
-  type Body,
-  FIXED_STEP,
-  type Solid,
-  stepBodies,
-  stepBody,
-} from "../src/physics";
+import { type Body, FIXED_STEP, type Solid, stepBodies, stepBody } from "../src/physics";
 
 const ground: Solid = { x: 0, y: -1, halfWidth: 5, halfHeight: 0.5 };
 
 function body(x: number, y: number): Body {
-  return {
-    position: vec3(x, y, 0),
-    velocity: vec3(0, 0, 0),
-    halfWidth: 0.4,
-    halfHeight: 0.6,
-    onGround: false,
-  };
+  return { position: vec3(x, y, 0), velocity: vec3(0, 0, 0), halfWidth: 0.4, halfHeight: 0.6, onGround: false };
 }
 
 test("a falling body lands on top of a solid", () => {
@@ -127,4 +115,29 @@ test("a body stopped against an equal-height body stays on the ground", () => {
   expect(walker.position.y).toBe(110);
   expect(walker.onGround).toBe(true);
   expect(walker.position.x).toBeCloseTo(370 - 49.124797406807126 - 57.534246575342465, 5);
+});
+
+test("a walker shoves a pushable body until it meets a wall", () => {
+  const wall: Solid = { x: 4, y: 0, halfWidth: 0.5, halfHeight: 2 };
+  const walker = body(0, -0.5 + 0.6);
+  const crate: Body = { ...body(1.5, -0.5 + 0.6), pushable: true };
+  for (let i = 0; i < 120; i++) {
+    walker.velocity = vec3(3, walker.velocity.y, 0);
+    stepBodies([walker, crate], [ground, wall], -30, FIXED_STEP);
+  }
+  expect(crate.position.x).toBeCloseTo(4 - 0.5 - 0.4, 5);
+  expect(walker.position.x).toBeCloseTo(4 - 0.5 - 0.8 - 0.4, 5);
+  expect(walker.position.y).toBeCloseTo(0.1, 5);
+  expect(crate.position.y).toBeCloseTo(0.1, 5);
+});
+
+test("a body that is not pushable still stops the walker", () => {
+  const walker = body(0, -0.5 + 0.6);
+  const rock = body(1.5, -0.5 + 0.6);
+  for (let i = 0; i < 60; i++) {
+    walker.velocity = vec3(3, walker.velocity.y, 0);
+    stepBodies([walker, rock], [ground], -30, FIXED_STEP);
+  }
+  expect(rock.position.x).toBe(1.5);
+  expect(walker.position.x).toBeCloseTo(1.5 - 0.8, 5);
 });
