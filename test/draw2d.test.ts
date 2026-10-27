@@ -82,3 +82,34 @@ test("end with a target renders the 2D frame into that texture", () => {
   draw.end({ r: 0, g: 0, b: 0 });
   expect(frames.map((f) => f.target?.id)).toEqual([9, undefined]);
 });
+
+test("text with no font registered warns once instead of drawing nothing silently", () => {
+  const noop = (): number => 1;
+  const gpu = {
+    createBuffer: noop,
+    writeBuffer: (): void => {},
+    destroyBuffer: (): void => {},
+    createPipeline: noop,
+    bind: noop,
+    createTexture: (width: number, height: number) => ({ id: 7, width, height }),
+    destroyTexture: (): void => {},
+    frame: (): void => {},
+    createTarget: (width: number, height: number) => ({ id: 9, width, height }),
+    aspect: (): number => 4 / 3,
+  };
+  const warnings: string[] = [];
+  const warn = console.warn;
+  console.warn = (message: string): void => void warnings.push(message);
+  try {
+    const draw = createDraw2D(gpu, 320, 240);
+    draw.begin();
+    draw.setFont("20px sans-serif");
+    draw.fillText("Score: 1", 10, 10);
+    draw.fillText("Score: 2", 10, 10);
+    draw.end({ r: 0, g: 0, b: 0 });
+  } finally {
+    console.warn = warn;
+  }
+  expect(warnings.length).toBe(1);
+  expect(warnings[0]).toContain('"Score: 1"');
+});
