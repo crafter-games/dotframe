@@ -631,9 +631,17 @@ export function createDraw2D(gpu: RenderGpu, width: number, height: number): Dra
     return width;
   };
 
+  let warnedNoFont = false;
   const drawText = (text: string, x: number, y: number, color: Rgba, outline: number): void => {
     const font = resolveFont();
-    if (!font) return;
+    if (!font) {
+      // Text without a font draws nothing; say so once instead of leaving a blank HUD.
+      if (!warnedNoFont) {
+        warnedNoFont = true;
+        console.warn(`dotframe draw2d: text ${JSON.stringify(text.slice(0, 32))} drawn with no font registered, so nothing shows; register one with addFont (dotframe assets font, or the atlases in dotframe's assets/fonts)`);
+      }
+      return;
+    }
     const scale = state.font.size / font.metrics.size;
     const width = textWidth(font, text, scale);
     let penX = x;

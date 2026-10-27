@@ -96,7 +96,9 @@ export function loadConfig(): Config {
   const root = findRoot();
   if (!root) throw new CliError("NO_CONFIG", `no ${CONFIG_FILE} in this directory or any parent`, "cd into a game repo, or run dotframe new <name>");
   try {
-    return { ...(JSON.parse(readFileSync(join(root, CONFIG_FILE), "utf8")) as Omit<Config, "root">), root };
+    const config = JSON.parse(readFileSync(join(root, CONFIG_FILE), "utf8")) as Omit<Config, "root">;
+    // A game with only a sim (no build targets yet) is valid: sim, snap, replay and doctor need no targets.
+    return { ...config, targets: config.targets ?? {}, root };
   } catch (error) {
     throw new CliError("BAD_CONFIG", `${CONFIG_FILE}: ${error instanceof Error ? error.message : "unreadable"}`, "fix the JSON syntax");
   }

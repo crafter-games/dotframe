@@ -139,9 +139,14 @@ run(sim.window, (p) => {
       shots.push({ out, frame: result.frame, checksum: result.checksum, state: result.state });
     }
     const last = shots[shots.length - 1];
+    // Engine warnings from the page (text with no font, dropped lights): the picture alone can hide them.
+    const warnings = (await ab("console")).tail
+      .split("\n")
+      .map((line: string): string => line.slice(line.indexOf("dotframe ")))
+      .filter((line: string): boolean => line.startsWith("dotframe "));
     // One frame keeps the original shape; several add a shots list.
-    const data = frames.length === 1 ? last : { ...last, shots };
-    print(ctx, data, (): string => shots.map((x) => `frame ${x.frame} -> ${x.out} (checksum ${x.checksum})`).join("\n"));
+    const data = { ...(frames.length === 1 ? last : { ...last, shots }), ...(warnings.length > 0 ? { warnings } : {}) };
+    print(ctx, data, (): string => [...shots.map((x) => `frame ${x.frame} -> ${x.out} (checksum ${x.checksum})`), ...warnings.map((w: string): string => `WARN ${w}`)].join("\n"));
   } finally {
     await ab("close");
     server.stop(true);
