@@ -293,8 +293,10 @@ test("every renderer shader is fully interpolated (bun cannot compile WGSL, but 
   const renderer = createRenderer(gpu);
   renderer.addInstances(new Float32Array(INSTANCE_FLOATS));
   renderer.addSkinnedMesh(box(), { positions: new Float32Array(72), normals: new Float32Array(72), joints: new Float32Array(96), weights: new Float32Array(96) });
-  expect(pipelines.length).toBe(4);
+  expect(pipelines.length).toBe(5);
   for (const p of pipelines) expect(p.wgsl).not.toContain("${");
+  // The alpha-cut shadow caster samples the texture and discards below MeshRef.alphaCutoff.
+  expect(pipelines.filter((p) => p.wgsl.includes("packDepth(ndc.z)") && p.wgsl.includes("textureSample(tex, samp, in.uv).a < u.material.z")).length).toBe(1);
 });
 
 test("a custom material draws on its own pipeline with its params, and leaves built-in meshes untouched", () => {
