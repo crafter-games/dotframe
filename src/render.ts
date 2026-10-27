@@ -389,7 +389,7 @@ struct Surface {
 }
 `;
 
-// kind 0 static, 1 skinned, 2 instanced, 3 shadow casters. surface is a material's WGSL (createMaterial).
+// kind 0 static, 1 skinned, 2 instanced, 3 shadow casters, 4 alpha-cut shadow casters (MeshRef.alphaCutoff). surface is a material's WGSL (createMaterial).
 const shader = (kind: number, surface?: string): string => {
   const skinned = kind === 1;
   // A material's vertex() hook moves the mesh's own positions (static and skinned meshes).
@@ -433,7 +433,10 @@ struct Uniforms {
 ${
   kind === 3
     ? ""
-    : `@group(0) @binding(1) var tex: texture_2d<f32>;
+    : kind === 4
+      ? `@group(0) @binding(1) var tex: texture_2d<f32>;
+@group(0) @binding(2) var samp: sampler;`
+      : `@group(0) @binding(1) var tex: texture_2d<f32>;
 @group(0) @binding(2) var samp: sampler;
 @group(0) @binding(3) var shadowTex: texture_2d<f32>;
 @group(0) @binding(4) var shadowSamp: sampler;`
@@ -497,10 +500,10 @@ fn vs_main(@location(0) position: vec3f, @location(1) normal: vec3f, @location(2
 }
 
 ${
-  kind === 3
+  kind === 3 || kind === 4
     ? `@fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4f {
-  // color.x picks the half: 0 the spot, 1 the sun. Fragments outside that light's own frustum would spill into the
+${kind === 4 ? "  // Texels the main pass discards (MeshRef.alphaCutoff, in material.z) cast no shadow either.\n  if (textureSample(tex, samp, in.uv).a < u.material.z) { discard; }\n" : ""}  // color.x picks the half: 0 the spot, 1 the sun. Fragments outside that light's own frustum would spill into the
   // other half, so they go.
   let sun = u.color.x > 0.5;
   var clip = u.shadowVP * vec4f(in.world, 1.0);
@@ -739,7 +742,9 @@ export function createRenderer(gpu: RenderGpu): Renderer {
   // Every lit pipeline samples the shadow map, so it exists from the start; it is drawn only when a spot asks.
   const shadowMap = gpu.createTarget(SHADOW_SIZE * 2, SHADOW_SIZE);
   const shadowPipeline = gpu.createPipeline({ wgsl: shader(3), stride: VERTEX_FLOATS * 4, attributes: BASE_ATTRIBUTES, depth: true, blend: false });
+  const cutoutShadowPipeline = gpu.createPipeline({ wgsl: shader(4), stride: VERTEX_FLOATS * 4, attributes: BASE_ATTRIBUTES, depth: true, blend: false });
   // One binding per world, entity and light (entityKey * 2 + 1 for the sun).
+  // Per caster and light: [uniform buffer, bind group, texture id or -1].
   const shadowBindings = new Map<number, number[]>();
   const shadowUniforms = new Float32Array(UNIFORM_FLOATS);
   const meshes: GpuMesh[] = [];
@@ -1053,19 +1058,23 @@ export function createRenderer(gpu: RenderGpu): Renderer {
         if (!transform || !mesh || mesh.skinned || meshRef.instances || (meshRef.emissive ?? 0) > 0 || ((meshRef.layers ?? 1) & 1) === 0) continue;
         const model = compose(transform.position, transform.rotation, transform.scale);
         for (const pass of passes) {
+          const cutout = (meshRef.alphaCutoff ?? 0) > 0 && meshRef.texture !== undefined && mesh.uvs && !meshRef.triplanar;
+          const casterPipeline = cutout ? cutoutShadowPipeline : shadowPipeline;
+          const casterTexture = cutout && meshRef.texture ? meshRef.texture.id : -1;
           const key = entityKey(world, entity) * 2 + pass.sun;
           let binding = shadowBindings.get(key);
-          if (!binding) {
-            const buffer = gpu.createBuffer(BufferUsage.Uniform, f32Bytes(shadowUniforms));
-            binding = [buffer, gpu.bind(shadowPipeline, buffer, -1)];
+          if (!binding || binding[2] !== casterTexture) {
+            const buffer = binding ? binding[0] : gpu.createBuffer(BufferUsage.Uniform, f32Bytes(shadowUniforms));
+            binding = [buffer, gpu.bind(casterPipeline, buffer, casterTexture), casterTexture];
             shadowBindings.set(key, binding);
           }
           shadowUniforms.set(multiply(pass.squeeze, multiply(pass.vp, model)), 0);
           shadowUniforms.set(model, 16);
           shadowUniforms[32] = pass.sun;
+          shadowUniforms[38] = meshRef.alphaCutoff ?? 0;
           shadowUniforms.set(scene, 40);
           gpu.writeBuffer(binding[0], f32Bytes(shadowUniforms));
-          casters.push({ pipeline: shadowPipeline, bindGroup: binding[1], vertexBuffer: mesh.vertexBuffer, indexBuffer: mesh.indexBuffer, first: 0, count: mesh.count });
+          casters.push({ pipeline: casterPipeline, bindGroup: binding[1], vertexBuffer: mesh.vertexBuffer, indexBuffer: mesh.indexBuffer, first: 0, count: mesh.count });
         }
       }
       gpu.frame({ r: 1, g: 1, b: 1 }, casters, shadowMap);
