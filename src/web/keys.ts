@@ -44,3 +44,9 @@ export function createKeyLatch(): KeyLatch {
     },
   };
 }
+
+// A press the game takes (and cancels in the browser): one of its keys with no Cmd, Ctrl or Alt held. Modified
+// presses are the browser's own shortcuts (Cmd+Ctrl+F leaves full screen, Cmd+R reloads) and must reach it.
+export function isGameKey(event: { code: string; metaKey: boolean; ctrlKey: boolean; altKey: boolean }, codes: readonly string[]): boolean {
+  return codes.includes(event.code) && !event.metaKey && !event.ctrlKey && !event.altKey;
+}

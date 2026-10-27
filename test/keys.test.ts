@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { createKeyLatch } from "../src/web/keys";
+import { createKeyLatch, isGameKey } from "../src/web/keys";
 
 test("a tap in a frame with no step reads as down in the next frame", () => {
   const keys = createKeyLatch();
@@ -40,4 +40,14 @@ test("blur drops every key, pending taps included", () => {
   keys.endFrame();
   expect(keys.down("KeyA")).toBe(false);
   expect(keys.down("Space")).toBe(false);
+});
+
+test("browser shortcuts are not game keys", () => {
+  const codes = ["KeyF", "KeyR", "Space"];
+  const plain = { metaKey: false, ctrlKey: false, altKey: false };
+  expect(isGameKey({ code: "KeyF", ...plain }, codes)).toBe(true);
+  expect(isGameKey({ code: "KeyF", ...plain, metaKey: true, ctrlKey: true }, codes)).toBe(false);
+  expect(isGameKey({ code: "KeyR", ...plain, metaKey: true }, codes)).toBe(false);
+  expect(isGameKey({ code: "KeyR", ...plain, altKey: true }, codes)).toBe(false);
+  expect(isGameKey({ code: "Tab", ...plain }, codes)).toBe(false);
 });
